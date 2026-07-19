@@ -1,10 +1,10 @@
+import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
     FlatList,
     Platform,
-    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -194,7 +194,6 @@ export default function PfoTrainingReports() {
 
       if (error) throw error;
 
-      // Filter local state view to only display "Yes" graduates in the on-screen table layout
       const graduatesOnly = (data || []).filter(item => {
         const val = item[selectedTraining.id];
         return val === 'Y' || val === 'y';
@@ -214,7 +213,6 @@ export default function PfoTrainingReports() {
     }
   }
 
-  // Real-time training lookup filter
   const filteredTrainingColumns = useMemo(() => {
     const cleanQuery = searchQuery.trim().toLowerCase();
     if (!cleanQuery) return TRAINING_COLUMNS;
@@ -226,7 +224,7 @@ export default function PfoTrainingReports() {
     });
   }, [searchQuery]);
 
-  // Directly executes the extraction without relying on native multi-button alerts
+// Generates and extracts a structured plain text (.txt) registry
   async function executeExtractionPipeline(targetType) {
     try {
       setLoading(true);
@@ -237,7 +235,6 @@ export default function PfoTrainingReports() {
 
       if (error) throw error;
 
-      // Filter rows based on criteria selection ('YES' for completed, 'NO' for non-completed)
       const filteredDataset = (data || []).filter(item => {
         const val = item[selectedTraining.id];
         const isCompleted = val === 'Y' || val === 'y';
@@ -249,50 +246,66 @@ export default function PfoTrainingReports() {
         return;
       }
 
-      // Sort dataset alphabetically by last name
       filteredDataset.sort((a, b) => {
         const nameA = (a.members?.Lastname || '').toLowerCase();
         const nameB = (b.members?.Lastname || '').toLowerCase();
         return nameA.localeCompare(nameB);
       });
 
-      // Build RFC-compliant CSV payloads
-      const headers = ['Line No.', 'Member ID No', 'Last Name', 'First Name', 'Completed Status'];
-      const rows = filteredDataset.map((item, index) => {
-        const currentStatus = item[selectedTraining.id] || 'N';
-        return [
-          index + 1,
-          `"${item.MemberIDNo}"`,
-          `"${item.members?.Lastname || ''}"`,
-          `"${item.members?.Firstname || ''}"`,
-          `"${currentStatus.toUpperCase()}"`
-        ];
+      const reportSubTitle = targetType === 'YES' ? 'COMPLETED MILESTONE REGISTRY' : 'NOT YET ATTENDED REGISTRY';
+      const timestamp = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      // Build structured plain text file layout
+      let textContent = `==================================================\n`;
+      textContent += `           PFO TRAINING STATUS REPORT\n`;
+      textContent += `==================================================\n`;
+      textContent += `TRACK:       ${selectedTraining.group}\n`;
+      textContent += `MODULE:      ${selectedTraining.label}\n`;
+      textContent += `REGISTRY:    ${reportSubTitle}\n`;
+      textContent += `DATE:        ${timestamp}\n`;
+      textContent += `TOTAL:       ${filteredDataset.length} Records\n`;
+      textContent += `--------------------------------------------------\n\n`;
+      textContent += `   #   | MEMBER NAME                              | ID NUMBER\n`;
+      textContent += `-------|------------------------------------------|-----------\n`;
+
+      filteredDataset.forEach((item, index) => {
+        const num = String(index + 1).padEnd(4, ' ');
+        const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
+        const paddedName = name.padEnd(40, ' ').substring(0, 40); // Limit length to keep table structured
+        const idNo = item.MemberIDNo || 'N/A';
+        
+        textContent += ` ${num} | ${paddedName} | ${idNo}\n`;
       });
 
-      const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-      const cleanFileName = `${selectedTraining.label.replace(/[^a-zA-Z0-9]/g, '_')}_${targetType === 'YES' ? 'Completed' : 'Not_Yet_Attended'}.csv`;
+      textContent += `\n--------------------------------------------------\n`;
+      textContent += `End of Report — Securely compiled via PFO Portal Engine.\n`;
 
-      // Handle browser downloads for Expo Web environment
+      const safeFileName = `${selectedTraining.id.split('.')[0].replace(/\s+/g, '_')}_${targetType}.txt`;
+
+      // --- WEB DOWNLOAD IMPLEMENTATION ---
       if (Platform.OS === 'web') {
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', cleanFileName);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const element = document.createElement("a");
+        const file = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+        element.href = URL.createObjectURL(file);
+        element.download = safeFileName;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
         return;
       }
 
-      // Native mobile multi-target delivery channel execution (iOS / Android)
-      await Share.share({
-        title: `PFO Report - ${selectedTraining.label} (${targetType === 'YES' ? 'Completed' : 'Not Yet Attended'})`,
-        message: csvContent,
-        url: Platform.OS === 'ios' ? `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}` : undefined
+      // --- MOBILE DOWNLOAD IMPLEMENTATION (iOS / Android) ---
+      const { FileSystem } = require('expo-file-system');
+      const fileUri = `${FileSystem.documentDirectory}${safeFileName}`;
+      
+      await FileSystem.writeAsStringAsync(fileUri, textContent, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri, { 
+        mimeType: 'text/plain', 
+        dialogTitle: `Export Text Registry: ${selectedTraining.label}` 
       });
+
     } catch (err) {
-      Alert.alert('Export Failed', 'An error occurred while compiling your data export pipeline.');
+      Alert.alert('Export Failed', 'An error occurred while compiling your plain text registry file.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -320,7 +333,6 @@ export default function PfoTrainingReports() {
         <Text style={styles.subtitle}>Filter, verify and extract profile groups by completed milestone metrics.</Text>
       </View>
 
-      {/* Custom Dropdown Selector */}
       <View style={styles.dropdownWrapper}>
         <Text style={styles.fieldLabel}>Select Target Training Module:</Text>
         <TouchableOpacity 
@@ -336,7 +348,6 @@ export default function PfoTrainingReports() {
 
         {dropdownOpen && (
           <View style={styles.dropdownMenuContainer}>
-            {/* Embedded Search Input inside open state */}
             <View style={styles.searchContainer}>
               <TextInput
                 style={styles.searchInput}
@@ -362,7 +373,7 @@ export default function PfoTrainingReports() {
                   onPress={() => {
                     setSelectedTraining(item);
                     setDropdownOpen(false);
-                    setSearchQuery(''); // Reset query on pick
+                    setSearchQuery('');
                   }}
                 >
                   <Text style={[styles.dropdownItemText, item.id === selectedTraining.id && styles.dropdownItemTextActive]} numberOfLines={1}>
@@ -379,7 +390,6 @@ export default function PfoTrainingReports() {
         )}
       </View>
 
-      {/* Summary KPI Panel & Dedicated Two-Button Action Layout */}
       <View style={styles.actionRowContainer}>
         <View style={styles.kpiSplitCard}>
           <Text style={styles.kpiLabel}>Total Graduates</Text>
@@ -393,7 +403,7 @@ export default function PfoTrainingReports() {
             onPress={() => executeExtractionPipeline('YES')}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>🎓 Extract Completed</Text>
+            <Text style={styles.actionButtonText}>📄 PDF Completed</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -402,12 +412,11 @@ export default function PfoTrainingReports() {
             onPress={() => executeExtractionPipeline('NO')}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>❌ Not Yet Attended</Text>
+            <Text style={styles.actionButtonText}>📄 PDF Not Attended</Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Report Table View */}
       <View style={styles.reportCard}>
         <View style={styles.tableHeader}>
           <View style={styles.numberCellHeader}><Text style={styles.headerText}>#</Text></View>
@@ -446,13 +455,10 @@ const styles = StyleSheet.create({
   heroSection: { paddingVertical: 14 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
-  
   dropdownWrapper: { zIndex: 10, marginBottom: 14 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
-    flexDirection: 'row', 
-    justifyContent: 'space-between', // Fixed from 'between' to protect native layout pipelines
-    alignItems: 'center',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0',
     paddingHorizontal: 14, paddingVertical: 12, shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1
@@ -465,38 +471,32 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4,
     zIndex: 100, paddingBottom: 4
   },
-  
   searchContainer: {
     backgroundColor: '#f8fafc', margin: 8, borderRadius: 8, paddingHorizontal: 10,
     paddingVertical: Platform.OS === 'ios' ? 8 : 4, borderWidth: 1, borderColor: '#e2e8f0'
   },
   searchInput: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
   dropdownEmptyText: { textAlign: 'center', color: '#94a3b8', paddingVertical: 20, fontSize: 13 },
-
   dropdownMenuList: { maxHeight: 220 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   dropdownItemActive: { backgroundColor: '#eff6ff' },
   dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
   dropdownItemTextActive: { color: '#2563eb', fontWeight: '700' },
   dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700' },
-
   actionRowContainer: { flexDirection: 'row', alignItems: 'stretch', justifyContent: 'space-between', marginBottom: 14, gap: 10 },
   kpiSplitCard: { flex: 0.35, backgroundColor: '#ffffff', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center' },
   kpiLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   kpiValue: { fontSize: 22, fontWeight: '800', color: '#002060', marginTop: 2 },
-  
   buttonsContainer: { flex: 0.65, gap: 8, justifyContent: 'space-between' },
   actionButton: { flex: 1, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
   completedButton: { backgroundColor: '#002060' },
   nonCompletedButton: { backgroundColor: '#475569' }, 
   actionButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
-
   reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 20 },
   tableHeader: { flexDirection: 'row', backgroundColor: '#002060', paddingVertical: 10, alignItems: 'center' },
   headerText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
   reportRow: { flexDirection: 'row', alignItems: 'center', height: 44, borderBottomWidth: 1, borderColor: '#f1f5f9' },
   rowAlternate: { backgroundColor: '#f8fafc' },
-  
   numberCellHeader: { width: 45, paddingLeft: 14 },
   numberCell: { width: 45, paddingLeft: 14 },
   numberText: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
@@ -506,7 +506,6 @@ const styles = StyleSheet.create({
   idCellHeader: { width: 110, paddingHorizontal: 8 },
   idCell: { width: 110, paddingHorizontal: 8 },
   idText: { fontSize: 12, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
-
   centeredLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
   loaderText: { fontSize: 13, color: '#64748b', marginTop: 10, fontWeight: '500' },
   emptyContainer: { padding: 40, alignItems: 'center' },
