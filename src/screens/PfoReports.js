@@ -403,7 +403,7 @@ export default function PfoTrainingReports() {
             onPress={() => executeExtractionPipeline('YES')}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>📄 PDF Completed</Text>
+            <Text style={styles.actionButtonText}>📄 TXT Copy of Completed Members</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -412,7 +412,7 @@ export default function PfoTrainingReports() {
             onPress={() => executeExtractionPipeline('NO')}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>📄 PDF Not Attended</Text>
+            <Text style={styles.actionButtonText}>📄 TXT Copy of Non-Completed Members</Text>
           </TouchableOpacity>
         </View>
       </View>
