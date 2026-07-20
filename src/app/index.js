@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import Login from '../auth/Login';
+import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import MembersList from '../screens/MembersList';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
@@ -69,11 +70,19 @@ export default function Page() {
         <Text style={[styles.sidebarButtonText, currentTab === 'pfoReports' && styles.activeSidebarText]}>📈 PFO Reports</Text>
       </TouchableOpacity>
 
+      {/* Added CLP Maintenance to the Navigation Drawer Menu */}
+      <TouchableOpacity 
+        style={[styles.sidebarButton, currentTab === 'clp' && styles.activeSidebarButton]} 
+        onPress={() => { setCurrentTab('clp'); setIsMobileMenuOpen(false); }}
+      >
+        <Text style={[styles.sidebarButtonText, currentTab === 'clp' && styles.activeSidebarText]}>🛠️ CLP Maintenance</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity 
         style={[styles.sidebarButton, currentTab === 'predictor' && styles.activeSidebarButton]} 
         onPress={() => { setCurrentTab('predictor'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'predictor' && styles.activeSidebarText]}>🔮 Predictions</Text>
+        <Text style={[styles.sidebarButtonText, currentTab === 'predictor' && styles.activeSidebarText]}>🔮 The ORACLE</Text>
       </TouchableOpacity>
 
       <View style={styles.spacer} />
@@ -129,12 +138,13 @@ export default function Page() {
         <View style={styles.mainContentPane}>
           {currentTab === 'members' && <MembersList />}
           {currentTab === 'pfo' && <PfoList />}
-            {currentTab === 'pfoReports' && <PfoReport />}
+          {currentTab === 'pfoReports' && <PfoReport />}
+          {currentTab === 'clp' && <ClpMaintenance />}
           {currentTab === 'predictor' && <PredictorScreen />}
         </View>
       </View>
 
-      {/* MOBILE BOTTOM NAV BAR FALLBACK: Convenience touch points when drawer is shut */}
+      {/* MOBILE BOTTOM NAV BAR FALLBACK */}
       {!isLargeScreen && (
         <View style={styles.bottomTabBar}>
           <TouchableOpacity 
@@ -151,11 +161,12 @@ export default function Page() {
             <Text style={[styles.tabBarItemText, currentTab === 'pfo' && styles.activeTabBarText]}>PFO</Text>
           </TouchableOpacity>
 
+          {/* Replaced PFO Reports tag with CLP on the bottom mobile bar shortcut row since spacing is finite on small mobile frames */}
           <TouchableOpacity 
-            style={[styles.tabBarItem, currentTab === 'pfoReports' && styles.activeTabItem]} 
-            onPress={() => setCurrentTab('pfoReports')}
+            style={[styles.tabBarItem, currentTab === 'clp' && styles.activeTabItem]} 
+            onPress={() => setCurrentTab('clp')}
           >
-            <Text style={[styles.tabBarItemText, currentTab === 'pfoReports' && styles.activeTabBarText]}>PFO Reports</Text>
+            <Text style={[styles.tabBarItemText, currentTab === 'clp' && styles.activeTabBarText]}>CLP</Text>
           </TouchableOpacity>
         </View>
       )}

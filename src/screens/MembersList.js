@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
 export default function MembersList() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [updatingId, setUpdatingId] = useState(null); // Tracks network load per row toggle
 
   useEffect(() => {
     fetchMembers();
@@ -24,6 +25,31 @@ export default function MembersList() {
       console.error(error.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Handle Dynamic Gender Toggle updates to Supabase
+  async function toggleGender(memberId, currentGender, targetGender) {
+    if (currentGender === targetGender) return; // Prevent unnecessary execution calls
+    
+    try {
+      setUpdatingId(memberId);
+      const { error } = await supabase
+        .from('members')
+        .update({ Gender: targetGender })
+        .eq('MemberIDNo', memberId);
+
+      if (error) throw error;
+
+      // Update Local State Matrix Layout
+      setMembers((prevMembers) =>
+        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, Gender: targetGender } : m))
+      );
+    } catch (error) {
+      const msg = `Failed updating gender status profile: ${error.message}`;
+      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
+    } finally {
+      setUpdatingId(null);
     }
   }
 
@@ -66,19 +92,48 @@ export default function MembersList() {
         data={filteredMembers}
         keyExtractor={(item) => item.MemberIDNo?.toString()}
         contentContainerStyle={styles.listPadding}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.infoSide}>
-              <Text style={styles.name}>{item.Lastname}, {item.Firstname}</Text>
-              <Text style={styles.meta}>ID: <Text style={styles.boldText}>{item.MemberIDNo}</Text></Text>
-              <Text style={styles.subText}>Household Head: {item.NameOfHouseholdHead || 'N/A'}</Text>
+        renderItem={({ item }) => {
+          const currentGender = item.Gender; // Expects 'Male' or 'Female'
+          const isRowUpdating = updatingId === item.MemberIDNo;
+
+          return (
+            <View style={styles.card}>
+              <View style={styles.infoSide}>
+                <Text style={styles.name}>{item.Lastname}, {item.Firstname}</Text>
+                <Text style={styles.meta}>ID: <Text style={styles.boldText}>{item.MemberIDNo}</Text></Text>
+                <Text style={styles.subText}>Household Head: {item.NameOfHouseholdHead || 'N/A'}</Text>
+
+                {/* Inline Gender Selector Toggles */}
+                <View style={styles.genderToggleWrapper}>
+                  <Text style={styles.genderLabel}>Gender: </Text>
+                  
+                  <TouchableOpacity
+                    style={[styles.genderChip, currentGender === 'Male' && styles.maleChipActive]}
+                    disabled={isRowUpdating}
+                    onPress={() => toggleGender(item.MemberIDNo, currentGender, 'Male')}
+                  >
+                    <Text style={[styles.genderChipText, currentGender === 'Male' && styles.maleTextActive]}>Male</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.genderChip, currentGender === 'Female' && styles.femaleChipActive]}
+                    disabled={isRowUpdating}
+                    onPress={() => toggleGender(item.MemberIDNo, currentGender, 'Female')}
+                  >
+                    <Text style={[styles.genderChipText, currentGender === 'Female' && styles.femaleTextActive]}>Female</Text>
+                  </TouchableOpacity>
+
+                  {isRowUpdating && <ActivityIndicator size="small" color="#002060" style={{ marginLeft: 6 }} />}
+                </View>
+              </View>
+
+              <View style={styles.badgeSide}>
+                <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{item.pastoral_service || 'MEMBER'}</Text></View>
+                <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
+              </View>
             </View>
-            <View style={styles.badgeSide}>
-              <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{item.pastoral_service || 'MEMBER'}</Text></View>
-              <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
-            </View>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           <Text style={styles.empty}>
             {searchQuery ? "No members matched your search entry." : "No members found."}
@@ -96,7 +151,6 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14, color: '#64748b', marginTop: 4, lineHeight: 20 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
-  // Added Search Styles
   searchContainer: {
     backgroundColor: '#ffffff', borderRadius: 10, paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 5, borderWidth: 1, borderColor: '#e2e8f0',
@@ -112,7 +166,7 @@ const styles = StyleSheet.create({
     })
   },
   infoSide: { flex: 2 },
-  badgeSide: { flexDirection: 'row', alignItems: 'center', marginTop: Platform.OS === 'web' ? 0 : 12, gap: 8 },
+  badgeSide: { flexDirection: 'row', alignItems: 'center', marginTop: Platform.OS === 'web' ? 0 : 12, gap: 8, alignSelf: Platform.OS === 'web' ? 'center' : 'flex-start' },
   name: { fontSize: 16, fontWeight: '700', color: '#1e293b' },
   meta: { fontSize: 12, color: '#64748b', marginTop: 4 },
   subText: { fontSize: 13, color: '#475569', marginTop: 4 },
@@ -121,5 +175,17 @@ const styles = StyleSheet.create({
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
   areaBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   areaBadgeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
-  empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40 }
+  empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40 },
+
+  // Gender Inline Element Toggles
+  genderToggleWrapper: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  genderLabel: { fontSize: 12, color: '#64748b', marginRight: 6, fontWeight: '500' },
+  genderChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, borderColor: '#cbd5e1', marginRight: 6, backgroundColor: '#f8fafc' },
+  genderChipText: { fontSize: 11, fontWeight: '600', color: '#64748b' },
+  
+  maleChipActive: { backgroundColor: '#e0f2fe', borderColor: '#0284c7' },
+  maleTextActive: { color: '#0369a1', fontWeight: '700' },
+  
+  femaleChipActive: { backgroundColor: '#fce7f3', borderColor: '#db2777' },
+  femaleTextActive: { color: '#be185d', fontWeight: '700' }
 });
