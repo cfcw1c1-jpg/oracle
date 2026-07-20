@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -174,8 +175,13 @@ const TRAINING_COLUMNS = [
   { id: 'UM_1-', label: 'UM 1', group: 'Structural Status' }
 ];
 
+const getCleanTrackCode = (rawId) => {
+  const segment = rawId.split('-')[0];
+  return segment.replace('_', '.').replace(/\s+/g, '');
+};
+
 export default function PfoTrainingReports() {
-  const [selectedTraining, setSelectedTraining] = useState(TRAINING_COLUMNS[0]);
+  const [selectedTrainings, setSelectedTrainings] = useState([TRAINING_COLUMNS[0]]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [reportData, setReportData] = useState([]);
@@ -183,23 +189,44 @@ export default function PfoTrainingReports() {
 
   useEffect(() => {
     generateReport();
-  }, [selectedTraining]);
+  }, [selectedTrainings]);
+
+  const handleToggleTraining = (item) => {
+    // Guards removed so any item (including the first chosen item) can be unchecked smoothly
+    if (selectedTrainings.some((t) => t.id === item.id)) {
+      setSelectedTrainings(selectedTrainings.filter((t) => t.id !== item.id));
+    } else {
+      setSelectedTrainings([...selectedTrainings, item]);
+    }
+  };
 
   async function generateReport() {
+    if (selectedTrainings.length === 0) {
+      setReportData([]);
+      return;
+    }
     try {
       setLoading(true);
+
+      const selectionColumns = selectedTrainings.map(t => `"${t.id}"`).join(', ');
       const { data, error } = await supabase
         .from('pfo_members')
-        .select(`MemberIDNo, "${selectedTraining.id}", members (Firstname, Lastname)`);
+        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname)`);
 
       if (error) throw error;
 
-      const graduatesOnly = (data || []).filter(item => {
-        const val = item[selectedTraining.id];
-        return val === 'Y' || val === 'y';
+      const processedData = (data || []).map(item => {
+        const hasAllAttended = selectedTrainings.every(t => {
+          const val = item[t.id];
+          return val === 'Y' || val === 'y';
+        });
+        return {
+          ...item,
+          attendedAll: hasAllAttended
+        };
       });
 
-      const sortedReport = graduatesOnly.sort((a, b) => {
+      const sortedReport = processedData.sort((a, b) => {
         const nameA = (a.members?.Lastname || '').toLowerCase();
         const nameB = (b.members?.Lastname || '').toLowerCase();
         return nameA.localeCompare(nameB);
@@ -207,7 +234,7 @@ export default function PfoTrainingReports() {
 
       setReportData(sortedReport);
     } catch (err) {
-      console.error('Error compiling matrix report data:', err.message);
+      console.error('Error compiling multi-matrix report data:', err.message);
     } finally {
       setLoading(false);
     }
@@ -224,65 +251,89 @@ export default function PfoTrainingReports() {
     });
   }, [searchQuery]);
 
-// Generates and extracts a structured plain text (.txt) registry
-  async function executeExtractionPipeline(targetType) {
+  async function executeExtractionPipeline() {
+    if (selectedTrainings.length === 0) {
+      Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
+      return;
+    }
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from('pfo_members')
-        .select(`MemberIDNo, "${selectedTraining.id}", members (Firstname, Lastname)`);
-
-      if (error) throw error;
-
-      const filteredDataset = (data || []).filter(item => {
-        const val = item[selectedTraining.id];
-        const isCompleted = val === 'Y' || val === 'y';
-        return targetType === 'YES' ? isCompleted : !isCompleted;
-      });
-
-      if (filteredDataset.length === 0) {
-        Alert.alert('Empty Dataset', `There are no member records available matching "${targetType === 'YES' ? 'Completed' : 'Not Yet Attended'}" criteria.`);
+      if (reportData.length === 0) {
+        Alert.alert('Empty Dataset', 'There are no member records available to process.');
         return;
       }
 
-      filteredDataset.sort((a, b) => {
-        const nameA = (a.members?.Lastname || '').toLowerCase();
-        const nameB = (b.members?.Lastname || '').toLowerCase();
-        return nameA.localeCompare(nameB);
+      // Matrix registry now processes all current elements inside reportData, including zero-attendance matches
+      const matrixRegistry = reportData;
+
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      
+      const fileTimestamp = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+      const safeFileName = `cfc-pfo-report-${fileTimestamp}.txt`;
+
+      const displayTimestamp = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      let textContent = `=======================================================================\n`;
+      textContent += `                     PFO TRAINING MATRIX ACCREDITATION\n`;
+      textContent += `=======================================================================\n`;
+      textContent += `COMPILED DATE:     ${displayTimestamp} ${hours}:${minutes}:${seconds}\n`;
+      textContent += `TOTAL DATA COUNT:  ${matrixRegistry.length} Registered Row Entries\n`;
+      textContent += `STATUS KEY:        Y = Attended Already | N = Not Yet Attended\n`;
+      textContent += `-----------------------------------------------------------------------\n`;
+      textContent += `MANDATED TRACK FILTER TARGETS CHECKED:\n`;
+      
+      selectedTrainings.forEach((t) => {
+        textContent += `  [${getCleanTrackCode(t.id)}]: — ${t.label}\n`;
       });
+      
+      textContent += `-----------------------------------------------------------------------\n\n`;
 
-      const reportSubTitle = targetType === 'YES' ? 'COMPLETED MILESTONE REGISTRY' : 'NOT YET ATTENDED REGISTRY';
-      const timestamp = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      let tableHeaderStr = `   #   | MEMBER NAME                              | ID NUMBER   | STATUS BREAKDOWN\n`;
+      let dividerLine    = `-------|------------------------------------------|-------------|------------------\n`;
+      textContent += tableHeaderStr + dividerLine;
 
-      // Build structured plain text file layout
-      let textContent = `==================================================\n`;
-      textContent += `           PFO TRAINING STATUS REPORT\n`;
-      textContent += `==================================================\n`;
-      textContent += `TRACK:       ${selectedTraining.group}\n`;
-      textContent += `MODULE:      ${selectedTraining.label}\n`;
-      textContent += `REGISTRY:    ${reportSubTitle}\n`;
-      textContent += `DATE:        ${timestamp}\n`;
-      textContent += `TOTAL:       ${filteredDataset.length} Records\n`;
-      textContent += `--------------------------------------------------\n\n`;
-      textContent += `   #   | MEMBER NAME                              | ID NUMBER\n`;
-      textContent += `-------|------------------------------------------|-----------\n`;
-
-      filteredDataset.forEach((item, index) => {
+      matrixRegistry.forEach((item, index) => {
         const num = String(index + 1).padEnd(4, ' ');
         const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
-        const paddedName = name.padEnd(40, ' ').substring(0, 40); // Limit length to keep table structured
-        const idNo = item.MemberIDNo || 'N/A';
+        const paddedName = name.padEnd(40, ' ').substring(0, 40);
+        const idNo = (item.MemberIDNo || 'N/A').padEnd(11, ' ');
+
+        const attendedTracks = [];
+        const notAttendedTracks = [];
+
+        selectedTrainings.forEach((t) => {
+          const recordVal = item[t.id];
+          const code = getCleanTrackCode(t.id);
+          if (recordVal === 'Y' || recordVal === 'y') {
+            attendedTracks.push(code);
+          } else {
+            notAttendedTracks.push(code);
+          }
+        });
+
+        let trackBreakdown = '';
+        if (attendedTracks.length > 0) {
+          trackBreakdown += `Attended: ${attendedTracks.join(', ')}`;
+        }
         
-        textContent += ` ${num} | ${paddedName} | ${idNo}\n`;
+        if (notAttendedTracks.length > 0) {
+          const notAttendedStr = notAttendedTracks.length === selectedTrainings.length ? 'All' : notAttendedTracks.join(', ');
+          trackBreakdown += trackBreakdown ? ` | Not Attended: ${notAttendedStr}` : `Not Attended: ${notAttendedStr}`;
+        }
+        
+        textContent += ` ${num} | ${paddedName} | ${idNo} | ${trackBreakdown}\n`;
       });
 
-      textContent += `\n--------------------------------------------------\n`;
-      textContent += `End of Report — Securely compiled via PFO Portal Engine.\n`;
+      textContent += `\n-----------------------------------------------------------------------\n`;
+      textContent += `End of Matrix Document — Securely compiled via PFO Portal Engine.\n`;
 
-      const safeFileName = `${selectedTraining.id.split('.')[0].replace(/\s+/g, '_')}_${targetType}.txt`;
-
-      // --- WEB DOWNLOAD IMPLEMENTATION ---
       if (Platform.OS === 'web') {
         const element = document.createElement("a");
         const file = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
@@ -294,18 +345,16 @@ export default function PfoTrainingReports() {
         return;
       }
 
-      // --- MOBILE DOWNLOAD IMPLEMENTATION (iOS / Android) ---
-      const { FileSystem } = require('expo-file-system');
       const fileUri = `${FileSystem.documentDirectory}${safeFileName}`;
       
       await FileSystem.writeAsStringAsync(fileUri, textContent, { encoding: FileSystem.EncodingType.UTF8 });
       await Sharing.shareAsync(fileUri, { 
         mimeType: 'text/plain', 
-        dialogTitle: `Export Text Registry: ${selectedTraining.label}` 
+        dialogTitle: `Export Matrix Registry` 
       });
 
     } catch (err) {
-      Alert.alert('Export Failed', 'An error occurred while compiling your plain text registry file.');
+      Alert.alert('Export Failed', 'An error occurred while compiling your matrix text file.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -322,26 +371,37 @@ export default function PfoTrainingReports() {
         <View style={styles.numberCell}><Text style={styles.numberText}>{index + 1}</Text></View>
         <View style={styles.nameCell}><Text style={styles.nameText} numberOfLines={1}>{fullName}</Text></View>
         <View style={styles.idCell}><Text style={styles.idText}>{item.MemberIDNo}</Text></View>
+        <View style={styles.tagCell}>
+          <View style={[styles.statusTag, item.attendedAll ? styles.tagAttended : styles.tagMissing]}>
+            <Text style={[styles.statusTagText, item.attendedAll ? styles.tagTextAttended : styles.tagTextMissing]}>
+              {item.attendedAll ? 'Attended' : 'Missing'}
+            </Text>
+          </View>
+        </View>
       </View>
     );
   };
+
+  const passedCount = useMemo(() => {
+    return reportData.filter(item => item.attendedAll).length;
+  }, [reportData]);
 
   return (
     <View style={styles.container}>
       <View style={styles.heroSection}>
         <Text style={styles.title}>📈 PFO Training Reports</Text>
-        <Text style={styles.subtitle}>Filter, verify and extract profile groups by completed milestone metrics.</Text>
+        <Text style={styles.subtitle}>Filter multiple milestone validation tracks synchronously.</Text>
       </View>
 
       <View style={styles.dropdownWrapper}>
-        <Text style={styles.fieldLabel}>Select Target Training Module:</Text>
+        <Text style={styles.fieldLabel}>Selected Filter Targets ({selectedTrainings.length}):</Text>
         <TouchableOpacity 
           style={styles.dropdownHeader} 
           activeOpacity={0.8}
           onPress={() => setDropdownOpen(!dropdownOpen)}
         >
           <Text style={styles.dropdownHeaderText} numberOfLines={1}>
-            {selectedTraining.label}
+            {selectedTrainings.length > 0 ? selectedTrainings.map(t => t.label).join(', ') : 'None selected'}
           </Text>
           <Text style={styles.dropdownArrow}>{dropdownOpen ? '▲' : '▼'}</Text>
         </TouchableOpacity>
@@ -351,7 +411,7 @@ export default function PfoTrainingReports() {
             <View style={styles.searchContainer}>
               <TextInput
                 style={styles.searchInput}
-                placeholder="🔍 Search training tracks..."
+                placeholder="🔍 Search and toggle multiple tracks..."
                 placeholderTextColor="#94a3b8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -367,52 +427,51 @@ export default function PfoTrainingReports() {
               style={styles.dropdownMenuList}
               initialNumToRender={15}
               keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.dropdownItem, item.id === selectedTraining.id && styles.dropdownItemActive]}
-                  onPress={() => {
-                    setSelectedTraining(item);
-                    setDropdownOpen(false);
-                    setSearchQuery('');
-                  }}
-                >
-                  <Text style={[styles.dropdownItemText, item.id === selectedTraining.id && styles.dropdownItemTextActive]} numberOfLines={1}>
-                    {item.label}
-                  </Text>
-                  <Text style={styles.dropdownItemGroupText}>{item.group}</Text>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const isSelected = selectedTrainings.some(t => t.id === item.id);
+                return (
+                  <TouchableOpacity
+                    style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
+                    onPress={() => handleToggleTraining(item)}
+                  >
+                    <View style={styles.checkboxContainer}>
+                      <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
+                        {isSelected ? '☑ ' : '☐ '} {item.label}
+                      </Text>
+                    </View>
+                    <Text style={styles.dropdownItemGroupText}>{item.group}</Text>
+                  </TouchableOpacity>
+                );
+              }}
               ListEmptyComponent={
                 <Text style={styles.dropdownEmptyText}>No training tracks match your entry.</Text>
               }
             />
+            
+            <TouchableOpacity 
+              style={styles.closeDropdownButton} 
+              onPress={() => setDropdownOpen(false)}
+            >
+              <Text style={styles.closeDropdownButtonText}>Apply Selected Filters</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
 
       <View style={styles.actionRowContainer}>
         <View style={styles.kpiSplitCard}>
-          <Text style={styles.kpiLabel}>Total Graduates</Text>
-          <Text style={styles.kpiValue}>{loading ? '...' : reportData.length}</Text>
+          <Text style={styles.kpiLabel}>Passed Matches</Text>
+          <Text style={styles.kpiValue}>{loading ? '...' : passedCount}</Text>
         </View>
 
         <View style={styles.buttonsContainer}>
           <TouchableOpacity 
             style={[styles.actionButton, styles.completedButton]}
             activeOpacity={0.7}
-            onPress={() => executeExtractionPipeline('YES')}
+            onPress={executeExtractionPipeline}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>📄 TXT Copy of Completed Members</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.actionButton, styles.nonCompletedButton]}
-            activeOpacity={0.7}
-            onPress={() => executeExtractionPipeline('NO')}
-            disabled={loading}
-          >
-            <Text style={styles.actionButtonText}>📄 TXT Copy of Non-Completed Members</Text>
+            <Text style={styles.actionButtonText}>📄 Export Dynamic Matrix File</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -422,12 +481,13 @@ export default function PfoTrainingReports() {
           <View style={styles.numberCellHeader}><Text style={styles.headerText}>#</Text></View>
           <View style={styles.nameCellHeader}><Text style={styles.headerText}>Member Name</Text></View>
           <View style={styles.idCellHeader}><Text style={styles.headerText}>ID Number</Text></View>
+          <View style={styles.tagCellHeader}><Text style={styles.headerText}>Status</Text></View>
         </View>
 
         {loading ? (
           <View style={styles.centeredLoader}>
             <ActivityIndicator size="large" color="#002060" />
-            <Text style={styles.loaderText}>Compiling specialized registry records...</Text>
+            <Text style={styles.loaderText}>Cross-matching dynamic criteria matrices...</Text>
           </View>
         ) : (
           <FlatList
@@ -440,7 +500,7 @@ export default function PfoTrainingReports() {
             initialNumToRender={30}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No matching membership targets have completed this specific deployment milestone track yet.</Text>
+                <Text style={styles.emptyText}>No matching membership targets found.</Text>
               </View>
             }
           />
@@ -480,34 +540,44 @@ const styles = StyleSheet.create({
   dropdownMenuList: { maxHeight: 220 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   dropdownItemActive: { backgroundColor: '#eff6ff' },
+  checkboxContainer: { flexDirection: 'row', alignItems: 'center' },
   dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
   dropdownItemTextActive: { color: '#2563eb', fontWeight: '700' },
-  dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700' },
+  dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700', paddingLeft: 22 },
+  closeDropdownButton: { backgroundColor: '#002060', margin: 8, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  closeDropdownButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   actionRowContainer: { flexDirection: 'row', alignItems: 'stretch', justifyContent: 'space-between', marginBottom: 14, gap: 10 },
   kpiSplitCard: { flex: 0.35, backgroundColor: '#ffffff', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center' },
   kpiLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   kpiValue: { fontSize: 22, fontWeight: '800', color: '#002060', marginTop: 2 },
-  buttonsContainer: { flex: 0.65, gap: 8, justifyContent: 'space-between' },
-  actionButton: { flex: 1, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, elevation: 1 },
-  completedButton: { backgroundColor: '#002060' },
-  nonCompletedButton: { backgroundColor: '#475569' }, 
-  actionButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
-  reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 20 },
-  tableHeader: { flexDirection: 'row', backgroundColor: '#002060', paddingVertical: 10, alignItems: 'center' },
-  headerText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
-  reportRow: { flexDirection: 'row', alignItems: 'center', height: 44, borderBottomWidth: 1, borderColor: '#f1f5f9' },
+  buttonsContainer: { flex: 0.65, justifyContent: 'center' },
+  actionButton: { width: '100%', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
+  completedButton: { backgroundColor: '#2563eb' },
+  actionButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
+  tableHeader: { flexDirection: 'row', backgroundColor: '#f8fafc', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingHorizontal: 12 },
+  headerText: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
+  reportRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingHorizontal: 12 },
   rowAlternate: { backgroundColor: '#f8fafc' },
-  numberCellHeader: { width: 45, paddingLeft: 14 },
-  numberCell: { width: 45, paddingLeft: 14 },
-  numberText: { fontSize: 12, color: '#94a3b8', fontWeight: '600' },
-  nameCellHeader: { flex: 1, paddingHorizontal: 8 },
-  nameCell: { flex: 1, paddingHorizontal: 8 },
+  numberCellHeader: { width: 30 },
+  numberCell: { width: 30 },
+  numberText: { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
+  nameCellHeader: { flex: 1 },
+  nameCell: { flex: 1 },
   nameText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  idCellHeader: { width: 110, paddingHorizontal: 8 },
-  idCell: { width: 110, paddingHorizontal: 8 },
-  idText: { fontSize: 12, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
-  centeredLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  loaderText: { fontSize: 13, color: '#64748b', marginTop: 10, fontWeight: '500' },
+  idCellHeader: { width: 90 },
+  idCell: { width: 90 },
+  idText: { fontSize: 12, color: '#475569', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+  tagCellHeader: { width: 80, alignItems: 'flex-end' },
+  tagCell: { width: 80, alignItems: 'flex-end' },
+  statusTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  tagAttended: { backgroundColor: '#dcfce7' },
+  tagMissing: { backgroundColor: '#fee2e2' },
+  statusTagText: { fontSize: 11, fontWeight: '700' },
+  tagTextAttended: { color: '#15803d' },
+  tagTextMissing: { color: '#b91c1c' },
+  centeredLoader: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  loaderText: { marginTop: 10, fontSize: 13, color: '#64748b', fontWeight: '500' },
   emptyContainer: { padding: 40, alignItems: 'center' },
-  emptyText: { color: '#64748b', fontSize: 13, fontWeight: '500', textAlign: 'center', lineHeight: 18 }
-});
+  emptyText: { color: '#94a3b8', fontSize: 13, fontWeight: '500' }
+}); 
