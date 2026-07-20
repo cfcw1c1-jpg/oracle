@@ -139,11 +139,8 @@ export default function PredictorScreen() {
               - Team Servant: Must have PastoralService == 'HH under members table '
               - Prayer Warrior: Must have PastoralService == 'HH members table'
               - Facilitators: Output an array containing a minimum of 2 separate valid candidates. Must have PastoralService == 'Member' or 'HH' or 'MEMBER'
-              - Team Leader: Atleast 2 years of being a participant from clp_training_participants
-              - Team Leader: Column in members table (PastoralService should be HH, MEMBER)
-              - Team Leader: Gender should be Male
-              - Team Leader: So every generation should check the clp_training_participants and members table
-              - Team Leader: Should not have been taken a Team Leader role (so clp_training_participants table and type = service_team and sub_type = Team Leader is excluded)
+              - Team Leader: Atleast 2 years of being a participant from clp_training_participants and Column in members table (PastoralService should be HH, MEMBER)
+                and Gender should be Male and So every generation should check the clp_training_participants and members table and Should not have been taken a Team Leader role (so clp_training_participants table and type = service_team and sub_type = Team Leader is excluded)  
               - Absolute Constraint: Do not assign the exact same MemberIDNo to multiple roles.`
             },
             {
