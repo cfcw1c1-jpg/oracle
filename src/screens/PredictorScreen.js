@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { supabase } from '../../lib/supabase'; // Adjust this relative path based on your folder structure
+import { supabase } from '../../lib/supabase';
 
 export default function PredictorScreen() {
   // Animation states
@@ -74,6 +74,7 @@ export default function PredictorScreen() {
       setRoster(null);
 
       // 1. Fetch participants cross-referenced with parent profiles
+      // Using !inner tells Supabase to drop rows where the member details do not exist
       const { data: participants, error } = await supabase
         .from('clp_training_participants')
         .select(`
@@ -81,45 +82,78 @@ export default function PredictorScreen() {
           type,
           sub_type,
           clp_training_id,
-          members (
+          members!inner (
             Firstname,
             Lastname,
             PastoralService,
-            Gender
+            Gender,
+            NameOfHouseholdHead
+          ),
+          clp_trainings (
+            start_date,
+            end_date
           )
         `);
 
       if (error) throw error;
 
-      // 2. Map and filter valid candidates by aggregating past role workloads
+      // 2. Map and filter valid candidates by aggregating past role workloads correctly
       const memberHistoryMap = {};
+      
       participants.forEach(p => {
         if (!p.members) return;
+        
+        // DATABASE EXTRA PROTECTION LAYER:
+        // Double-check string value matches to catch any edge cases or alternative casing configurations
+        const rawGender = p.members.Gender ? p.members.Gender.trim().toLowerCase() : '';
+        if (rawGender === 'female' || rawGender === 'f') {
+          return; // Skip and exclude this record completely from the data pool sent to the AI
+        }
+
         const id = p.MemberIDNo;
+        const recordDate = p.clp_trainings?.end_date ? String(p.clp_trainings.end_date) : null;
         
         if (!memberHistoryMap[id]) {
+          const cleanPastoralRole = p.members.PastoralService ? p.members.PastoralService.trim().toUpperCase() : 'MEMBER';
+          
           memberHistoryMap[id] = {
             idNo: id,
-            name: `${p.members.Firstname} ${p.members.Lastname}`,
-            pastoralRole: p.members.PastoralService || 'Member',
-            pastRoles: []
+            name: `${p.members.Firstname} ${p.members.Lastname}`.trim(),
+            pastoralRole: cleanPastoralRole,
+            pastRoles: [],
+            gender: 'male', // Explicitly typed because females are fully pruned out
+            dateGraduated: recordDate || '2026-01-01', 
+            nameOfHouseholdHead: p.members.NameOfHouseholdHead ? p.members.NameOfHouseholdHead.trim() : ''
           };
+        } else {
+          // Keep updating history timeline with oldest real graduation records found
+          if (recordDate && (memberHistoryMap[id].dateGraduated === '2026-01-01' || recordDate < memberHistoryMap[id].dateGraduated)) {
+            memberHistoryMap[id].dateGraduated = recordDate;
+          }
         }
+
+        // Aggregate history items across variations
         if (p.type === 'service_team' && p.sub_type) {
-          memberHistoryMap[id].pastRoles.push(p.sub_type);
+          if (!memberHistoryMap[id].pastRoles.includes(p.sub_type)) {
+            memberHistoryMap[id].pastRoles.push(p.sub_type);
+          }
         } else if (p.type === 'participant') {
-          memberHistoryMap[id].pastRoles.push('Graduate/Participant');
+          if (!memberHistoryMap[id].pastRoles.includes('Graduate/Participant')) {
+            memberHistoryMap[id].pastRoles.push('Graduate/Participant');
+          }
         }
       });
 
       const candidatesList = Object.values(memberHistoryMap);
 
       if (candidatesList.length === 0) {
-        throw new Error("No historical data found in clp_training_participants to evaluate.");
+        throw new Error("No qualified historical male candidates found to evaluate.");
       }
 
+      console.log(candidatesList);
+
       // 3. Make the API call directly via native HTTPS Fetch
-      const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY; // Secure this or use a backend endpoint instead
+      const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -131,22 +165,53 @@ export default function PredictorScreen() {
           messages: [
             {
               role: 'system',
-              content: `You are an expert church administrative AI assistant predicting leadership configurations for the next dynamic Catholic Life Program (CLP) batch cycle.
-              Analyze historical deployments and structures from the given candidate dataset. The positions shouldn't be assigned to the same individual, and each role has specific pastoral role requirements. Also, their Lastname shouldn't the the same
+              content: `You are an expert church administrative AI assistant predicting leadership configurations for a Catholic Life Program (CLP) batch cycle.
               
-              Enforce these strict matching rules:
-              - Supervising Unit Head: Must have pastoralRole == 'UH'
-              - Team Servant: Must have PastoralService == 'HH under members table '
-              - Prayer Warrior: Must have PastoralService == 'HH members table'
-              - Facilitators: Output an array containing a minimum of 2 separate valid candidates. Must have PastoralService == 'Member' or 'HH' or 'MEMBER'
-              - Team Leader: Atleast 2 years of being a participant from clp_training_participants and Column in members table (PastoralService should be HH, MEMBER)
-                and Gender should be Male and So every generation should check the clp_training_participants and members table and Should not have been taken a Team Leader role (so clp_training_participants table and type = service_team and sub_type = Team Leader is excluded)  
-              - Absolute Constraint: Do not assign the exact same MemberIDNo to multiple roles.`
+              CRITICAL DATA POOL CONFIGURATION: 
+              - The candidate data pool provided contains exclusively eligible male records.
+              - The "pastoralRole" attribute is strictly capitalized string: 'HH', 'UH', or 'MEMBER'.
+              - The current system calendar anchor year is 2026. Evaluate "dateGraduated" timelines relative to 2026.
+
+              Enforce these structural conditions perfectly. Disregarding any qualification rule means the roster output is invalid.
+
+              1. Team Leader:
+                 - pastoralRole MUST be exactly 'HH' or 'MEMBER'. Do not select 'UH'.
+                 - dateGraduated must be more than 2 years ago (dated 2024 or earlier).
+                 - pastRoles MUST NOT contain 'Team Leader'.
+
+              2. Assistant Team Leader:
+                 - pastoralRole MUST be exactly 'HH' or 'MEMBER'. Do not select 'UH'.
+                 - dateGraduated must be more than 2 years ago (dated 2024 or earlier).
+                 - pastRoles MUST NOT contain 'Assistant Team Leader'.
+
+              3. Supervising Unit Head:
+                 - pastoralRole MUST be exactly 'UH'.
+
+              4. Prayer Warrior:
+                 - pastoralRole MUST be exactly 'HH'.
+                 - pastRoles MUST contain 'Prayer Warrior'.
+
+              5. Music Ministry:
+                 - pastoralRole MUST be exactly 'HH' or 'UH'.
+                 - pastRoles MUST contain 'Music Ministry'.
+
+              6. Team Servant (Servant Head):
+                 - pastoralRole MUST be exactly 'HH'.
+                 - Cross-Reference Rule: The candidate's "nameOfHouseholdHead" string value MUST match the exact full name text of whichever candidate you assigned to the "supervisingUnitHead" position above.
+
+              7. Facilitators:
+                 - Provide an array containing at least 2 candidates.
+                 - pastoralRole MUST be exactly 'MEMBER'.
+                 - pastoralRole should not be 'CH'.
+                 - dateGraduated must be at least 1 year ago (dated 2025 or earlier).
+
+              Universal Strict Constraints:
+              - No Duplicate Assignments: A specific unique "idNo" can only appear ONCE across the entire roster response setup.
+              - Try to minimize selecting multiple people with the same Lastname if alternatives exist.`
             },
             {
               role: 'user',
-              content: `Here is the current pool matrix dataset: ${JSON.stringify(candidatesList)}. 
-              Formulate the absolute best optimal leadership structural profile.`
+              content: `Here is the current pre-filtered male candidate dataset: ${JSON.stringify(candidatesList)}. Formulate the absolute best optimal leadership structural profile.`
             }
           ],
           response_format: {
@@ -231,7 +296,7 @@ export default function PredictorScreen() {
         </View>
 
         {/* Informational Header */}
-        <Text style={styles.title}>AI Leadership Matrix Predictor</Text>
+        <Text style={styles.title}>Christian Life Program - Oracle</Text>
         <Text style={styles.subtitle}>
           Evaluates past historical training datasets against structural roles to project optimized leadership rosters.
         </Text>
