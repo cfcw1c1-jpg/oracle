@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
     Dimensions,
@@ -49,49 +50,55 @@ export default function Page() {
   // Reusable Sidebar Nav Links Component
   const NavigationLinks = () => (
     <View style={styles.navLinksContainer}>
-      <TouchableOpacity 
-        style={[styles.sidebarButton, currentTab === 'members' && styles.activeSidebarButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'members' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('members'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'members' && styles.activeSidebarText]}>👥 Directory</Text>
+        <Ionicons name="people-outline" size={18} color={currentTab === 'members' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'members' && styles.activeSidebarText]}>Directory</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity 
-        style={[styles.sidebarButton, currentTab === 'pfo' && styles.activeSidebarButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'pfo' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('pfo'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'pfo' && styles.activeSidebarText]}>📊 PFO Trainings</Text>
+        <Ionicons name="bar-chart-outline" size={18} color={currentTab === 'pfo' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'pfo' && styles.activeSidebarText]}>PFO Trainings</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity 
-        style={[styles.sidebarButton, currentTab === 'pfoReports' && styles.activeSidebarButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'pfoReports' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('pfoReports'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'pfoReports' && styles.activeSidebarText]}>📈 PFO Reports</Text>
+        <Ionicons name="trending-up-outline" size={18} color={currentTab === 'pfoReports' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'pfoReports' && styles.activeSidebarText]}>PFO Reports</Text>
       </TouchableOpacity>
 
       {/* Added CLP Maintenance to the Navigation Drawer Menu */}
-      <TouchableOpacity 
-        style={[styles.sidebarButton, currentTab === 'clp' && styles.activeSidebarButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'clp' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('clp'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'clp' && styles.activeSidebarText]}>🛠️ CLP Maintenance</Text>
+        <Ionicons name="construct-outline" size={18} color={currentTab === 'clp' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'clp' && styles.activeSidebarText]}>CLP Maintenance</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity 
-        style={[styles.sidebarButton, currentTab === 'predictor' && styles.activeSidebarButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'predictor' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('predictor'); setIsMobileMenuOpen(false); }}
       >
-        <Text style={[styles.sidebarButtonText, currentTab === 'predictor' && styles.activeSidebarText]}>🔮 The ORACLE</Text>
+        <Ionicons name="sparkles-outline" size={18} color={currentTab === 'predictor' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'predictor' && styles.activeSidebarText]}>The ORACLE</Text>
       </TouchableOpacity>
 
       <View style={styles.spacer} />
 
-      <TouchableOpacity 
-        style={[styles.sidebarButton, styles.logoutButton]} 
+      <TouchableOpacity
+        style={[styles.sidebarButton, styles.logoutButton]}
         onPress={() => supabase.auth.signOut()}
       >
-        <Text style={styles.logoutText}>🚪 Sign Out</Text>
+        <Ionicons name="log-out-outline" size={18} color="#ef4444" style={styles.sidebarIcon} />
+        <Text style={styles.logoutText}>Sign Out</Text>
       </TouchableOpacity>
     </View>
   );
@@ -102,11 +109,11 @@ export default function Page() {
       <View style={styles.header}>
         <View style={styles.headerContent}>
           {!isLargeScreen && (
-            <TouchableOpacity 
-              style={styles.menuToggleButton} 
+            <TouchableOpacity
+              style={styles.menuToggleButton}
               onPress={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
-              <Text style={styles.menuToggleText}>{isMobileMenuOpen ? '✕' : '☰'}</Text>
+              <Ionicons name={isMobileMenuOpen ? 'close' : 'menu'} size={24} color="#fff" />
             </TouchableOpacity>
           )}
           <Text style={styles.headerTitle}>ORACLE</Text>
@@ -181,7 +188,6 @@ const styles = StyleSheet.create({
   header: { backgroundColor: '#002060', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderColor: '#001540', zIndex: 10 },
   headerContent: { width: '100%', flexDirection: 'row', alignItems: 'center' },
   menuToggleButton: { marginRight: 16, padding: 4 },
-  menuToggleText: { color: '#fff', fontSize: 22, fontWeight: '700' },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: 2 },
   headerSubtitle: { fontSize: 11, color: '#93c5fd', marginLeft: 10, letterSpacing: 1, fontWeight: '500', marginTop: 4 },
   
@@ -194,6 +200,7 @@ const styles = StyleSheet.create({
   sidebarButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, marginBottom: 6 },
   activeSidebarButton: { backgroundColor: '#eff6ff' },
   sidebarButtonText: { fontSize: 14, color: '#475569', fontWeight: '600' },
+  sidebarIcon: { marginRight: 10 },
   activeSidebarText: { color: '#002060', fontWeight: '700' },
   spacer: { flex: 1 },
   logoutButton: { backgroundColor: '#fef2f2', marginTop: 'auto' },

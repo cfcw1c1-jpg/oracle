@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
@@ -389,7 +390,10 @@ export default function PfoTrainingReports() {
   return (
     <View style={styles.container}>
       <View style={styles.heroSection}>
-        <Text style={styles.title}>📈 PFO Training Reports</Text>
+        <View style={styles.titleRow}>
+          <Ionicons name="trending-up-outline" size={22} color="#0f172a" style={styles.titleIcon} />
+          <Text style={styles.title}>PFO Training Reports</Text>
+        </View>
         <Text style={styles.subtitle}>Filter multiple milestone validation tracks synchronously.</Text>
       </View>
 
@@ -403,15 +407,16 @@ export default function PfoTrainingReports() {
           <Text style={styles.dropdownHeaderText} numberOfLines={1}>
             {selectedTrainings.length > 0 ? selectedTrainings.map(t => t.label).join(', ') : 'None selected'}
           </Text>
-          <Text style={styles.dropdownArrow}>{dropdownOpen ? '▲' : '▼'}</Text>
+          <Ionicons name={dropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
         </TouchableOpacity>
 
         {dropdownOpen && (
           <View style={styles.dropdownMenuContainer}>
             <View style={styles.searchContainer}>
+              <Ionicons name="search" size={15} color="#94a3b8" style={styles.searchIcon} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="🔍 Search and toggle multiple tracks..."
+                placeholder="Search and toggle multiple tracks..."
                 placeholderTextColor="#94a3b8"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -435,8 +440,14 @@ export default function PfoTrainingReports() {
                     onPress={() => handleToggleTraining(item)}
                   >
                     <View style={styles.checkboxContainer}>
+                      <Ionicons
+                        name={isSelected ? 'checkbox' : 'square-outline'}
+                        size={16}
+                        color={isSelected ? '#2563eb' : '#94a3b8'}
+                        style={styles.checkboxIcon}
+                      />
                       <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
-                        {isSelected ? '☑ ' : '☐ '} {item.label}
+                        {item.label}
                       </Text>
                     </View>
                     <Text style={styles.dropdownItemGroupText}>{item.group}</Text>
@@ -471,7 +482,8 @@ export default function PfoTrainingReports() {
             onPress={executeExtractionPipeline}
             disabled={loading}
           >
-            <Text style={styles.actionButtonText}>📄 Export Dynamic Matrix File</Text>
+            <Ionicons name="download-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
+            <Text style={styles.actionButtonText}>Export Dynamic Matrix File</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -513,6 +525,8 @@ export default function PfoTrainingReports() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', paddingHorizontal: 16 },
   heroSection: { paddingVertical: 14 },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
+  titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
   dropdownWrapper: { zIndex: 10, marginBottom: 14 },
@@ -524,7 +538,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1
   },
   dropdownHeaderText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
-  dropdownArrow: { fontSize: 12, color: '#64748b', fontWeight: '700' },
   dropdownMenuContainer: {
     position: 'absolute', top: 66, left: 0, right: 0, backgroundColor: '#ffffff',
     borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1', shadowColor: '#0f172a',
@@ -532,15 +545,18 @@ const styles = StyleSheet.create({
     zIndex: 100, paddingBottom: 4
   },
   searchContainer: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#f8fafc', margin: 8, borderRadius: 8, paddingHorizontal: 10,
     paddingVertical: Platform.OS === 'ios' ? 8 : 4, borderWidth: 1, borderColor: '#e2e8f0'
   },
-  searchInput: { fontSize: 13, color: '#1e293b', fontWeight: '500' },
+  searchIcon: { marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 13, color: '#1e293b', fontWeight: '500' },
   dropdownEmptyText: { textAlign: 'center', color: '#94a3b8', paddingVertical: 20, fontSize: 13 },
   dropdownMenuList: { maxHeight: 220 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   dropdownItemActive: { backgroundColor: '#eff6ff' },
   checkboxContainer: { flexDirection: 'row', alignItems: 'center' },
+  checkboxIcon: { marginRight: 8 },
   dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
   dropdownItemTextActive: { color: '#2563eb', fontWeight: '700' },
   dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700', paddingLeft: 22 },
@@ -551,8 +567,9 @@ const styles = StyleSheet.create({
   kpiLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   kpiValue: { fontSize: 22, fontWeight: '800', color: '#002060', marginTop: 2 },
   buttonsContainer: { flex: 0.65, justifyContent: 'center' },
-  actionButton: { width: '100%', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
+  actionButton: { flexDirection: 'row', width: '100%', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
   completedButton: { backgroundColor: '#2563eb' },
+  actionButtonIcon: { marginRight: 8 },
   actionButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
   tableHeader: { flexDirection: 'row', backgroundColor: '#f8fafc', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingHorizontal: 12 },

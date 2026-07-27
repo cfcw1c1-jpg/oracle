@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -283,7 +284,7 @@ export default function PfoList() {
                 activeOpacity={0.5}
               >
                 <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
-                  {isChecked && <Text style={styles.checkMark}>✓</Text>}
+                  {isChecked && <Ionicons name="checkmark" size={14} color="#ffffff" />}
                 </View>
               </TouchableOpacity>
             </View>
@@ -300,14 +301,18 @@ export default function PfoList() {
   return (
     <View style={styles.container}>
       <View style={styles.heroSection}>
-        <Text style={styles.title}>📊 Pastoral Formation Grid Matrix</Text>
+        <View style={styles.titleRow}>
+          <Ionicons name="bar-chart-outline" size={22} color="#0f172a" style={styles.titleIcon} />
+          <Text style={styles.title}>Pastoral Formation Grid Matrix</Text>
+        </View>
         <Text style={styles.subtitle}>Manage qualifications and course milestones instantly across the roster.</Text>
       </View>
 
       <View style={styles.searchContainer}>
+        <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="🔍 Search name or ID..."
+          placeholder="Search name or ID..."
           placeholderTextColor="#94a3b8"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -368,16 +373,20 @@ export default function PfoList() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', paddingHorizontal: 16 },
   heroSection: { paddingVertical: 14 },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
+  titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   searchContainer: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#ffffff', borderRadius: 10, paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 5, borderWidth: 1, borderColor: '#e2e8f0',
-    marginBottom: 14, maxWidth: 360, shadowColor: '#0f172a', 
+    marginBottom: 14, maxWidth: 360, shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1,
   },
-  searchInput: { fontSize: 14, color: '#1e293b', fontWeight: '500' },
+  searchIcon: { marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 14, color: '#1e293b', fontWeight: '500' },
   tableWrapper: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 20 },
   tableRowGroupHeader: { flexDirection: 'row', backgroundColor: '#1e293b', borderBottomWidth: 1, borderColor: '#334155' },
   groupHeaderCell: { justifyContent: 'center', alignItems: 'center', paddingVertical: 8, borderRightWidth: 1, borderColor: '#334155', backgroundColor: '#0f172a' },
@@ -399,7 +408,6 @@ const styles = StyleSheet.create({
   idText: { fontSize: 12, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
   checkbox: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: '#cbd5e1', backgroundColor: '#ffffff', justifyContent: 'center', alignItems: 'center' },
   checkboxChecked: { backgroundColor: '#22c55e', borderColor: '#16a34a' },
-  checkMark: { color: '#ffffff', fontSize: 12, fontWeight: '900', lineHeight: 14 },
   emptyContainer: { padding: 40, alignItems: 'center', width: 300 },
   emptyText: { color: '#64748b', fontSize: 14, fontWeight: '500' }
 });

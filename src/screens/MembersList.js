@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../lib/supabase';
@@ -71,15 +72,19 @@ export default function MembersList() {
   return (
     <View style={styles.container}>
       <View style={styles.heroSection}>
-        <Text style={styles.title}>👥 CFC Members Directory</Text>
+        <View style={styles.titleRow}>
+          <Ionicons name="people-outline" size={22} color="#0f172a" style={styles.titleIcon} />
+          <Text style={styles.title}>CFC Members Directory</Text>
+        </View>
         <Text style={styles.subtitle}>Manage and browse active community profiles, assigned chapters, and household groups.</Text>
       </View>
 
       {/* Added Search Bar */}
       <View style={styles.searchContainer}>
+        <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="🔍 Search name or ID..."
+          placeholder="Search name or ID..."
           placeholderTextColor="#94a3b8"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -147,17 +152,21 @@ export default function MembersList() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', paddingHorizontal: 16 },
   heroSection: { paddingVertical: 14 },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
+  titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 14, color: '#64748b', marginTop: 4, lineHeight: 20 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  
+
   searchContainer: {
+    flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#ffffff', borderRadius: 10, paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 5, borderWidth: 1, borderColor: '#e2e8f0',
-    marginBottom: 14, maxWidth: 360, shadowColor: '#0f172a', 
+    marginBottom: 14, maxWidth: 360, shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1,
   },
-  searchInput: { fontSize: 14, color: '#1e293b', fontWeight: '500' },
+  searchIcon: { marginRight: 8 },
+  searchInput: { flex: 1, fontSize: 14, color: '#1e293b', fontWeight: '500' },
   
   listPadding: { paddingBottom: 24 },
   card: { flexDirection: Platform.OS === 'web' ? 'row' : 'column', justifyContent: 'space-between', backgroundColor: '#ffffff', padding: 16, borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0', ...Platform.select({

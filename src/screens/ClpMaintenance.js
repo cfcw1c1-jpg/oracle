@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -318,11 +319,11 @@ export default function ClpMaintenance() {
             <Text style={styles.subTypeTableLabel}>{item.sub_type}</Text>
           )}
         </View>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDeleteParticipant(item)}
         >
-          <Text style={styles.deleteButtonText}>🗑️</Text>
+          <Ionicons name="trash-outline" size={16} color="#ef4444" />
         </TouchableOpacity>
       </View>
     );
@@ -332,7 +333,10 @@ export default function ClpMaintenance() {
     <View style={styles.container}>
       {/* Header Panel */}
       <View style={styles.header}>
-        <Text style={styles.title}>🛠️ CLP Training Maintenance</Text>
+        <View style={styles.titleRow}>
+          <Ionicons name="construct-outline" size={22} color="#0f172a" style={styles.titleIcon} />
+          <Text style={styles.title}>CLP Training Maintenance</Text>
+        </View>
         <Text style={styles.subtitle}>Configure active training venues, event intervals, and registries.</Text>
       </View>
 
@@ -340,11 +344,12 @@ export default function ClpMaintenance() {
       <View style={styles.sectionCard}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionLabel}>Select Active Training Batch:</Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.inlineAddBatchBtn}
             onPress={() => setTrainingModalVisible(true)}
           >
-            <Text style={styles.inlineAddBatchBtnText}>➕ Add New Batch</Text>
+            <Ionicons name="add-outline" size={14} color="#334155" style={styles.inlineAddBatchBtnIcon} />
+            <Text style={styles.inlineAddBatchBtnText}>Add New Batch</Text>
           </TouchableOpacity>
         </View>
         
@@ -361,9 +366,12 @@ export default function ClpMaintenance() {
                 style={[styles.batchChip, isSelected && styles.batchChipActive]}
                 onPress={() => setSelectedTraining(t)}
               >
-                <Text style={[styles.batchChipText, isSelected && styles.batchChipTextActive]} numberOfLines={1}>
-                  📍 {t.venue}
-                </Text>
+                <View style={styles.batchChipVenueRow}>
+                  <Ionicons name="location-outline" size={12} color={isSelected ? '#2563eb' : '#334155'} style={styles.batchChipVenueIcon} />
+                  <Text style={[styles.batchChipText, isSelected && styles.batchChipTextActive]} numberOfLines={1}>
+                    {t.venue}
+                  </Text>
+                </View>
                 <Text style={[styles.batchChipSubText, isSelected && styles.batchChipSubTextActive]}>
                   {t.start_date} to {t.end_date}
                 </Text>
@@ -396,11 +404,12 @@ export default function ClpMaintenance() {
         <View style={styles.tableHeader}>
           <Text style={styles.tableHeaderText}>Enrolled Roster Directory</Text>
           {selectedTraining && (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.addParticipantBtn}
               onPress={() => setParticipantModalVisible(true)}
             >
-              <Text style={styles.addParticipantBtnText}>➕ Enlist Members</Text>
+              <Ionicons name="add-outline" size={14} color="#ffffff" style={styles.addParticipantBtnIcon} />
+              <Text style={styles.addParticipantBtnText}>Enlist Members</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -512,11 +521,11 @@ export default function ClpMaintenance() {
                         <Text style={styles.stagedChipText}>
                           {member.Firstname} {member.Lastname}
                         </Text>
-                        <TouchableOpacity 
-                          style={styles.stagedChipRemove} 
+                        <TouchableOpacity
+                          style={styles.stagedChipRemove}
                           onPress={() => removeStagedMember(member.MemberIDNo)}
                         >
-                          <Text style={styles.stagedChipRemoveText}>✕</Text>
+                          <Ionicons name="close" size={13} color="#1e40af" />
                         </TouchableOpacity>
                       </View>
                     ))}
@@ -638,17 +647,22 @@ const webInputStyle = {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 10 : 0 },
   header: { paddingVertical: 14 },
+  titleRow: { flexDirection: 'row', alignItems: 'center' },
+  titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
   sectionCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: '#475569', textTransform: 'uppercase' },
-  inlineAddBatchBtn: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' },
+  inlineAddBatchBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' },
+  inlineAddBatchBtnIcon: { marginRight: 4 },
   inlineAddBatchBtnText: { fontSize: 11, fontWeight: '700', color: '#334155' },
   horizontalScroll: { flexDirection: 'row' },
   batchChip: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0', minWidth: 140, maxWidth: 180 },
   batchChipActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
-  batchChipText: { fontSize: 13, fontWeight: '600', color: '#334155' },
+  batchChipVenueRow: { flexDirection: 'row', alignItems: 'center' },
+  batchChipVenueIcon: { marginRight: 4 },
+  batchChipText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
   batchChipTextActive: { color: '#2563eb' },
   batchChipSubText: { fontSize: 10, color: '#64748b', marginTop: 2 },
   batchChipSubTextActive: { color: '#3b82f6' },
@@ -659,7 +673,8 @@ const styles = StyleSheet.create({
   tableCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 16 },
   tableHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderColor: '#e2e8f0' },
   tableHeaderText: { fontSize: 12, fontWeight: '700', color: '#475569', textTransform: 'uppercase' },
-  addParticipantBtn: { backgroundColor: '#002060', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+  addParticipantBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#002060', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+  addParticipantBtnIcon: { marginRight: 4 },
   addParticipantBtnText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   rowAlternate: { backgroundColor: '#f8fafc' },
@@ -675,7 +690,6 @@ const styles = StyleSheet.create({
   textParticipant: { color: '#b45309' },
   subTypeTableLabel: { fontSize: 10, fontWeight: '500', color: '#64748b', marginTop: 3, textAlign: 'center' },
   deleteButton: { padding: 6 },
-  deleteButtonText: { fontSize: 14 },
   centered: { padding: 40, justifyContent: 'center', alignItems: 'center' },
   emptyContainer: { padding: 40, alignItems: 'center' },
   emptyText: { color: '#94a3b8', fontSize: 12, fontWeight: '500', textAlign: 'center', lineHeight: 18 },
@@ -718,8 +732,7 @@ const styles = StyleSheet.create({
   stagedChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
   stagedChipText: { fontSize: 12, fontWeight: '600', color: '#1e40af' },
   stagedChipRemove: { marginLeft: 6, paddingHorizontal: 2 },
-  stagedChipRemoveText: { fontSize: 11, color: '#1e40af', fontWeight: '700' },
-  
+
   subTypeSelectorGrid: { 
     flexDirection: 'row', 
     flexWrap: 'wrap', 

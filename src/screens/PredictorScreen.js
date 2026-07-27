@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -291,7 +292,7 @@ export default function PredictorScreen() {
         <View style={styles.animationContainer}>
           <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseValue }] }]} />
           <Animated.View style={[styles.globeWrapper, { transform: [{ rotate: spin }] }]}>
-            <Text style={styles.globeEmoji}>🌐</Text>
+            <Ionicons name="globe-outline" size={40} color="#002060" />
           </Animated.View>
         </View>
 
@@ -310,7 +311,10 @@ export default function PredictorScreen() {
           {predicting ? (
             <ActivityIndicator size="small" color="#ffffff" />
           ) : (
-            <Text style={styles.actionBtnText}>🔮 Generate Next Batch Roster</Text>
+            <>
+              <Ionicons name="sparkles-outline" size={15} color="#ffffff" style={styles.actionBtnIcon} />
+              <Text style={styles.actionBtnText}>Generate Next Batch Roster</Text>
+            </>
           )}
         </TouchableOpacity>
 
@@ -382,15 +386,6 @@ const styles = StyleSheet.create({
       default: { elevation: 4, shadowColor: '#002060', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 6 }
     }),
   },
-  globeEmoji: {
-    fontSize: 44,
-    textAlign: 'center',
-    ...Platform.select({
-      ios: { marginTop: 0 },
-      android: { marginTop: -4 },
-      web: { userSelect: 'none' }
-    })
-  },
   title: {
     fontSize: 22,
     fontWeight: '800',
@@ -407,18 +402,23 @@ const styles = StyleSheet.create({
     maxWidth: 420,
   },
   actionBtn: {
+    flexDirection: 'row',
     backgroundColor: '#002060',
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
     width: '100%',
     maxWidth: 400,
+    justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
   },
   actionBtnDisabled: {
     backgroundColor: '#64748b',
     opacity: 0.7,
+  },
+  actionBtnIcon: {
+    marginRight: 8,
   },
   actionBtnText: {
     color: '#ffffff',
