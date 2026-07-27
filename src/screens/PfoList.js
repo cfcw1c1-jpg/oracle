@@ -14,7 +14,7 @@ import {
 import { supabase } from '../../lib/supabase';
 
 // Structured columns grouped by their respective categories
-const TRAINING_COLUMNS = [
+export const TRAINING_COLUMNS = [
   // Evangelism Tracks
   { id: 'ET_1-1. The Great Commission', label: 'ET 1', group: 'Evangelism Tracks' },
   { id: 'ET_2-2. Evangelization in CFC', label: 'ET 2', group: 'Evangelism Tracks' },

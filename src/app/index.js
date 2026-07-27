@@ -15,6 +15,7 @@ import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP 
 import MembersList from '../screens/MembersList';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
+import PfoStatGenerator from '../screens/PfoStatGenerator';
 import PredictorScreen from '../screens/PredictorScreen';
 
 export default function Page() {
@@ -72,6 +73,14 @@ export default function Page() {
       >
         <Ionicons name="trending-up-outline" size={18} color={currentTab === 'pfoReports' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
         <Text style={[styles.sidebarButtonText, currentTab === 'pfoReports' && styles.activeSidebarText]}>PFO Reports</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'pfoStats' && styles.activeSidebarButton]}
+        onPress={() => { setCurrentTab('pfoStats'); setIsMobileMenuOpen(false); }}
+      >
+        <Ionicons name="analytics-outline" size={18} color={currentTab === 'pfoStats' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'pfoStats' && styles.activeSidebarText]}>Formation Stats</Text>
       </TouchableOpacity>
 
       {/* Added CLP Maintenance to the Navigation Drawer Menu */}
@@ -146,6 +155,7 @@ export default function Page() {
           {currentTab === 'members' && <MembersList />}
           {currentTab === 'pfo' && <PfoList />}
           {currentTab === 'pfoReports' && <PfoReport />}
+          {currentTab === 'pfoStats' && <PfoStatGenerator />}
           {currentTab === 'clp' && <ClpMaintenance />}
           {currentTab === 'predictor' && <PredictorScreen />}
         </View>
