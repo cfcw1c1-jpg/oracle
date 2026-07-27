@@ -15,17 +15,16 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
-// Checkbox/Gender/Action stay a fixed width (their content is compact and
+// Checkbox/Gender stay a fixed width (their content is compact and
 // fixed-size); Name/Household/Role grow to fill the row on wide screens but
 // won't shrink below their minWidth, so the table scrolls horizontally instead
 // of squeezing text on narrow ones.
 const CHECKBOX_COL = { width: 44 };
 const NAME_COL = { flexGrow: 2.2, flexShrink: 1, flexBasis: 0, minWidth: 200 };
 const HOUSEHOLD_COL = { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 };
-const GENDER_COL = { width: 110 };
+const GENDER_COL = { width: 120 };
 const ROLE_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 180 };
-const ACTION_COL = { width: 48 };
-const TABLE_MIN_WIDTH = 44 + 200 + 160 + 110 + 180 + 48;
+const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 180;
 
 function getInitials(firstName, lastName) {
   const first = (firstName || '').trim().charAt(0);
@@ -33,16 +32,42 @@ function getInitials(firstName, lastName) {
   return (first + last).toUpperCase() || '?';
 }
 
+// One tap flips Male<->Female directly; an unset gender defaults to Male on
+// first tap so there's always a next value to switch to.
+function getNextGender(currentGender) {
+  if (currentGender === 'Male') return 'Female';
+  if (currentGender === 'Female') return 'Male';
+  return 'Male';
+}
+
+// PastoralService is stored as a short code; spell it out for display.
+const ROLE_LABELS = {
+  CL: 'Chapter Leader',
+  UL: 'Unit Leader',
+  UH: 'Unit Head',
+  HH: 'Household Head',
+  CH: 'Chapter Head',
+  FMHHL: 'Family Min Household Leader',
+  MEMBER: 'Member',
+  HHL: 'Household Leader',
+  FMHH: 'Family Min Household Head',
+};
+
+function getRoleLabel(code) {
+  if (!code || code === 'All') return code || 'Member';
+  return ROLE_LABELS[code.trim().toUpperCase()] || code;
+}
+
 // A small "value: X ▾" pressable that opens a single-select list of options.
 // Used three times below (Gender / Role / Area) so it's factored out once.
-function FilterDropdown({ label, value, options, onChange }) {
+function FilterDropdown({ label, value, options, onChange, getLabel = (v) => v }) {
   const [open, setOpen] = useState(false);
 
   return (
     <View style={styles.filterDropdownWrapper}>
       <TouchableOpacity style={styles.filterDropdownButton} onPress={() => setOpen((o) => !o)}>
         <Text style={styles.filterDropdownLabel} numberOfLines={1}>
-          {label}: <Text style={styles.filterDropdownValue}>{value}</Text>
+          {label}: <Text style={styles.filterDropdownValue}>{getLabel(value)}</Text>
         </Text>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" />
       </TouchableOpacity>
@@ -57,7 +82,7 @@ function FilterDropdown({ label, value, options, onChange }) {
                 onPress={() => { onChange(option); setOpen(false); }}
               >
                 <Text style={[styles.filterDropdownItemText, option === value && styles.filterDropdownItemTextActive]}>
-                  {option}
+                  {getLabel(option)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -80,7 +105,6 @@ export default function MembersList() {
   const [sortAsc, setSortAsc] = useState(true);
 
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [openMenuId, setOpenMenuId] = useState(null);
 
   useEffect(() => {
     fetchMembers();
@@ -124,12 +148,11 @@ export default function MembersList() {
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
     } finally {
       setUpdatingId(null);
-      setOpenMenuId(null);
     }
   }
 
   const roleOptions = useMemo(() => {
-    const values = new Set(members.map((m) => (m.pastoral_service || 'MEMBER').trim()));
+    const values = new Set(members.map((m) => (m.PastoralService || 'MEMBER').trim()));
     return ['All', ...Array.from(values).sort()];
   }, [members]);
 
@@ -148,7 +171,7 @@ export default function MembersList() {
       const idStr = member.MemberIDNo?.toString().toLowerCase() || '';
       const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
       const matchesGender = genderFilter === 'All' || member.Gender === genderFilter;
-      const matchesRole = roleFilter === 'All' || (member.pastoral_service || 'MEMBER').trim() === roleFilter;
+      const matchesRole = roleFilter === 'All' || (member.PastoralService || 'MEMBER').trim() === roleFilter;
       const matchesArea = areaFilter === 'All' || (member.AreaName || 'No Area').trim() === areaFilter;
       return matchesSearch && matchesGender && matchesRole && matchesArea;
     });
@@ -207,7 +230,7 @@ export default function MembersList() {
         <View style={styles.filterGroup}>
           <Ionicons name="filter-outline" size={14} color="#64748b" style={{ marginRight: 2 }} />
           <FilterDropdown label="Gender" value={genderFilter} options={['All', 'Male', 'Female']} onChange={setGenderFilter} />
-          <FilterDropdown label="Role" value={roleFilter} options={roleOptions} onChange={setRoleFilter} />
+          <FilterDropdown label="Role" value={roleFilter} options={roleOptions} onChange={setRoleFilter} getLabel={getRoleLabel} />
           <FilterDropdown label="Area" value={areaFilter} options={areaOptions} onChange={setAreaFilter} />
         </View>
 
@@ -222,7 +245,7 @@ export default function MembersList() {
       </View>
 
       <View style={styles.tableCard}>
-        <ScrollView horizontal showsHorizontalScrollIndicator>
+        <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={{ flexGrow: 1 }}>
           <View style={{ minWidth: TABLE_MIN_WIDTH, flex: 1 }}>
             {/* Table Header */}
             <View style={styles.tableHeaderRow}>
@@ -241,10 +264,9 @@ export default function MembersList() {
               <View style={[styles.headerCell, GENDER_COL]}>
                 <Text style={styles.headerText}>GENDER</Text>
               </View>
-              <View style={[styles.headerCell, ROLE_COL]}>
+              <View style={[styles.headerCell, ROLE_COL, { justifyContent: 'center' }]}>
                 <Text style={styles.headerText}>ROLE & AREA</Text>
               </View>
-              <View style={[styles.headerCell, ACTION_COL]} />
             </View>
 
             <FlatList
@@ -254,10 +276,9 @@ export default function MembersList() {
                 const currentGender = item.Gender;
                 const isRowUpdating = updatingId === item.MemberIDNo;
                 const isSelected = selectedIds.has(item.MemberIDNo);
-                const isMenuOpen = openMenuId === item.MemberIDNo;
 
                 return (
-                  <View style={[styles.tableRow, isMenuOpen && { zIndex: 50 }]}>
+                  <View style={styles.tableRow}>
                     <View style={[styles.cell, CHECKBOX_COL]}>
                       <Pressable
                         style={[styles.checkbox, isSelected && styles.checkboxChecked]}
@@ -285,44 +306,26 @@ export default function MembersList() {
                       {isRowUpdating ? (
                         <ActivityIndicator size="small" color="#002060" />
                       ) : (
-                        <View style={[styles.genderBadge, currentGender === 'Male' ? styles.maleBadge : currentGender === 'Female' ? styles.femaleBadge : styles.unknownBadge]}>
+                        <TouchableOpacity
+                          style={[styles.genderBadge, currentGender === 'Male' ? styles.maleBadge : currentGender === 'Female' ? styles.femaleBadge : styles.unknownBadge]}
+                          onPress={() => toggleGender(item.MemberIDNo, currentGender, getNextGender(currentGender))}
+                        >
                           <Text style={[styles.genderBadgeText, currentGender === 'Male' ? styles.maleBadgeText : currentGender === 'Female' ? styles.femaleBadgeText : styles.unknownBadgeText]}>
                             {currentGender || 'N/A'}
                           </Text>
-                        </View>
+                          <Ionicons
+                            name="swap-horizontal"
+                            size={12}
+                            color={currentGender === 'Male' ? '#0369a1' : currentGender === 'Female' ? '#be185d' : '#64748b'}
+                            style={styles.genderBadgeIcon}
+                          />
+                        </TouchableOpacity>
                       )}
                     </View>
 
-                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }]}>
-                      <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{item.pastoral_service || 'MEMBER'}</Text></View>
+                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }]}>
+                      <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text></View>
                       <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
-                    </View>
-
-                    <View style={[styles.cell, ACTION_COL, { position: 'relative' }]}>
-                      <TouchableOpacity
-                        style={styles.menuButton}
-                        onPress={() => setOpenMenuId(isMenuOpen ? null : item.MemberIDNo)}
-                      >
-                        <Ionicons name="ellipsis-vertical" size={16} color="#64748b" />
-                      </TouchableOpacity>
-
-                      {isMenuOpen && (
-                        <View style={styles.rowMenu}>
-                          <Text style={styles.rowMenuLabel}>Set Gender</Text>
-                          <TouchableOpacity
-                            style={styles.rowMenuItem}
-                            onPress={() => toggleGender(item.MemberIDNo, currentGender, 'Male')}
-                          >
-                            <Text style={styles.rowMenuItemText}>Male</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.rowMenuItem}
-                            onPress={() => toggleGender(item.MemberIDNo, currentGender, 'Female')}
-                          >
-                            <Text style={styles.rowMenuItemText}>Female</Text>
-                          </TouchableOpacity>
-                        </View>
-                      )}
                     </View>
                   </View>
                 );
@@ -338,10 +341,6 @@ export default function MembersList() {
           </View>
         </ScrollView>
       </View>
-
-      {openMenuId !== null && (
-        <Pressable style={styles.dismissOverlay} onPress={() => setOpenMenuId(null)} />
-      )}
     </View>
   );
 }
@@ -417,7 +416,11 @@ const styles = StyleSheet.create({
 
   householdText: { fontSize: 13, color: '#475569' },
 
-  genderBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, alignSelf: 'flex-start' },
+  genderBadge: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 20, borderWidth: 1, alignSelf: 'flex-start',
+  },
+  genderBadgeIcon: { marginLeft: 5 },
   genderBadgeText: { fontSize: 11, fontWeight: '700' },
   maleBadge: { backgroundColor: '#e0f2fe', borderColor: '#0284c7' },
   maleBadgeText: { color: '#0369a1' },
@@ -430,19 +433,6 @@ const styles = StyleSheet.create({
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
   areaBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   areaBadgeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
-
-  menuButton: { padding: 6 },
-  rowMenu: {
-    position: 'absolute', top: 34, right: 0, minWidth: 130,
-    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
-    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8,
-    elevation: 8, zIndex: 60, paddingVertical: 4,
-  },
-  rowMenuLabel: { fontSize: 10, fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', paddingHorizontal: 12, paddingTop: 6, paddingBottom: 2 },
-  rowMenuItem: { paddingHorizontal: 12, paddingVertical: 8 },
-  rowMenuItemText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-
-  dismissOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 40 },
 
   empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40, marginBottom: 20 },
 });
