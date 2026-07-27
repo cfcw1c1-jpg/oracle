@@ -12,6 +12,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import Login from '../auth/Login';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
+import DashboardHome from '../screens/DashboardHome';
 import MembersList from '../screens/MembersList';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
@@ -20,7 +21,7 @@ import PredictorScreen from '../screens/PredictorScreen';
 
 export default function Page() {
   const [session, setSession] = useState(null);
-  const [currentTab, setCurrentTab] = useState('members'); 
+  const [currentTab, setCurrentTab] = useState('home');
   
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
@@ -51,6 +52,14 @@ export default function Page() {
   // Reusable Sidebar Nav Links Component
   const NavigationLinks = () => (
     <View style={styles.navLinksContainer}>
+      <TouchableOpacity
+        style={[styles.sidebarButton, currentTab === 'home' && styles.activeSidebarButton]}
+        onPress={() => { setCurrentTab('home'); setIsMobileMenuOpen(false); }}
+      >
+        <Ionicons name="home-outline" size={18} color={currentTab === 'home' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
+        <Text style={[styles.sidebarButtonText, currentTab === 'home' && styles.activeSidebarText]}>Dashboard</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity
         style={[styles.sidebarButton, currentTab === 'members' && styles.activeSidebarButton]}
         onPress={() => { setCurrentTab('members'); setIsMobileMenuOpen(false); }}
@@ -152,6 +161,7 @@ export default function Page() {
 
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
+          {currentTab === 'home' && <DashboardHome onNavigate={setCurrentTab} />}
           {currentTab === 'members' && <MembersList />}
           {currentTab === 'pfo' && <PfoList />}
           {currentTab === 'pfoReports' && <PfoReport />}
@@ -164,8 +174,15 @@ export default function Page() {
       {/* MOBILE BOTTOM NAV BAR FALLBACK */}
       {!isLargeScreen && (
         <View style={styles.bottomTabBar}>
-          <TouchableOpacity 
-            style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]} 
+          <TouchableOpacity
+            style={[styles.tabBarItem, currentTab === 'home' && styles.activeTabItem]}
+            onPress={() => setCurrentTab('home')}
+          >
+            <Text style={[styles.tabBarItemText, currentTab === 'home' && styles.activeTabBarText]}>Home</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]}
             onPress={() => setCurrentTab('members')}
           >
             <Text style={[styles.tabBarItemText, currentTab === 'members' && styles.activeTabBarText]}>Directory</Text>

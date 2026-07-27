@@ -25,7 +25,7 @@ const COLUMN_IDS_BY_GROUP = TRAINING_COLUMNS.reduce((acc, col) => {
 // Formation stages mapped to the training-matrix column groups they correspond to.
 // "Mission with the Poor (MWPR)" has no tracked column in pfo_members yet, so it
 // is reported as not tracked rather than computed from data that doesn't exist.
-const FORMATION_STAGES = [
+export const FORMATION_STAGES = [
   {
     key: 'firstYear',
     label: 'First Year Formation',
@@ -90,7 +90,7 @@ const FORMATION_STAGES = [
 
 // A track is "complete" for a member only if every column in its group is Y/y,
 // matching the same all-or-nothing logic PfoReports.js uses for "attendedAll".
-function computeTrackStat(track, pfoRows, totalMembers) {
+export function computeTrackStat(track, pfoRows, totalMembers) {
   if (!track.group) {
     return { tracked: false };
   }
