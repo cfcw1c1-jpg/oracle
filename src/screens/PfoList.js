@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -200,13 +200,109 @@ const getGroupedHeaders = () => {
   return groups;
 };
 
+// TRAINING_COLUMNS is static, so this never needs to be recomputed on render.
+const GROUPED_HEADERS = getGroupedHeaders();
+
 const MODULE_COLUMN_WIDTH = 110;
-const ROW_HEIGHT = 44; 
+const ROW_HEIGHT = 44;
+
+// Owns its own search text locally so typing here only re-renders this small
+// dropdown, not the entire (expensive) matrix table below it.
+const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selectedIds, onToggle, onClear }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const label = useMemo(() => {
+    if (selectedIds.size === 0) return 'All members';
+
+    const names = members
+      .filter((m) => selectedIds.has(m.MemberIDNo))
+      .map((m) => `${m.Firstname} ${m.Lastname}`.trim());
+
+    if (names.length <= 2) return names.join(', ');
+    return `${selectedIds.size} members selected`;
+  }, [selectedIds, members]);
+
+  const filteredOptions = useMemo(() => {
+    const cleanQuery = query.trim().toLowerCase();
+    if (!cleanQuery) return members;
+
+    return members.filter((m) => {
+      const first = m.Firstname.toLowerCase();
+      const last = m.Lastname.toLowerCase();
+      const idStr = m.MemberIDNo?.toString().toLowerCase() || '';
+      return first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+    });
+  }, [query, members]);
+
+  return (
+    <View style={styles.memberFilterWrapper}>
+      <TouchableOpacity style={styles.memberFilterHeader} activeOpacity={0.8} onPress={() => setOpen((v) => !v)}>
+        <Ionicons name="people-outline" size={14} color="#64748b" style={{ marginRight: 6 }} />
+        <Text style={styles.memberFilterHeaderText} numberOfLines={1}>{label}</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" style={{ marginLeft: 6 }} />
+      </TouchableOpacity>
+
+      {open && (
+        <View style={styles.memberFilterMenu}>
+          <View style={styles.memberFilterSearchBar}>
+            <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+            <TextInput
+              style={styles.memberFilterSearchInput}
+              placeholder="Search members to filter..."
+              placeholderTextColor="#94a3b8"
+              value={query}
+              onChangeText={setQuery}
+              autoCorrect={false}
+            />
+          </View>
+
+          <FlatList
+            data={filteredOptions}
+            keyExtractor={(m) => m.MemberIDNo?.toString()}
+            style={styles.memberFilterList}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item: m }) => {
+              const isSelected = selectedIds.has(m.MemberIDNo);
+              return (
+                <TouchableOpacity
+                  style={[styles.memberFilterItem, isSelected && styles.memberFilterItemActive]}
+                  onPress={() => onToggle(m.MemberIDNo)}
+                >
+                  <Ionicons
+                    name={isSelected ? 'checkbox' : 'square-outline'}
+                    size={16}
+                    color={isSelected ? '#002060' : '#94a3b8'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.memberFilterItemText} numberOfLines={1}>{m.Lastname}, {m.Firstname}</Text>
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={<Text style={styles.memberFilterEmptyText}>No matching members.</Text>}
+          />
+
+          <View style={styles.memberFilterActionsRow}>
+            <TouchableOpacity onPress={onClear}>
+              <Text style={styles.memberFilterClearText}>Clear</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.memberFilterApplyBtn} onPress={() => setOpen(false)}>
+              <Text style={styles.memberFilterApplyBtnText}>Apply</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+});
 
 export default function PfoList() {
   const [matrixData, setMatrixData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [selectedMemberIds, setSelectedMemberIds] = useState(new Set());
 
   useEffect(() => {
     fetchMatrix();
@@ -236,10 +332,10 @@ export default function PfoList() {
     }
   }
 
-  async function handleToggleCheckbox(memberId, courseColumnId, currentValue) {
+  const handleToggleCheckbox = useCallback(async (memberId, courseColumnId, currentValue) => {
     const newValue = (currentValue === 'Y' || currentValue === 'y') ? 'N' : 'Y';
 
-    setMatrixData(prev => prev.map(item => 
+    setMatrixData(prev => prev.map(item =>
       item.MemberIDNo === memberId ? { ...item, [courseColumnId]: newValue } : item
     ));
 
@@ -251,25 +347,47 @@ export default function PfoList() {
       if (error) throw error;
     } catch (err) {
       console.error(err.message);
-      setMatrixData(prev => prev.map(item => 
+      setMatrixData(prev => prev.map(item =>
         item.MemberIDNo === memberId ? { ...item, [courseColumnId]: currentValue } : item
       ));
     }
-  }
+  }, []);
 
   const filteredMatrixData = useMemo(() => {
     const cleanQuery = searchQuery.trim().toLowerCase();
-    if (!cleanQuery) return matrixData;
 
     return matrixData.filter((row) => {
       const first = row.members?.Firstname?.toLowerCase() || '';
       const last = row.members?.Lastname?.toLowerCase() || '';
       const idStr = row.MemberIDNo?.toString().toLowerCase() || '';
-      return first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+      const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+      const matchesMemberFilter = selectedMemberIds.size === 0 || selectedMemberIds.has(row.MemberIDNo);
+      return matchesSearch && matchesMemberFilter;
     });
-  }, [searchQuery, matrixData]);
+  }, [searchQuery, matrixData, selectedMemberIds]);
 
-  const renderTableRow = ({ item: row, index }) => {
+  // --- Filter by Members dropdown ---
+
+  const toggleMemberFilter = useCallback((memberId) => {
+    setSelectedMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
+  }, []);
+
+  const clearMemberFilter = useCallback(() => setSelectedMemberIds(new Set()), []);
+
+  const availableMembersForFilter = useMemo(() => {
+    return matrixData.map((row) => ({
+      MemberIDNo: row.MemberIDNo,
+      Firstname: row.members?.Firstname || '',
+      Lastname: row.members?.Lastname || '',
+    }));
+  }, [matrixData]);
+
+  const renderTableRow = useCallback(({ item: row, index }) => {
     const fullName = row.members ? `${row.members.Lastname}, ${row.members.Firstname}` : `ID: ${row.MemberIDNo}`;
     return (
       <View style={[styles.tableRow, index % 2 === 1 && styles.rowAlternate]}>
@@ -298,11 +416,9 @@ export default function PfoList() {
         })}
       </View>
     );
-  };
+  }, [handleToggleCheckbox]);
 
   if (loading) return <ActivityIndicator size="large" color="#002060" style={styles.centered} />;
-
-  const groupedHeaders = getGroupedHeaders();
 
   return (
     <View style={styles.container}>
@@ -314,16 +430,25 @@ export default function PfoList() {
         <Text style={styles.subtitle}>Manage qualifications and course milestones instantly across the roster.</Text>
       </View>
 
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search name or ID..."
-          placeholderTextColor="#94a3b8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCorrect={false}
-          clearButtonMode="while-editing"
+      <View style={styles.controlsRow}>
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search name or ID..."
+            placeholderTextColor="#94a3b8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+          />
+        </View>
+
+        <MemberFilterDropdown
+          members={availableMembersForFilter}
+          selectedIds={selectedMemberIds}
+          onToggle={toggleMemberFilter}
+          onClear={clearMemberFilter}
         />
       </View>
 
@@ -333,7 +458,7 @@ export default function PfoList() {
             <View style={styles.tableRowGroupHeader}>
               <View style={styles.nameColumnWidth} />
               <View style={styles.idColumnWidth} />
-              {groupedHeaders.map((group, idx) => (
+              {GROUPED_HEADERS.map((group, idx) => (
                 <View 
                   key={`${group.name}-${idx}`} 
                   style={[styles.groupHeaderCell, { width: group.count * MODULE_COLUMN_WIDTH }, idx % 2 === 1 && styles.groupHeaderCellAlt]}
@@ -365,7 +490,7 @@ export default function PfoList() {
               initialNumToRender={20}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No tracking profiles matched your search entry.</Text>
+                  <Text style={styles.emptyText}>No tracking profiles matched your search and filters.</Text>
                 </View>
               }
             />
@@ -384,15 +509,49 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  controlsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 10, marginBottom: 14, zIndex: 15 },
   searchContainer: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#ffffff', borderRadius: 10, paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 5, borderWidth: 1, borderColor: '#e2e8f0',
-    marginBottom: 14, maxWidth: 360, shadowColor: '#0f172a',
+    maxWidth: 360, flexGrow: 1, shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2, elevation: 1,
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: '#1e293b', fontWeight: '500' },
+
+  memberFilterWrapper: { position: 'relative' },
+  memberFilterHeader: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff',
+    borderRadius: 10, paddingHorizontal: 12, paddingVertical: Platform.OS === 'ios' ? 10 : 9,
+    borderWidth: 1, borderColor: '#e2e8f0', maxWidth: 240,
+  },
+  memberFilterHeaderText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
+  memberFilterMenu: {
+    position: 'absolute', top: 46, left: 0, width: 280,
+    backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8,
+    elevation: 6, zIndex: 100, paddingBottom: 4,
+  },
+  memberFilterSearchBar: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc',
+    margin: 8, borderRadius: 8, paddingHorizontal: 10, paddingVertical: Platform.OS === 'ios' ? 8 : 4,
+    borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  memberFilterSearchInput: { flex: 1, fontSize: 13, color: '#1e293b' },
+  memberFilterList: { maxHeight: 220 },
+  memberFilterItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 9 },
+  memberFilterItemActive: { backgroundColor: '#eff6ff' },
+  memberFilterItemText: { fontSize: 13, fontWeight: '500', color: '#334155', flex: 1 },
+  memberFilterEmptyText: { textAlign: 'center', color: '#94a3b8', paddingVertical: 20, fontSize: 13 },
+  memberFilterActionsRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 12, paddingTop: 8,
+  },
+  memberFilterClearText: { fontSize: 12, fontWeight: '700', color: '#64748b' },
+  memberFilterApplyBtn: { backgroundColor: '#002060', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  memberFilterApplyBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
+
   tableWrapper: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 20 },
   tableRowGroupHeader: { flexDirection: 'row', backgroundColor: '#1e293b', borderBottomWidth: 1, borderColor: '#334155' },
   groupHeaderCell: { justifyContent: 'center', alignItems: 'center', paddingVertical: 8, borderRightWidth: 1, borderColor: '#334155', backgroundColor: '#0f172a' },
