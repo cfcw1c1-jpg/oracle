@@ -86,6 +86,13 @@ export const FORMATION_STAGES = [
   },
 ];
 
+// A member's PastoralService code is blank/"MEMBER" for rank-and-file members;
+// any other code (UH, HH, CL, UL, etc.) marks a leadership role.
+function isNonMemberRole(code) {
+  const normalized = (code || '').trim().toUpperCase();
+  return normalized !== '' && normalized !== 'MEMBER';
+}
+
 // A track is "complete" for a member only if every column in its group is Y/y,
 // matching the same all-or-nothing logic PfoReports.js uses for "attendedAll".
 export function computeTrackStat(track, pfoRows, totalMembers) {
@@ -118,7 +125,9 @@ export default function PfoStatGenerator() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [totalMembers, setTotalMembers] = useState(0);
+  const [membersRows, setMembersRows] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
+  const [leadersOnly, setLeadersOnly] = useState(false);
 
   useEffect(() => {
     generateStats();
@@ -128,15 +137,16 @@ export default function PfoStatGenerator() {
     try {
       setLoading(true);
 
-      const [{ count, error: memberError }, { data, error: pfoError }] = await Promise.all([
-        supabase.from('members').select('MemberIDNo', { count: 'exact', head: true }),
-        supabase.from('pfo_members').select('*'),
+      const [{ data: members, error: memberError }, { data, error: pfoError }] = await Promise.all([
+        supabase.from('members').select('MemberIDNo, PastoralService'),
+        supabase.from('pfo_members').select('*, members (PastoralService)'),
       ]);
 
       if (memberError) throw memberError;
       if (pfoError) throw pfoError;
 
-      setTotalMembers(count || 0);
+      setTotalMembers(members?.length || 0);
+      setMembersRows(members || []);
       setPfoRows(data || []);
     } catch (err) {
       console.error('Error generating PFO formation statistics:', err.message);
@@ -145,11 +155,25 @@ export default function PfoStatGenerator() {
     }
   }
 
+  // Denominator: everyone, or just members holding a non-"Member" role
+  // (Unit Head, Household Head, Chapter Leader, etc.) when the checkbox is on.
+  const activeTotalMembers = useMemo(() => {
+    if (!leadersOnly) return totalMembers;
+    return membersRows.filter((m) => isNonMemberRole(m.PastoralService)).length;
+  }, [leadersOnly, membersRows, totalMembers]);
+
+  // Numerator has to be drawn from the same subset as the denominator, otherwise
+  // completions from plain "Member" rows would inflate the leaders-only percentage.
+  const activePfoRows = useMemo(() => {
+    if (!leadersOnly) return pfoRows;
+    return pfoRows.filter((row) => isNonMemberRole(row.members?.PastoralService));
+  }, [leadersOnly, pfoRows]);
+
   const stageResults = useMemo(() => {
     return FORMATION_STAGES.map((stage) => {
       const trackResults = stage.tracks.map((track) => ({
         ...track,
-        ...computeTrackStat(track, pfoRows, totalMembers),
+        ...computeTrackStat(track, activePfoRows, activeTotalMembers),
       }));
 
       const trackedPercentages = trackResults.filter((t) => t.tracked).map((t) => t.percent);
@@ -160,10 +184,11 @@ export default function PfoStatGenerator() {
         insight: buildStageInsight(trackedPercentages),
       };
     });
-  }, [pfoRows, totalMembers]);
+  }, [activePfoRows, activeTotalMembers]);
 
   function buildTextReport() {
-    const lines = [`Total Active Members: ${totalMembers}`, ''];
+    const denominatorLabel = leadersOnly ? 'Total Members (Non-"Member" Roles Only)' : 'Total Active Members';
+    const lines = [`${denominatorLabel}: ${activeTotalMembers}`, ''];
 
     stageResults.forEach((stage) => {
       lines.push(`${stage.marker} ${stage.label}:`, '');
@@ -171,7 +196,7 @@ export default function PfoStatGenerator() {
       stage.trackResults.forEach((track, index) => {
         const prefix = `${index + 1}. ${track.name} (${track.code})`;
         if (track.tracked) {
-          lines.push(`${prefix}: ${track.completedCount} / ${totalMembers} → ${track.percent.toFixed(1)}%`);
+          lines.push(`${prefix}: ${track.completedCount} / ${activeTotalMembers} → ${track.percent.toFixed(1)}%`);
         } else {
           lines.push(`${prefix}: Not tracked in current data`);
         }
@@ -229,9 +254,18 @@ export default function PfoStatGenerator() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Total Active Members</Text>
-        <Text style={styles.summaryValue}>{totalMembers}</Text>
+        <Text style={styles.summaryLabel}>{leadersOnly ? 'Total Members (Non-"Member" Roles Only)' : 'Total Active Members'}</Text>
+        <Text style={styles.summaryValue}>{activeTotalMembers}</Text>
       </View>
+
+      <TouchableOpacity style={styles.leadersOnlyRow} onPress={() => setLeadersOnly((prev) => !prev)}>
+        <View style={[styles.checkbox, leadersOnly && styles.checkboxChecked]}>
+          {leadersOnly && <Ionicons name="checkmark" size={13} color="#ffffff" />}
+        </View>
+        <Text style={styles.leadersOnlyText}>
+          Only count non-&quot;Member&quot; roles (Unit Head, Household Head, Chapter Leader, etc.)
+        </Text>
+      </TouchableOpacity>
 
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.refreshBtn} onPress={generateStats}>
@@ -267,7 +301,7 @@ export default function PfoStatGenerator() {
 
               {track.tracked ? (
                 <View style={styles.trackStatCol}>
-                  <Text style={styles.trackFraction}>{track.completedCount} / {totalMembers}</Text>
+                  <Text style={styles.trackFraction}>{track.completedCount} / {activeTotalMembers}</Text>
                   <Text style={[styles.trackPercent, { color: stage.color }]}>{track.percent.toFixed(1)}%</Text>
                 </View>
               ) : (
@@ -304,6 +338,16 @@ const styles = StyleSheet.create({
   },
   summaryLabel: { fontSize: 11, fontWeight: '700', color: '#93c5fd', textTransform: 'uppercase' },
   summaryValue: { fontSize: 30, fontWeight: '800', color: '#ffffff', marginTop: 4 },
+
+  leadersOnlyRow: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: 14,
+  },
+  checkbox: {
+    width: 20, height: 20, borderRadius: 5, borderWidth: 1.5, borderColor: '#cbd5e1',
+    backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center', marginRight: 10,
+  },
+  checkboxChecked: { backgroundColor: '#002060', borderColor: '#002060' },
+  leadersOnlyText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#334155', lineHeight: 17 },
 
   actionRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   refreshBtn: {

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -111,6 +111,20 @@ export default function MembersList() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [roleMenuOpenFor, setRoleMenuOpenFor] = useState(null);
   const [changingRoleId, setChangingRoleId] = useState(null);
+
+  // FlatList renders each row in its own cell wrapper, so a zIndex set on our
+  // row's own View never wins against sibling rows below it (they belong to
+  // separate stacking contexts). CellRendererComponent lets us raise the
+  // zIndex on that outer per-row wrapper instead, so the open row's dropdown
+  // can actually paint above the rows underneath it.
+  const RoleMenuAwareRow = useCallback(({ item, style, children, ...rest }) => {
+    const isOpen = item && roleMenuOpenFor === item.MemberIDNo;
+    return (
+      <View style={[style, isOpen && { zIndex: 50 }]} {...rest}>
+        {children}
+      </View>
+    );
+  }, [roleMenuOpenFor]);
 
   // --- Assign Talks Modal state ---
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -471,6 +485,7 @@ export default function MembersList() {
             <FlatList
               data={filteredMembers}
               keyExtractor={(item) => item.MemberIDNo?.toString()}
+              CellRendererComponent={RoleMenuAwareRow}
               renderItem={({ item }) => {
                 const currentGender = item.Gender;
                 const isRowUpdating = updatingId === item.MemberIDNo;
@@ -524,40 +539,43 @@ export default function MembersList() {
                       )}
                     </View>
 
-                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', position: 'relative' }]}>
-                      {isChangingRole ? (
-                        <ActivityIndicator size="small" color="#002060" />
-                      ) : (
-                        <TouchableOpacity
-                          style={styles.roleBadge}
-                          onPress={() => setRoleMenuOpenFor(isRoleMenuOpen ? null : item.MemberIDNo)}
-                        >
-                          <Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text>
-                          <Ionicons name={isRoleMenuOpen ? 'chevron-up' : 'chevron-down'} size={11} color="#002060" style={{ marginLeft: 4 }} />
-                        </TouchableOpacity>
-                      )}
-                      <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
+                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }]}>
+                      <View style={styles.roleBadgeWrapper}>
+                        {isChangingRole ? (
+                          <ActivityIndicator size="small" color="#002060" />
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.roleBadge}
+                            onPress={() => setRoleMenuOpenFor(isRoleMenuOpen ? null : item.MemberIDNo)}
+                          >
+                            <Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text>
+                            <Ionicons name={isRoleMenuOpen ? 'chevron-up' : 'chevron-down'} size={11} color="#002060" style={{ marginLeft: 4 }} />
+                          </TouchableOpacity>
+                        )}
 
-                      {isRoleMenuOpen && (
-                        <View style={styles.roleMenu}>
-                          <ScrollView style={styles.roleMenuScroll} nestedScrollEnabled>
-                            {ROLE_OPTION_CODES.map((code) => {
-                              const isCurrent = (item.PastoralService || '').trim().toUpperCase() === code;
-                              return (
-                                <TouchableOpacity
-                                  key={code}
-                                  style={[styles.roleMenuItem, isCurrent && styles.roleMenuItemActive]}
-                                  onPress={() => handleChangeRole(item.MemberIDNo, item.PastoralService, code)}
-                                >
-                                  <Text style={[styles.roleMenuItemText, isCurrent && styles.roleMenuItemTextActive]}>
-                                    {ROLE_LABELS[code]}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </ScrollView>
-                        </View>
-                      )}
+                        {isRoleMenuOpen && (
+                          <View style={styles.roleMenu}>
+                            <ScrollView style={styles.roleMenuScroll} nestedScrollEnabled>
+                              {ROLE_OPTION_CODES.map((code) => {
+                                const isCurrent = (item.PastoralService || '').trim().toUpperCase() === code;
+                                return (
+                                  <TouchableOpacity
+                                    key={code}
+                                    style={[styles.roleMenuItem, isCurrent && styles.roleMenuItemActive]}
+                                    onPress={() => handleChangeRole(item.MemberIDNo, item.PastoralService, code)}
+                                  >
+                                    <Text style={[styles.roleMenuItemText, isCurrent && styles.roleMenuItemTextActive]}>
+                                      {ROLE_LABELS[code]}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
                     </View>
                   </View>
                 );
@@ -780,6 +798,7 @@ const styles = StyleSheet.create({
   unknownBadge: { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' },
   unknownBadgeText: { color: '#64748b' },
 
+  roleBadgeWrapper: { position: 'relative' },
   roleBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
   areaBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
