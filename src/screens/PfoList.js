@@ -180,7 +180,7 @@ export const TRAINING_COLUMNS = [
   { id: 'UM_1-', label: 'UM 1', group: 'Structural Status' }
 ];
 
-const parseTrainingName = (idString) => {
+export const parseTrainingName = (idString) => {
   if (!idString) return '';
   const components = idString.split(/[.:-]/);
   return components.length > 1 ? components[components.length - 1].trim() : idString;

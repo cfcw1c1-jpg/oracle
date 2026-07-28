@@ -15,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
-import { TRAINING_COLUMNS } from './PfoList';
+import { parseTrainingName, TRAINING_COLUMNS } from './PfoList';
 
 // Checkbox/Gender stay a fixed width (their content is compact and
 // fixed-size); Name/Household/Role grow to fill the row on wide screens but
@@ -110,7 +110,7 @@ export default function MembersList() {
 
   // --- Assign Talks Modal state ---
   const [assignModalVisible, setAssignModalVisible] = useState(false);
-  const [stagedMembers, setStagedMembers] = useState([]);
+  const [stagedMemberIds, setStagedMemberIds] = useState(new Set());
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [talkSearchQuery, setTalkSearchQuery] = useState('');
   const [stagedTalkIds, setStagedTalkIds] = useState(new Set());
@@ -222,7 +222,7 @@ export default function MembersList() {
   // --- Assign Talks Modal handlers ---
 
   function openAssignModal() {
-    setStagedMembers(members.filter((m) => selectedIds.has(m.MemberIDNo)));
+    setStagedMemberIds(new Set(selectedIds));
     setStagedTalkIds(new Set());
     setMemberSearchQuery('');
     setTalkSearchQuery('');
@@ -233,13 +233,13 @@ export default function MembersList() {
     setAssignModalVisible(false);
   }
 
-  function addStagedMember(member) {
-    setStagedMembers((prev) => (prev.some((m) => m.MemberIDNo === member.MemberIDNo) ? prev : [...prev, member]));
-    setMemberSearchQuery('');
-  }
-
-  function removeStagedMember(memberId) {
-    setStagedMembers((prev) => prev.filter((m) => m.MemberIDNo !== memberId));
+  function toggleStagedMember(memberId) {
+    setStagedMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
+    });
   }
 
   function toggleStagedTalk(talkId) {
@@ -251,21 +251,17 @@ export default function MembersList() {
     });
   }
 
-  const memberSearchResults = useMemo(() => {
+  const memberChecklistOptions = useMemo(() => {
     const cleanQuery = memberSearchQuery.trim().toLowerCase();
-    if (!cleanQuery) return [];
+    if (!cleanQuery) return members;
 
-    const stagedIds = new Set(stagedMembers.map((m) => m.MemberIDNo));
-    return members
-      .filter((m) => !stagedIds.has(m.MemberIDNo))
-      .filter((m) => {
-        const first = m.Firstname?.toLowerCase() || '';
-        const last = m.Lastname?.toLowerCase() || '';
-        const idStr = m.MemberIDNo?.toString().toLowerCase() || '';
-        return first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
-      })
-      .slice(0, 6);
-  }, [memberSearchQuery, members, stagedMembers]);
+    return members.filter((m) => {
+      const first = m.Firstname?.toLowerCase() || '';
+      const last = m.Lastname?.toLowerCase() || '';
+      const idStr = m.MemberIDNo?.toString().toLowerCase() || '';
+      return first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+    });
+  }, [memberSearchQuery, members]);
 
   const filteredTalks = useMemo(() => {
     const cleanQuery = talkSearchQuery.trim().toLowerCase();
@@ -279,21 +275,90 @@ export default function MembersList() {
   }, [talkSearchQuery]);
 
   async function handleAssignTalks() {
-    if (stagedMembers.length === 0 || stagedTalkIds.size === 0) return;
+    if (stagedMemberIds.size === 0 || stagedTalkIds.size === 0) return;
 
     try {
       setAssigning(true);
 
-      const talkColumns = Object.fromEntries(Array.from(stagedTalkIds).map((id) => [id, 'Y']));
-      const rows = stagedMembers.map((m) => ({ MemberIDNo: m.MemberIDNo, ...talkColumns }));
+      const talkIds = Array.from(stagedTalkIds);
+      const memberIds = Array.from(stagedMemberIds);
+      // Column names contain spaces/colons/hyphens, so they must be quoted
+      // for PostgREST -- same convention PfoReports.js already uses.
+      const quotedTalkColumns = talkIds.map((id) => `"${id}"`).join(', ');
 
-      const { error } = await supabase.from('pfo_members').upsert(rows, { onConflict: 'MemberIDNo' });
-      if (error) throw error;
+      // Fetch each staged member's CURRENT value for every selected talk.
+      // A member who already has a talk marked "Y" is left completely
+      // untouched for that talk; only members who haven't taken it yet
+      // (blank or "N") get flipped to "Y".
+      const { data: existingRows, error: lookupError } = await supabase
+        .from('pfo_members')
+        .select(`MemberIDNo, ${quotedTalkColumns}`)
+        .in('MemberIDNo', memberIds);
+      if (lookupError) throw lookupError;
 
-      showAlert('Success', `Assigned ${stagedTalkIds.size} talk(s) to ${stagedMembers.length} member(s).`);
+      const existingById = new Map((existingRows || []).map((row) => [row.MemberIDNo, row]));
+
+      const insertRows = [];
+      const updates = [];
+      let newlySetCount = 0;
+      let alreadyMarkedCount = 0;
+
+      memberIds.forEach((memberId) => {
+        const existingRow = existingById.get(memberId);
+
+        if (!existingRow) {
+          // No pfo_members row yet -- create one with every selected talk marked.
+          const payload = { MemberIDNo: memberId };
+          talkIds.forEach((id) => { payload[id] = 'Y'; });
+          insertRows.push(payload);
+          newlySetCount += talkIds.length;
+          return;
+        }
+
+        // Only touch talks this member hasn't already taken.
+        const payload = {};
+        talkIds.forEach((id) => {
+          const current = existingRow[id];
+          if (current === 'Y' || current === 'y') {
+            alreadyMarkedCount += 1;
+          } else {
+            payload[id] = 'Y';
+            newlySetCount += 1;
+          }
+        });
+
+        if (Object.keys(payload).length > 0) {
+          updates.push({ memberId, payload });
+        }
+      });
+
+      if (insertRows.length > 0) {
+        const { error: insertError } = await supabase.from('pfo_members').insert(insertRows);
+        if (insertError) throw insertError;
+      }
+
+      if (updates.length > 0) {
+        const updateResults = await Promise.all(
+          updates.map(({ memberId, payload }) =>
+            supabase.from('pfo_members').update(payload).eq('MemberIDNo', memberId)
+          )
+        );
+        const failedUpdate = updateResults.find((r) => r.error);
+        if (failedUpdate) throw failedUpdate.error;
+      }
+
+      const skipNote = alreadyMarkedCount > 0
+        ? ` ${alreadyMarkedCount} talk record(s) were already marked and left unchanged.`
+        : '';
+      showAlert(
+        'Success',
+        newlySetCount > 0
+          ? `Marked ${newlySetCount} talk record(s) as attended.${skipNote}`
+          : `Nothing to update -- all selected members already have these talks marked.`
+      );
       setAssignModalVisible(false);
       setSelectedIds(new Set());
-      setStagedMembers([]);
+      setStagedMemberIds(new Set());
       setStagedTalkIds(new Set());
     } catch (err) {
       showAlert('Assignment Failed', err.message);
@@ -454,25 +519,13 @@ export default function MembersList() {
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Assign Talks to Members</Text>
 
-              <Text style={styles.inputLabel}>Members ({stagedMembers.length})</Text>
-              {stagedMembers.length > 0 && (
-                <View style={styles.stagedContainer}>
-                  {stagedMembers.map((m) => (
-                    <View key={m.MemberIDNo} style={styles.stagedChip}>
-                      <Text style={styles.stagedChipText}>{m.Firstname} {m.Lastname}</Text>
-                      <TouchableOpacity style={styles.stagedChipRemove} onPress={() => removeStagedMember(m.MemberIDNo)}>
-                        <Ionicons name="close" size={12} color="#1e40af" />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
+              <Text style={styles.inputLabel}>Members ({stagedMemberIds.size})</Text>
 
               <View style={styles.modalSearchBar}>
                 <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
                 <TextInput
                   style={styles.modalSearchInput}
-                  placeholder="Search members to add..."
+                  placeholder="Search members..."
                   placeholderTextColor="#94a3b8"
                   value={memberSearchQuery}
                   onChangeText={setMemberSearchQuery}
@@ -480,20 +533,32 @@ export default function MembersList() {
                 />
               </View>
 
-              {memberSearchQuery.trim().length > 0 && (
-                <View style={styles.autocompleteBox}>
-                  {memberSearchResults.length === 0 ? (
-                    <Text style={styles.autocompleteEmpty}>No matching members.</Text>
-                  ) : (
-                    memberSearchResults.map((m) => (
-                      <TouchableOpacity key={m.MemberIDNo} style={styles.autocompleteRow} onPress={() => addStagedMember(m)}>
-                        <Text style={styles.autocompleteRowText}>{m.Lastname}, {m.Firstname}</Text>
-                        <Text style={styles.autocompleteRowSub}>ID: {m.MemberIDNo}</Text>
+              <View style={styles.talkListBox}>
+                <FlatList
+                  data={memberChecklistOptions}
+                  keyExtractor={(m) => m.MemberIDNo?.toString()}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item: m }) => {
+                    const isChecked = stagedMemberIds.has(m.MemberIDNo);
+                    return (
+                      <TouchableOpacity style={styles.talkRow} onPress={() => toggleStagedMember(m.MemberIDNo)}>
+                        <Ionicons
+                          name={isChecked ? 'checkbox' : 'square-outline'}
+                          size={16}
+                          color={isChecked ? '#002060' : '#94a3b8'}
+                          style={{ marginRight: 8, marginTop: 2 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.talkRowText}>{m.Lastname}, {m.Firstname}</Text>
+                          <Text style={styles.talkRowGroup}>ID: {m.MemberIDNo}</Text>
+                        </View>
                       </TouchableOpacity>
-                    ))
-                  )}
-                </View>
-              )}
+                    );
+                  }}
+                  ListEmptyComponent={<Text style={styles.autocompleteEmpty}>No matching members.</Text>}
+                />
+              </View>
 
               <Text style={[styles.inputLabel, { marginTop: 18 }]}>Talks ({stagedTalkIds.size})</Text>
               {stagedTalkIds.size > 0 && (
@@ -529,16 +594,18 @@ export default function MembersList() {
                   keyboardShouldPersistTaps="handled"
                   renderItem={({ item: t }) => {
                     const isChecked = stagedTalkIds.has(t.id);
+                    const title = parseTrainingName(t.id) || t.label;
                     return (
                       <TouchableOpacity style={styles.talkRow} onPress={() => toggleStagedTalk(t.id)}>
                         <Ionicons
                           name={isChecked ? 'checkbox' : 'square-outline'}
                           size={16}
                           color={isChecked ? '#002060' : '#94a3b8'}
-                          style={{ marginRight: 8 }}
+                          style={{ marginRight: 8, marginTop: 2 }}
                         />
                         <View style={{ flex: 1 }}>
-                          <Text style={styles.talkRowText} numberOfLines={1}>{t.label}</Text>
+                          <Text style={styles.talkRowCode}>{t.label}</Text>
+                          <Text style={styles.talkRowText} numberOfLines={2}>{title}</Text>
                           <Text style={styles.talkRowGroup}>{t.group}</Text>
                         </View>
                       </TouchableOpacity>
@@ -553,9 +620,9 @@ export default function MembersList() {
                   <Text style={styles.btnTextCancel}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.btn, styles.btnConfirm, (stagedMembers.length === 0 || stagedTalkIds.size === 0 || assigning) && styles.btnDisabled]}
+                  style={[styles.btn, styles.btnConfirm, (stagedMemberIds.size === 0 || stagedTalkIds.size === 0 || assigning) && styles.btnDisabled]}
                   onPress={handleAssignTalks}
-                  disabled={stagedMembers.length === 0 || stagedTalkIds.size === 0 || assigning}
+                  disabled={stagedMemberIds.size === 0 || stagedTalkIds.size === 0 || assigning}
                 >
                   {assigning ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.btnTextConfirm}>Assign</Text>}
                 </TouchableOpacity>
@@ -697,28 +764,19 @@ const styles = StyleSheet.create({
   },
   modalSearchInput: { flex: 1, fontSize: 13, color: '#1e293b' },
 
-  autocompleteBox: {
-    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
-    marginTop: 4, marginBottom: 10, overflow: 'hidden',
-  },
   autocompleteEmpty: { fontSize: 12, color: '#94a3b8', textAlign: 'center', paddingVertical: 14 },
-  autocompleteRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-  },
-  autocompleteRowText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  autocompleteRowSub: { fontSize: 11, color: '#64748b' },
 
   talkListBox: {
     maxHeight: 240, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
     marginTop: 4, marginBottom: 16, overflow: 'hidden',
   },
   talkRow: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9,
+    flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 9,
     borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  talkRowText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  talkRowGroup: { fontSize: 10, color: '#94a3b8', marginTop: 1, textTransform: 'uppercase', fontWeight: '700' },
+  talkRowCode: { fontSize: 10, fontWeight: '800', color: '#2563eb' },
+  talkRowText: { fontSize: 13, fontWeight: '600', color: '#1e293b', marginTop: 1 },
+  talkRowGroup: { fontSize: 10, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700' },
 
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   btn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, minWidth: 90, alignItems: 'center' },

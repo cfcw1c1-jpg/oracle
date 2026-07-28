@@ -1,79 +1,174 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+const NAVY = '#002060';
+const NAVY_DARK = '#001540';
+
+function showAlert(title, message) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
 export default function Login() {
+  const { width } = useWindowDimensions();
+  const isWide = width >= 760;
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   async function handleLogin() {
-    if (!email || !password) return Alert.alert('Error', 'Please fill in all fields');
+    if (!email || !password) {
+      showAlert('Missing Information', 'Please fill in all fields.');
+      return;
+    }
+
     setLoading(true);
-    
-    const { error } = await supabase.auth.signInWithPassword({ 
-      email: email.trim(), 
-      password: password 
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
     });
-    
-    if (error) Alert.alert('Authentication Failed', error.message);
+    if (error) showAlert('Authentication Failed', error.message);
     setLoading(false);
+  }
+
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      showAlert('Email Required', 'Please enter your email address above, then tap "Forgot Password".');
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      if (error) throw error;
+      showAlert('Check Your Email', `A password reset link has been sent to ${email.trim()}.`);
+    } catch (error) {
+      showAlert('Reset Failed', error.message);
+    } finally {
+      setResetLoading(false);
+    }
   }
 
   return (
     <View style={styles.outerContainer}>
-      <View style={styles.card}>
-        <View style={styles.logoContainer}>
-          <Image source={require('../../assets/images/oracle-logo.png')} style={{ width: 200, height: 200, marginVertical: 12 }} /> 
+      <View style={[styles.splitPanel, isWide ? styles.splitPanelWide : styles.splitPanelNarrow]}>
+        <View style={[styles.brandColumn, isWide && styles.brandColumnWide]}>
+          <View style={styles.brandMarkRing}>
+            <Ionicons name="book-outline" size={32} color="#ffffff" />
+          </View>
+          <Text style={styles.brandTitle}>ORACLE</Text>
+          <Text style={styles.brandSubtitle}>MEMBERS PORTAL</Text>
         </View>
 
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Email Address</Text>
+        <View style={isWide ? styles.dividerVertical : styles.dividerHorizontal} />
+
+        <View style={[styles.formColumn, isWide && styles.formColumnWide]}>
+          <Text style={styles.signInTitle}>Sign In</Text>
+
           <TextInput
-            placeholder="name@example.com"
+            placeholder="Email Address"
             placeholderTextColor="#94a3b8"
             onChangeText={setEmail}
             value={email}
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete={Platform.OS === 'web' ? 'email' : 'username'}
-            style={styles.input}
+            style={styles.flatInput}
           />
-          
-          <Text style={styles.label}>Password</Text>
+
           <TextInput
-            placeholder="••••••••"
+            placeholder="Password"
             placeholderTextColor="#94a3b8"
             onChangeText={setPassword}
             value={password}
             secureTextEntry
             autoCapitalize="none"
             autoComplete="current-password"
-            style={styles.input}
+            style={styles.flatInput}
           />
-        </View>
 
-        <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Sign In</Text>}
-        </TouchableOpacity>
+          <View style={styles.actionsRow}>
+            <TouchableOpacity onPress={handleForgotPassword} disabled={resetLoading}>
+              <Text style={styles.forgotText}>{resetLoading ? 'Sending…' : 'Forgot Password'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.goButton} onPress={handleLogin} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <>
+                  <Text style={styles.goText}>Go</Text>
+                  <Ionicons name="chevron-forward" size={20} color="#ffffff" />
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  outerContainer: { flex: 1, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  card: { backgroundColor: '#ffffff', width: '100%', maxWidth: 420, padding: 32, borderRadius: 16, ...Platform.select({
-      web: { boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' },
-      default: { elevation: 4 }
-    })
+  outerContainer: {
+    flex: 1,
+    backgroundColor: NAVY_DARK,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    ...Platform.select({
+      web: {
+        experimental_backgroundImage:
+          `radial-gradient(circle at 22% 18%, rgba(255,255,255,0.10), transparent 55%), linear-gradient(150deg, ${NAVY} 0%, ${NAVY_DARK} 100%)`,
+      },
+      default: {},
+    }),
   },
-  logoContainer: { alignItems: 'center' },
-  logoText: { fontSize: 32, fontWeight: '800', color: '#002060', letterSpacing: 3 },
-  logoSubtext: { fontSize: 12, color: '#475569', letterSpacing: 1.5, marginTop: 4, fontWeight: '600' },
-  inputContainer: { marginBottom: 24 },
-  label: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 6 },
-  input: { backgroundColor: '#f8fafc', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1', marginBottom: 16, fontSize: 15, color: '#1e293b' },
-  button: { backgroundColor: '#002060', padding: 14, borderRadius: 8, alignItems: 'center' },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  splitPanel: { width: '100%', maxWidth: 880 },
+  splitPanelWide: { flexDirection: 'row', alignItems: 'center' },
+  splitPanelNarrow: { alignItems: 'center' },
+
+  brandColumn: { alignItems: 'center', marginBottom: 32 },
+  brandColumnWide: { flex: 1, marginBottom: 0, paddingRight: 48 },
+  brandMarkRing: {
+    width: 84, height: 84, borderRadius: 42, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+    borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', marginBottom: 16,
+  },
+  brandTitle: { fontSize: 34, fontWeight: '800', color: '#ffffff', letterSpacing: 3 },
+  brandSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.75)', letterSpacing: 2, marginTop: 6, fontWeight: '600' },
+
+  dividerVertical: { width: 1, alignSelf: 'stretch', backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 8 },
+  dividerHorizontal: { height: 1, width: '60%', backgroundColor: 'rgba(255,255,255,0.25)', marginBottom: 32 },
+
+  formColumn: { width: '100%', maxWidth: 340 },
+  formColumnWide: { flex: 1, paddingLeft: 48, maxWidth: 400 },
+  signInTitle: { fontSize: 26, fontWeight: '700', color: '#ffffff', marginBottom: 20 },
+
+  flatInput: {
+    backgroundColor: '#ffffff', borderRadius: 4, paddingHorizontal: 16, paddingVertical: 14,
+    fontSize: 15, color: '#1e293b', marginBottom: 16, width: '100%',
+  },
+
+  actionsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  forgotText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontStyle: 'italic' },
+  goButton: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingVertical: 4, paddingLeft: 12 },
+  goText: { color: '#ffffff', fontSize: 18, fontWeight: '700' },
 });
