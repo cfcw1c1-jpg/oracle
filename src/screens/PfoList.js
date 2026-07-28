@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -205,6 +205,12 @@ const GROUPED_HEADERS = getGroupedHeaders();
 
 const MODULE_COLUMN_WIDTH = 110;
 const ROW_HEIGHT = 44;
+const NAME_COLUMN_WIDTH = 180;
+const ID_COLUMN_WIDTH = 120;
+// Both header stacks (the fixed Name/ID panel and the scrollable training
+// panel) use these same fixed heights so their rows line up exactly.
+const GROUP_HEADER_HEIGHT = 34;
+const COLUMN_HEADER_HEIGHT = 52;
 
 // Owns its own search text locally so typing here only re-renders this small
 // dropdown, not the entire (expensive) matrix table below it.
@@ -293,6 +299,63 @@ const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selec
           </View>
         </View>
       )}
+    </View>
+  );
+});
+
+// A single Y/N cell, memoized so toggling one training column for one member
+// only re-renders that one cell instead of the whole (150-column-wide) row.
+const TrainingCell = memo(function TrainingCell({ memberId, colId, value, onToggle }) {
+  const isChecked = value === 'Y' || value === 'y';
+  return (
+    <TouchableOpacity
+      style={styles.moduleColumnWidth}
+      onPress={() => onToggle(memberId, colId, value)}
+      activeOpacity={0.5}
+    >
+      <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
+        {isChecked && <Ionicons name="checkmark" size={14} color="#ffffff" />}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+// The fixed left panel's row: just Name/ID. Memoized for the same reason as
+// RightRow below.
+const LeftRow = memo(function LeftRow({ row, index }) {
+  const fullName = row.members ? `${row.members.Lastname}, ${row.members.Firstname}` : `ID: ${row.MemberIDNo}`;
+  const isAlternate = index % 2 === 1;
+
+  return (
+    <View style={[styles.tableRow, isAlternate && styles.rowAlternate]}>
+      <View style={[styles.cell, styles.nameColumnWidth]}>
+        <Text style={styles.nameText} numberOfLines={1}>{fullName}</Text>
+      </View>
+      <View style={[styles.cell, styles.idColumnWidth]}>
+        <Text style={styles.idText}>{row.MemberIDNo}</Text>
+      </View>
+    </View>
+  );
+});
+
+// The scrollable right panel's row: every training-column cell. Memoized so
+// re-renders triggered elsewhere (typing in a search box, toggling a
+// checkbox in a DIFFERENT row) skip every row whose own props haven't
+// actually changed instead of rebuilding all ~150 cells.
+const RightRow = memo(function RightRow({ row, index, onToggleCheckbox }) {
+  const isAlternate = index % 2 === 1;
+
+  return (
+    <View style={[styles.tableRow, isAlternate && styles.rowAlternate]}>
+      {TRAINING_COLUMNS.map((col) => (
+        <TrainingCell
+          key={col.id}
+          memberId={row.MemberIDNo}
+          colId={col.id}
+          value={row[col.id]}
+          onToggle={onToggleCheckbox}
+        />
+      ))}
     </View>
   );
 });
@@ -387,36 +450,22 @@ export default function PfoList() {
     }));
   }, [matrixData]);
 
-  const renderTableRow = useCallback(({ item: row, index }) => {
-    const fullName = row.members ? `${row.members.Lastname}, ${row.members.Firstname}` : `ID: ${row.MemberIDNo}`;
-    return (
-      <View style={[styles.tableRow, index % 2 === 1 && styles.rowAlternate]}>
-        <View style={[styles.cell, styles.nameColumnWidth]}>
-          <Text style={styles.nameText} numberOfLines={1}>{fullName}</Text>
-        </View>
-        <View style={[styles.cell, styles.idColumnWidth]}>
-          <Text style={styles.idText}>{row.MemberIDNo}</Text>
-        </View>
-        {TRAINING_COLUMNS.map((col) => {
-          const value = row[col.id];
-          const isChecked = value === 'Y' || value === 'y';
-          return (
-            <View key={col.id} style={styles.moduleColumnWidth}>
-              <TouchableOpacity 
-                style={[styles.cell, styles.centerCell]}
-                onPress={() => handleToggleCheckbox(row.MemberIDNo, col.id, value)}
-                activeOpacity={0.5}
-              >
-                <View style={[styles.checkbox, isChecked && styles.checkboxChecked]}>
-                  {isChecked && <Ionicons name="checkmark" size={14} color="#ffffff" />}
-                </View>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </View>
-    );
-  }, [handleToggleCheckbox]);
+  // The left (Name/ID) list has its own scrolling disabled; it's just kept
+  // in lockstep with the right (training columns) list, which is the only
+  // one the user actually scrolls vertically.
+  const leftListRef = useRef(null);
+  const handleRightScroll = useCallback((event) => {
+    const y = event.nativeEvent.contentOffset.y;
+    leftListRef.current?.scrollToOffset({ offset: y, animated: false });
+  }, []);
+
+  const renderLeftRow = useCallback(({ item, index }) => (
+    <LeftRow row={item} index={index} />
+  ), []);
+
+  const renderRightRow = useCallback(({ item, index }) => (
+    <RightRow row={item} index={index} onToggleCheckbox={handleToggleCheckbox} />
+  ), [handleToggleCheckbox]);
 
   if (loading) return <ActivityIndicator size="large" color="#002060" style={styles.centered} />;
 
@@ -453,49 +502,79 @@ export default function PfoList() {
       </View>
 
       <View style={styles.tableWrapper}>
-        <ScrollView horizontal showsHorizontalScrollIndicator>
-          <View>
-            <View style={styles.tableRowGroupHeader}>
-              <View style={styles.nameColumnWidth} />
-              <View style={styles.idColumnWidth} />
-              {GROUPED_HEADERS.map((group, idx) => (
-                <View 
-                  key={`${group.name}-${idx}`} 
-                  style={[styles.groupHeaderCell, { width: group.count * MODULE_COLUMN_WIDTH }, idx % 2 === 1 && styles.groupHeaderCellAlt]}
-                >
-                  <Text style={styles.groupHeaderText} numberOfLines={1}>{group.name}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.tableRowHeader}>
-              <View style={[styles.cellHeader, styles.nameColumnWidth]}><Text style={styles.headerText}>Member Name</Text></View>
-              <View style={[styles.cellHeader, styles.idColumnWidth]}><Text style={styles.headerText}>ID Number</Text></View>
-              {TRAINING_COLUMNS.map((col) => (
-                <View key={col.id} style={[styles.cellHeader, styles.moduleColumnWidth, styles.columnBorderRight]}>
-                  <Text style={styles.headerText} numberOfLines={1}>{col.label}</Text>
-                  <Text style={styles.headerSubtitleText} numberOfLines={2}>{parseTrainingName(col.id) || col.label}</Text>
-                </View>
-              ))}
+        <View style={styles.tableSplitRow}>
+          {/* Fixed left panel: Name/ID never scroll away, so the member a
+              row belongs to is always visible while scrolling through the
+              training columns on the right. */}
+          <View style={styles.leftPanel}>
+            <View style={styles.leftGroupHeaderSpacer} />
+            <View style={styles.leftColumnHeaderRow}>
+              <View style={[styles.cellHeader, styles.nameColumnWidth]}>
+                <Text style={styles.headerText}>Member Name</Text>
+              </View>
+              <View style={[styles.cellHeader, styles.idColumnWidth]}>
+                <Text style={styles.headerText}>ID Number</Text>
+              </View>
             </View>
 
             <FlatList
+              ref={leftListRef}
               data={filteredMatrixData}
-              renderItem={renderTableRow}
+              renderItem={renderLeftRow}
               keyExtractor={(item) => item.MemberIDNo?.toString()}
               getItemLayout={(_, index) => ({ length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index })}
-              removeClippedSubviews={Platform.OS === 'android'}
-              maxToRenderPerBatch={15}
-              windowSize={5}
-              initialNumToRender={20}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No tracking profiles matched your search and filters.</Text>
-                </View>
-              }
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
             />
           </View>
-        </ScrollView>
+
+          {/* Scrollable right panel: every training column. */}
+          <ScrollView horizontal showsHorizontalScrollIndicator style={{ flex: 1 }}>
+            <View>
+              <View style={styles.tableRowGroupHeader}>
+                {GROUPED_HEADERS.map((group, idx) => (
+                  <View
+                    key={`${group.name}-${idx}`}
+                    style={[styles.groupHeaderCell, { width: group.count * MODULE_COLUMN_WIDTH }, idx % 2 === 1 && styles.groupHeaderCellAlt]}
+                  >
+                    <Text style={styles.groupHeaderText} numberOfLines={1}>{group.name}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.tableRowHeader}>
+                {TRAINING_COLUMNS.map((col) => (
+                  <View key={col.id} style={[styles.cellHeader, styles.moduleColumnWidth, styles.columnBorderRight]}>
+                    <Text style={styles.headerText} numberOfLines={1}>{col.label}</Text>
+                    <Text style={styles.headerSubtitleText} numberOfLines={2}>{parseTrainingName(col.id) || col.label}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <FlatList
+                data={filteredMatrixData}
+                renderItem={renderRightRow}
+                keyExtractor={(item) => item.MemberIDNo?.toString()}
+                getItemLayout={(_, index) => ({ length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index })}
+                onScroll={handleRightScroll}
+                scrollEventThrottle={16}
+                removeClippedSubviews={Platform.OS === 'android'}
+                // Each row renders ~150 training-column cells, far heavier than a
+                // typical list item, so batches are kept small to avoid janking
+                // the scroll thread with too much synchronous render work at once.
+                maxToRenderPerBatch={6}
+                updateCellsBatchingPeriod={30}
+                windowSize={4}
+                initialNumToRender={8}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No tracking profiles matched your search and filters.</Text>
+                  </View>
+                }
+              />
+            </View>
+          </ScrollView>
+        </View>
       </View>
     </View>
   );
@@ -553,22 +632,34 @@ const styles = StyleSheet.create({
   memberFilterApplyBtnText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
 
   tableWrapper: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 20 },
-  tableRowGroupHeader: { flexDirection: 'row', backgroundColor: '#1e293b', borderBottomWidth: 1, borderColor: '#334155' },
+  tableSplitRow: { flex: 1, flexDirection: 'row' },
+  leftPanel: {
+    width: NAME_COLUMN_WIDTH + ID_COLUMN_WIDTH, borderRightWidth: 2, borderRightColor: '#e2e8f0',
+    ...Platform.select({
+      web: { boxShadow: '2px 0 4px 0 rgba(15, 23, 42, 0.06)' },
+      default: { elevation: 2 },
+    }),
+  },
+  leftGroupHeaderSpacer: { height: GROUP_HEADER_HEIGHT, backgroundColor: '#1e293b', borderBottomWidth: 1, borderColor: '#334155' },
+  leftColumnHeaderRow: {
+    flexDirection: 'row', height: COLUMN_HEADER_HEIGHT, backgroundColor: '#002060',
+    borderBottomWidth: 1, borderColor: '#001540',
+  },
+  tableRowGroupHeader: { flexDirection: 'row', height: GROUP_HEADER_HEIGHT, backgroundColor: '#1e293b', borderBottomWidth: 1, borderColor: '#334155' },
   groupHeaderCell: { justifyContent: 'center', alignItems: 'center', paddingVertical: 8, borderRightWidth: 1, borderColor: '#334155', backgroundColor: '#0f172a' },
   groupHeaderCellAlt: { backgroundColor: '#1e293b' },
   groupHeaderText: { color: '#94a3b8', fontSize: 10, fontWeight: '800', textTransform: 'uppercase', paddingHorizontal: 4 },
-  tableRowHeader: { flexDirection: 'row', backgroundColor: '#002060', borderBottomWidth: 1, borderColor: '#001540', paddingVertical: 8 },
+  tableRowHeader: { flexDirection: 'row', height: COLUMN_HEADER_HEIGHT, backgroundColor: '#002060', borderBottomWidth: 1, borderColor: '#001540' },
   tableRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#f1f5f9', height: ROW_HEIGHT },
   rowAlternate: { backgroundColor: '#f8fafc' },
-  nameColumnWidth: { width: 180, paddingHorizontal: 12 },
-  idColumnWidth: { width: 120, paddingHorizontal: 8 },
+  nameColumnWidth: { width: NAME_COLUMN_WIDTH, paddingHorizontal: 12 },
+  idColumnWidth: { width: ID_COLUMN_WIDTH, paddingHorizontal: 8 },
   moduleColumnWidth: { width: 110, alignItems: 'center', justifyContent: 'center' },
   columnBorderRight: { borderRightWidth: 1, borderRightColor: '#002e8c' },
   cellHeader: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4 },
   headerText: { color: '#ffffff', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   headerSubtitleText: { color: '#93c5fd', fontSize: 9, fontWeight: '500', textAlign: 'center', marginTop: 3 },
   cell: { justifyContent: 'center' },
-  centerCell: { alignItems: 'center', width: '100%' },
   nameText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
   idText: { fontSize: 12, color: '#64748b', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
   checkbox: { width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: '#cbd5e1', backgroundColor: '#ffffff', justifyContent: 'center', alignItems: 'center' },
