@@ -60,6 +60,8 @@ function getRoleLabel(code) {
   return ROLE_LABELS[code.trim().toUpperCase()] || code;
 }
 
+const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
+
 // A small "value: X ▾" pressable that opens a single-select list of options.
 // Used three times below (Gender / Role / Area) so it's factored out once.
 function FilterDropdown({ label, value, options, onChange, getLabel = (v) => v }) {
@@ -107,6 +109,8 @@ export default function MembersList() {
   const [sortAsc, setSortAsc] = useState(true);
 
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [roleMenuOpenFor, setRoleMenuOpenFor] = useState(null);
+  const [changingRoleId, setChangingRoleId] = useState(null);
 
   // --- Assign Talks Modal state ---
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -166,6 +170,30 @@ export default function MembersList() {
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
     } finally {
       setUpdatingId(null);
+    }
+  }
+
+  // Handle Role updates to Supabase
+  async function handleChangeRole(memberId, currentRole, targetRoleCode) {
+    setRoleMenuOpenFor(null);
+    if ((currentRole || '').trim().toUpperCase() === targetRoleCode) return; // No change
+
+    try {
+      setChangingRoleId(memberId);
+      const { error } = await supabase
+        .from('members')
+        .update({ PastoralService: targetRoleCode })
+        .eq('MemberIDNo', memberId);
+
+      if (error) throw error;
+
+      setMembers((prevMembers) =>
+        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, PastoralService: targetRoleCode } : m))
+      );
+    } catch (error) {
+      showAlert('Database Exception', `Failed updating role: ${error.message}`);
+    } finally {
+      setChangingRoleId(null);
     }
   }
 
@@ -447,9 +475,11 @@ export default function MembersList() {
                 const currentGender = item.Gender;
                 const isRowUpdating = updatingId === item.MemberIDNo;
                 const isSelected = selectedIds.has(item.MemberIDNo);
+                const isRoleMenuOpen = roleMenuOpenFor === item.MemberIDNo;
+                const isChangingRole = changingRoleId === item.MemberIDNo;
 
                 return (
-                  <View style={styles.tableRow}>
+                  <View style={[styles.tableRow, isRoleMenuOpen && { zIndex: 50 }]}>
                     <View style={[styles.cell, CHECKBOX_COL]}>
                       <Pressable
                         style={[styles.checkbox, isSelected && styles.checkboxChecked]}
@@ -494,9 +524,40 @@ export default function MembersList() {
                       )}
                     </View>
 
-                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }]}>
-                      <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text></View>
+                    <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center', position: 'relative' }]}>
+                      {isChangingRole ? (
+                        <ActivityIndicator size="small" color="#002060" />
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.roleBadge}
+                          onPress={() => setRoleMenuOpenFor(isRoleMenuOpen ? null : item.MemberIDNo)}
+                        >
+                          <Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text>
+                          <Ionicons name={isRoleMenuOpen ? 'chevron-up' : 'chevron-down'} size={11} color="#002060" style={{ marginLeft: 4 }} />
+                        </TouchableOpacity>
+                      )}
                       <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
+
+                      {isRoleMenuOpen && (
+                        <View style={styles.roleMenu}>
+                          <ScrollView style={styles.roleMenuScroll} nestedScrollEnabled>
+                            {ROLE_OPTION_CODES.map((code) => {
+                              const isCurrent = (item.PastoralService || '').trim().toUpperCase() === code;
+                              return (
+                                <TouchableOpacity
+                                  key={code}
+                                  style={[styles.roleMenuItem, isCurrent && styles.roleMenuItemActive]}
+                                  onPress={() => handleChangeRole(item.MemberIDNo, item.PastoralService, code)}
+                                >
+                                  <Text style={[styles.roleMenuItemText, isCurrent && styles.roleMenuItemTextActive]}>
+                                    {ROLE_LABELS[code]}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </ScrollView>
+                        </View>
+                      )}
                     </View>
                   </View>
                 );
@@ -719,10 +780,22 @@ const styles = StyleSheet.create({
   unknownBadge: { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' },
   unknownBadgeText: { color: '#64748b' },
 
-  roleBadge: { backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  roleBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
   areaBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   areaBadgeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+
+  roleMenu: {
+    position: 'absolute', top: 30, left: 0, minWidth: 190,
+    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8,
+    elevation: 8, zIndex: 60, paddingVertical: 4,
+  },
+  roleMenuScroll: { maxHeight: 220 },
+  roleMenuItem: { paddingHorizontal: 12, paddingVertical: 9 },
+  roleMenuItemActive: { backgroundColor: '#eff6ff' },
+  roleMenuItemText: { fontSize: 12, fontWeight: '500', color: '#334155' },
+  roleMenuItemTextActive: { color: '#002060', fontWeight: '700' },
 
   empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40, marginBottom: 20 },
 

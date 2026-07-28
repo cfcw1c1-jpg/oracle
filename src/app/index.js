@@ -18,11 +18,68 @@ import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
 import PredictorScreen from '../screens/PredictorScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import packageJson from '../../package.json';
+
+const NAV_ITEMS = [
+  { key: 'home', label: 'Dashboard', icon: 'home-outline' },
+  { key: 'members', label: 'Directory', icon: 'people-outline' },
+  { key: 'pfo', label: 'PFO Trainings', icon: 'bar-chart-outline' },
+  { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
+  { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
+  { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
+];
+
+// Shared by the permanent (wide-screen) sidebar and the mobile drawer.
+function NavigationLinks({ currentTab, onSelectTab, collapsed }) {
+  return (
+    <View style={styles.navLinksContainer}>
+      {NAV_ITEMS.map((item) => {
+        const isActive = currentTab === item.key;
+        return (
+          <TouchableOpacity
+            key={item.key}
+            style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, isActive && styles.activeSidebarButton]}
+            onPress={() => onSelectTab(item.key)}
+          >
+            <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : '#64748b'} style={!collapsed && styles.sidebarIcon} />
+            {!collapsed && (
+              <Text style={[styles.sidebarButtonText, isActive && styles.activeSidebarText]}>{item.label}</Text>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+
+      <View style={styles.spacer} />
+
+      <TouchableOpacity
+        style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, currentTab === 'profile' && styles.activeSidebarButton]}
+        onPress={() => onSelectTab('profile')}
+      >
+        <Ionicons name="person-circle-outline" size={18} color={currentTab === 'profile' ? '#ffffff' : '#64748b'} style={!collapsed && styles.sidebarIcon} />
+        {!collapsed && (
+          <Text style={[styles.sidebarButtonText, currentTab === 'profile' && styles.activeSidebarText]}>My Profile</Text>
+        )}
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, styles.logoutButton]}
+        onPress={() => supabase.auth.signOut()}
+      >
+        <Ionicons name="log-out-outline" size={18} color="#ef4444" style={!collapsed && styles.sidebarIcon} />
+        {!collapsed && <Text style={styles.logoutText}>Sign Out</Text>}
+      </TouchableOpacity>
+
+      {!collapsed && <Text style={styles.versionText}>v{packageJson.version}</Text>}
+    </View>
+  );
+}
 
 export default function Page() {
   const [session, setSession] = useState(null);
   const [currentTab, setCurrentTab] = useState('home');
-  
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -49,77 +106,10 @@ export default function Page() {
 
   const isLargeScreen = screenWidth >= 768; // Desktop / Tablet breakpoint
 
-  // Reusable Sidebar Nav Links Component
-  const NavigationLinks = () => (
-    <View style={styles.navLinksContainer}>
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'home' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('home'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="home-outline" size={18} color={currentTab === 'home' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'home' && styles.activeSidebarText]}>Dashboard</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'members' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('members'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="people-outline" size={18} color={currentTab === 'members' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'members' && styles.activeSidebarText]}>Directory</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'pfo' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('pfo'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="bar-chart-outline" size={18} color={currentTab === 'pfo' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'pfo' && styles.activeSidebarText]}>PFO Trainings</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'pfoReports' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('pfoReports'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="trending-up-outline" size={18} color={currentTab === 'pfoReports' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'pfoReports' && styles.activeSidebarText]}>PFO Reports</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'pfoStats' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('pfoStats'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="analytics-outline" size={18} color={currentTab === 'pfoStats' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'pfoStats' && styles.activeSidebarText]}>Formation Stats</Text>
-      </TouchableOpacity>
-
-      {/* Added CLP Maintenance to the Navigation Drawer Menu */}
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'clp' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('clp'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="construct-outline" size={18} color={currentTab === 'clp' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'clp' && styles.activeSidebarText]}>CLP Maintenance</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, currentTab === 'predictor' && styles.activeSidebarButton]}
-        onPress={() => { setCurrentTab('predictor'); setIsMobileMenuOpen(false); }}
-      >
-        <Ionicons name="sparkles-outline" size={18} color={currentTab === 'predictor' ? '#002060' : '#475569'} style={styles.sidebarIcon} />
-        <Text style={[styles.sidebarButtonText, currentTab === 'predictor' && styles.activeSidebarText]}>The ORACLE</Text>
-      </TouchableOpacity>
-
-      <View style={styles.spacer} />
-
-      <TouchableOpacity
-        style={[styles.sidebarButton, styles.logoutButton]}
-        onPress={() => supabase.auth.signOut()}
-      >
-        <Ionicons name="log-out-outline" size={18} color="#ef4444" style={styles.sidebarIcon} />
-        <Text style={styles.logoutText}>Sign Out</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  function handleSelectTab(tabKey) {
+    setCurrentTab(tabKey);
+    setIsMobileMenuOpen(false);
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -142,18 +132,25 @@ export default function Page() {
       {/* Primary Workspace Layout */}
       <View style={styles.dashboardBody}>
         
-        {/* SIDEBAR: Rendered permanently on Web/Desktop */}
+        {/* SIDEBAR: Rendered permanently on Web/Desktop, collapsible to icon-only */}
         {isLargeScreen && (
-          <View style={styles.permanentSidebar}>
-            <NavigationLinks />
+          <View style={[styles.permanentSidebar, isSidebarCollapsed && styles.permanentSidebarCollapsed]}>
+            <TouchableOpacity
+              style={[styles.collapseToggle, isSidebarCollapsed && styles.collapseToggleCollapsed]}
+              onPress={() => setIsSidebarCollapsed((v) => !v)}
+            >
+              <Ionicons name={isSidebarCollapsed ? 'chevron-forward' : 'chevron-back'} size={16} color="#64748b" />
+              {!isSidebarCollapsed && <Text style={styles.collapseToggleText}>Collapse Menu</Text>}
+            </TouchableOpacity>
+            <NavigationLinks currentTab={currentTab} onSelectTab={handleSelectTab} collapsed={isSidebarCollapsed} />
           </View>
         )}
 
-        {/* MOBILE OVERLAY DRAWER: Slid open temporarily on smaller screens */}
+        {/* MOBILE OVERLAY DRAWER: Slid open temporarily on smaller screens (always expanded) */}
         {!isLargeScreen && isMobileMenuOpen && (
           <View style={styles.mobileDrawerOverlay}>
             <View style={styles.mobileDrawerContent}>
-              <NavigationLinks />
+              <NavigationLinks currentTab={currentTab} onSelectTab={handleSelectTab} collapsed={false} />
             </View>
             <TouchableOpacity style={styles.drawerDismissZone} onPress={() => setIsMobileMenuOpen(false)} />
           </View>
@@ -168,6 +165,7 @@ export default function Page() {
           {currentTab === 'pfoStats' && <PfoStatGenerator />}
           {currentTab === 'clp' && <ClpMaintenance />}
           {currentTab === 'predictor' && <PredictorScreen />}
+          {currentTab === 'profile' && <ProfileScreen />}
         </View>
       </View>
 
@@ -222,16 +220,26 @@ const styles = StyleSheet.create({
   dashboardBody: { flex: 1, flexDirection: 'row', position: 'relative' },
   
   // Web Admin Sidebar Architecture
-  permanentSidebar: { width: 260, backgroundColor: '#ffffff', borderRightWidth: 1, borderColor: '#e2e8f0', padding: 16 },
+  permanentSidebar: { width: 260, backgroundColor: '#f5f6fb', borderRightWidth: 1, borderColor: '#e7e8f2', padding: 16 },
+  permanentSidebarCollapsed: { width: 76, paddingHorizontal: 10 },
+  collapseToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    width: '100%', paddingVertical: 10, borderRadius: 8, backgroundColor: '#ffffff',
+    borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 14,
+  },
+  collapseToggleCollapsed: { width: 44, paddingVertical: 10, paddingHorizontal: 0, alignSelf: 'center' },
+  collapseToggleText: { marginLeft: 8, fontSize: 13, fontWeight: '700', color: '#475569' },
   navLinksContainer: { flex: 1 },
-  sidebarButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 8, marginBottom: 6 },
-  activeSidebarButton: { backgroundColor: '#eff6ff' },
+  sidebarButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, marginBottom: 6 },
+  sidebarButtonCollapsed: { justifyContent: 'center', paddingHorizontal: 0 },
+  activeSidebarButton: { backgroundColor: '#002060' },
   sidebarButtonText: { fontSize: 14, color: '#475569', fontWeight: '600' },
   sidebarIcon: { marginRight: 10 },
-  activeSidebarText: { color: '#002060', fontWeight: '700' },
+  activeSidebarText: { color: '#ffffff', fontWeight: '700' },
   spacer: { flex: 1 },
   logoutButton: { backgroundColor: '#fef2f2', marginTop: 'auto' },
   logoutText: { color: '#ef4444', fontWeight: '600' },
+  versionText: { fontSize: 10, color: '#94a3b8', textAlign: 'center', marginTop: 10, fontWeight: '500' },
   
   // Mobile Modal Drawer Styling 
   mobileDrawerOverlay: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },

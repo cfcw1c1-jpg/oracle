@@ -2,13 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Image,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   useWindowDimensions,
   View,
@@ -44,14 +41,6 @@ function formatShortDate(dateStr) {
   const date = new Date(dateStr);
   if (Number.isNaN(date.getTime())) return dateStr;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function showAlert(title, message) {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n\n${message}`);
-  } else {
-    Alert.alert(title, message);
-  }
 }
 
 // A donut ring built with react-native-svg: one stacked arc per segment, each
@@ -113,10 +102,6 @@ export default function DashboardHome({ onNavigate }) {
   const [pfoRows, setPfoRows] = useState([]);
   const [clpTrainings, setClpTrainings] = useState([]);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-
   useEffect(() => {
     loadDashboard();
 
@@ -124,14 +109,6 @@ export default function DashboardHome({ onNavigate }) {
     const clockTimer = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(clockTimer);
   }, []);
-
-  useEffect(() => {
-    const trimmedQuery = searchQuery.trim();
-    if (trimmedQuery.length < 2) return undefined; // dropdown is hidden below query length 2 anyway
-
-    const handle = setTimeout(() => runMemberSearch(trimmedQuery), 300);
-    return () => clearTimeout(handle);
-  }, [searchQuery]);
 
   async function loadDashboard() {
     try {
@@ -157,33 +134,6 @@ export default function DashboardHome({ onNavigate }) {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function runMemberSearch(query) {
-    try {
-      setSearching(true);
-      const { data, error } = await supabase
-        .from('members')
-        .select('MemberIDNo, Firstname, Lastname, pastoral_service, Gender')
-        .or(`Firstname.ilike.%${query}%,Lastname.ilike.%${query}%`)
-        .limit(6);
-
-      if (error) throw error;
-      setSearchResults(data || []);
-    } catch (err) {
-      console.error('Error searching members:', err.message);
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  function handleSelectResult(member) {
-    setSearchQuery('');
-    setSearchResults([]);
-    showAlert(
-      `${member.Lastname}, ${member.Firstname}`,
-      `ID: ${member.MemberIDNo}\nRole: ${member.pastoral_service || 'MEMBER'}\nGender: ${member.Gender || 'N/A'}`
-    );
   }
 
   const totalMembers = memberGenders.length;
@@ -221,14 +171,19 @@ export default function DashboardHome({ onNavigate }) {
     return average(allPercentages);
   }, [pfoRows, totalMembers]);
 
-  const upcomingTrainings = useMemo(() => {
+  // Only genuinely future-dated batches count as "upcoming"; if none exist
+  // yet, fall back to showing the most recent past batches instead (and
+  // label the card accordingly rather than mislabeling old data as upcoming).
+  const { displayedTrainings, hasUpcomingTrainings } = useMemo(() => {
     const todayStr = now.toISOString().slice(0, 10);
     const upcoming = clpTrainings
       .filter((t) => t.start_date && t.start_date >= todayStr)
       .sort((a, b) => a.start_date.localeCompare(b.start_date));
 
-    if (upcoming.length > 0) return upcoming.slice(0, 4);
-    return clpTrainings.slice(0, 4);
+    if (upcoming.length > 0) {
+      return { displayedTrainings: upcoming.slice(0, 4), hasUpcomingTrainings: true };
+    }
+    return { displayedTrainings: clpTrainings.slice(0, 4), hasUpcomingTrainings: false };
   }, [clpTrainings, now]);
 
   if (loading) return <ActivityIndicator size="large" color={NAVY} style={styles.centered} />;
@@ -242,44 +197,8 @@ export default function DashboardHome({ onNavigate }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Header search + refresh */}
+      {/* Refresh */}
       <View style={styles.headerRow}>
-        <View style={styles.searchWrapper}>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search members by name..."
-              placeholderTextColor="#94a3b8"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCorrect={false}
-            />
-            {searching && <ActivityIndicator size="small" color={NAVY} />}
-          </View>
-
-          {searchQuery.trim().length >= 2 && (
-            <View style={styles.searchDropdown}>
-              {searchResults.length === 0 && !searching && (
-                <Text style={styles.searchEmptyText}>No members matched your search.</Text>
-              )}
-              {searchResults.map((member) => (
-                <TouchableOpacity
-                  key={member.MemberIDNo}
-                  style={styles.searchResultRow}
-                  onPress={() => handleSelectResult(member)}
-                >
-                  <Ionicons name="person-circle-outline" size={20} color={NAVY} style={styles.searchResultIcon} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.searchResultName}>{member.Lastname}, {member.Firstname}</Text>
-                    <Text style={styles.searchResultMeta}>ID: {member.MemberIDNo} · {member.pastoral_service || 'MEMBER'}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
-
         <TouchableOpacity style={styles.refreshBtn} onPress={loadDashboard}>
           <Ionicons name="refresh-outline" size={18} color={NAVY} />
         </TouchableOpacity>
@@ -299,11 +218,9 @@ export default function DashboardHome({ onNavigate }) {
                 Welcome back — signed in as {email}. Have a great {weekday}!
               </Text>
             </View>
-            <Image
-              source={require('../../assets/images/oracle-logo.png')}
-              style={styles.heroIllustration}
-              resizeMode="contain"
-            />
+            <View style={styles.heroBrandMark}>
+              <Ionicons name="book-outline" size={32} color="#ffffff" />
+            </View>
           </View>
 
           <View style={styles.statTilesRow}>
@@ -396,11 +313,11 @@ export default function DashboardHome({ onNavigate }) {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Upcoming CLP Trainings</Text>
-            {upcomingTrainings.length === 0 && (
+            <Text style={styles.cardTitle}>{hasUpcomingTrainings ? 'Upcoming CLP Trainings' : 'Previous CLP Trainings'}</Text>
+            {displayedTrainings.length === 0 && (
               <Text style={styles.searchEmptyText}>No training batches scheduled yet.</Text>
             )}
-            {upcomingTrainings.map((training) => (
+            {displayedTrainings.map((training) => (
               <View key={training.id} style={styles.agendaRow}>
                 <View style={styles.agendaDot} />
                 <View style={{ flex: 1 }}>
@@ -421,26 +338,8 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 16, paddingVertical: 16, paddingBottom: 30 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16, gap: 10 },
-  searchWrapper: { flex: 1, position: 'relative', zIndex: 20 },
-  searchBar: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff',
-    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, borderWidth: 1, borderColor: '#e2e8f0',
-    maxWidth: 420,
-  },
-  searchIcon: { marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 14, color: '#1e293b' },
-  searchDropdown: {
-    position: 'absolute', top: 52, left: 0, right: 0, maxWidth: 420,
-    backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0',
-    paddingVertical: 4, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08, shadowRadius: 10, elevation: 4,
-  },
+  headerRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 16 },
   searchEmptyText: { fontSize: 12, color: '#94a3b8', padding: 12, textAlign: 'center' },
-  searchResultRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8 },
-  searchResultIcon: { marginRight: 8 },
-  searchResultName: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
-  searchResultMeta: { fontSize: 11, color: '#64748b', marginTop: 1 },
   refreshBtn: {
     width: 42, height: 42, borderRadius: 12, backgroundColor: '#ffffff',
     borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center',
@@ -469,7 +368,10 @@ const styles = StyleSheet.create({
   dateChipText: { color: '#ffffff', fontSize: 11, fontWeight: '600' },
   heroTitle: { color: '#ffffff', fontSize: 24, fontWeight: '800', marginBottom: 6 },
   heroSubtitle: { color: 'rgba(255,255,255,0.85)', fontSize: 13, lineHeight: 19, maxWidth: 360 },
-  heroIllustration: { width: 90, height: 90, opacity: 0.95 },
+  heroBrandMark: {
+    width: 84, height: 84, borderRadius: 42, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+    borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center',
+  },
 
   statTilesRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   statTile: {
