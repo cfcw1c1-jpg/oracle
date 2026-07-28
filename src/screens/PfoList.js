@@ -72,7 +72,13 @@ export const TRAINING_COLUMNS = [
   { id: 'MER 2_4-4. Sex in Marriage', label: 'MER2 4', group: 'Marriage Enrichment Retreat 2' },
   { id: 'MER 2_5-5. Christian Parenting', label: 'MER2 5', group: 'Marriage Enrichment Retreat 2' },
   { id: 'MER 2_6-6. Empowering Our Marriage', label: 'MER2 6', group: 'Marriage Enrichment Retreat 2' },
-  
+
+  // Mission With The Poor
+  { id: 'MWPR_1-MWPR1:Sharing for the Common Good', label: 'MWPR 1', group: 'Mission with the Poor' },
+  { id: 'MWPR_2-MWPR2:Caring for The person in need', label: 'MWPR 2', group: 'Mission with the Poor' },
+  { id: 'MWPR_3-MWPR3:Church of the Poor', label: 'MWPR 3', group: 'Mission with the Poor' },
+  { id: 'MWPR_4-MWPR4:Future Full of Hope', label: 'MWPR 4', group: 'Mission with the Poor' },
+
   // Christian Personal Relationships
   { id: 'CPR_1-CPR1: Learning to Love One Another', label: 'CPR 1', group: 'Christian Personal Relationships' },
   { id: 'CPR_2-CPR2: Honor and Respect', label: 'CPR 2', group: 'Christian Personal Relationships' },

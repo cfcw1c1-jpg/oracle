@@ -23,8 +23,6 @@ const COLUMN_IDS_BY_GROUP = TRAINING_COLUMNS.reduce((acc, col) => {
 }, {});
 
 // Formation stages mapped to the training-matrix column groups they correspond to.
-// "Mission with the Poor (MWPR)" has no tracked column in pfo_members yet, so it
-// is reported as not tracked rather than computed from data that doesn't exist.
 export const FORMATION_STAGES = [
   {
     key: 'firstYear',
@@ -49,7 +47,7 @@ export const FORMATION_STAGES = [
       { code: 'FCL', name: 'Foundation for Christian Living', group: 'Foundations for Christian Living' },
       { code: 'SG', name: 'Spiritual Gifts Training', group: 'Spiritual Gifts Seminar' },
       { code: 'MER 2', name: 'Marriage Enrichment Retreat 2', group: 'Marriage Enrichment Retreat 2' },
-      { code: 'MWPR', name: 'Mission with the Poor', group: null },
+      { code: 'MWPR', name: 'Mission with the Poor', group: 'Mission with the Poor' },
     ],
   },
   {

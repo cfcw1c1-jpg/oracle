@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import { TRAINING_COLUMNS } from './PfoList';
 
 // Checkbox/Gender stay a fixed width (their content is compact and
 // fixed-size); Name/Household/Role grow to fill the row on wide screens but
@@ -106,9 +108,25 @@ export default function MembersList() {
 
   const [selectedIds, setSelectedIds] = useState(new Set());
 
+  // --- Assign Talks Modal state ---
+  const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [stagedMembers, setStagedMembers] = useState([]);
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [talkSearchQuery, setTalkSearchQuery] = useState('');
+  const [stagedTalkIds, setStagedTalkIds] = useState(new Set());
+  const [assigning, setAssigning] = useState(false);
+
   useEffect(() => {
     fetchMembers();
   }, []);
+
+  const showAlert = (title, message) => {
+    if (Platform.OS === 'web') {
+      window.alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  };
 
   async function fetchMembers() {
     try {
@@ -201,6 +219,89 @@ export default function MembersList() {
     });
   }
 
+  // --- Assign Talks Modal handlers ---
+
+  function openAssignModal() {
+    setStagedMembers(members.filter((m) => selectedIds.has(m.MemberIDNo)));
+    setStagedTalkIds(new Set());
+    setMemberSearchQuery('');
+    setTalkSearchQuery('');
+    setAssignModalVisible(true);
+  }
+
+  function closeAssignModal() {
+    setAssignModalVisible(false);
+  }
+
+  function addStagedMember(member) {
+    setStagedMembers((prev) => (prev.some((m) => m.MemberIDNo === member.MemberIDNo) ? prev : [...prev, member]));
+    setMemberSearchQuery('');
+  }
+
+  function removeStagedMember(memberId) {
+    setStagedMembers((prev) => prev.filter((m) => m.MemberIDNo !== memberId));
+  }
+
+  function toggleStagedTalk(talkId) {
+    setStagedTalkIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(talkId)) next.delete(talkId);
+      else next.add(talkId);
+      return next;
+    });
+  }
+
+  const memberSearchResults = useMemo(() => {
+    const cleanQuery = memberSearchQuery.trim().toLowerCase();
+    if (!cleanQuery) return [];
+
+    const stagedIds = new Set(stagedMembers.map((m) => m.MemberIDNo));
+    return members
+      .filter((m) => !stagedIds.has(m.MemberIDNo))
+      .filter((m) => {
+        const first = m.Firstname?.toLowerCase() || '';
+        const last = m.Lastname?.toLowerCase() || '';
+        const idStr = m.MemberIDNo?.toString().toLowerCase() || '';
+        return first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+      })
+      .slice(0, 6);
+  }, [memberSearchQuery, members, stagedMembers]);
+
+  const filteredTalks = useMemo(() => {
+    const cleanQuery = talkSearchQuery.trim().toLowerCase();
+    if (!cleanQuery) return TRAINING_COLUMNS;
+
+    return TRAINING_COLUMNS.filter((t) => {
+      const labelMatch = t.label?.toLowerCase().includes(cleanQuery);
+      const groupMatch = t.group?.toLowerCase().includes(cleanQuery);
+      return labelMatch || groupMatch;
+    });
+  }, [talkSearchQuery]);
+
+  async function handleAssignTalks() {
+    if (stagedMembers.length === 0 || stagedTalkIds.size === 0) return;
+
+    try {
+      setAssigning(true);
+
+      const talkColumns = Object.fromEntries(Array.from(stagedTalkIds).map((id) => [id, 'Y']));
+      const rows = stagedMembers.map((m) => ({ MemberIDNo: m.MemberIDNo, ...talkColumns }));
+
+      const { error } = await supabase.from('pfo_members').upsert(rows, { onConflict: 'MemberIDNo' });
+      if (error) throw error;
+
+      showAlert('Success', `Assigned ${stagedTalkIds.size} talk(s) to ${stagedMembers.length} member(s).`);
+      setAssignModalVisible(false);
+      setSelectedIds(new Set());
+      setStagedMembers([]);
+      setStagedTalkIds(new Set());
+    } catch (err) {
+      showAlert('Assignment Failed', err.message);
+    } finally {
+      setAssigning(false);
+    }
+  }
+
   if (loading) return <ActivityIndicator size="large" color="#002060" style={styles.centered} />;
 
   return (
@@ -242,6 +343,11 @@ export default function MembersList() {
             </TouchableOpacity>
           </View>
         )}
+
+        <TouchableOpacity style={styles.assignBtn} onPress={openAssignModal}>
+          <Ionicons name="add-outline" size={15} color="#ffffff" style={{ marginRight: 4 }} />
+          <Text style={styles.assignBtnText}>Assign to Talks</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.tableCard}>
@@ -341,6 +447,123 @@ export default function MembersList() {
           </View>
         </ScrollView>
       </View>
+
+      <Modal visible={assignModalVisible} animationType="slide" transparent onRequestClose={closeAssignModal}>
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Assign Talks to Members</Text>
+
+              <Text style={styles.inputLabel}>Members ({stagedMembers.length})</Text>
+              {stagedMembers.length > 0 && (
+                <View style={styles.stagedContainer}>
+                  {stagedMembers.map((m) => (
+                    <View key={m.MemberIDNo} style={styles.stagedChip}>
+                      <Text style={styles.stagedChipText}>{m.Firstname} {m.Lastname}</Text>
+                      <TouchableOpacity style={styles.stagedChipRemove} onPress={() => removeStagedMember(m.MemberIDNo)}>
+                        <Ionicons name="close" size={12} color="#1e40af" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.modalSearchBar}>
+                <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                <TextInput
+                  style={styles.modalSearchInput}
+                  placeholder="Search members to add..."
+                  placeholderTextColor="#94a3b8"
+                  value={memberSearchQuery}
+                  onChangeText={setMemberSearchQuery}
+                  autoCorrect={false}
+                />
+              </View>
+
+              {memberSearchQuery.trim().length > 0 && (
+                <View style={styles.autocompleteBox}>
+                  {memberSearchResults.length === 0 ? (
+                    <Text style={styles.autocompleteEmpty}>No matching members.</Text>
+                  ) : (
+                    memberSearchResults.map((m) => (
+                      <TouchableOpacity key={m.MemberIDNo} style={styles.autocompleteRow} onPress={() => addStagedMember(m)}>
+                        <Text style={styles.autocompleteRowText}>{m.Lastname}, {m.Firstname}</Text>
+                        <Text style={styles.autocompleteRowSub}>ID: {m.MemberIDNo}</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+              )}
+
+              <Text style={[styles.inputLabel, { marginTop: 18 }]}>Talks ({stagedTalkIds.size})</Text>
+              {stagedTalkIds.size > 0 && (
+                <View style={styles.stagedContainer}>
+                  {TRAINING_COLUMNS.filter((t) => stagedTalkIds.has(t.id)).map((t) => (
+                    <View key={t.id} style={styles.stagedChip}>
+                      <Text style={styles.stagedChipText} numberOfLines={1}>{t.label}</Text>
+                      <TouchableOpacity style={styles.stagedChipRemove} onPress={() => toggleStagedTalk(t.id)}>
+                        <Ionicons name="close" size={12} color="#1e40af" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={styles.modalSearchBar}>
+                <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+                <TextInput
+                  style={styles.modalSearchInput}
+                  placeholder="Search talks by name or group..."
+                  placeholderTextColor="#94a3b8"
+                  value={talkSearchQuery}
+                  onChangeText={setTalkSearchQuery}
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.talkListBox}>
+                <FlatList
+                  data={filteredTalks}
+                  keyExtractor={(t) => t.id}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item: t }) => {
+                    const isChecked = stagedTalkIds.has(t.id);
+                    return (
+                      <TouchableOpacity style={styles.talkRow} onPress={() => toggleStagedTalk(t.id)}>
+                        <Ionicons
+                          name={isChecked ? 'checkbox' : 'square-outline'}
+                          size={16}
+                          color={isChecked ? '#002060' : '#94a3b8'}
+                          style={{ marginRight: 8 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.talkRowText} numberOfLines={1}>{t.label}</Text>
+                          <Text style={styles.talkRowGroup}>{t.group}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  ListEmptyComponent={<Text style={styles.autocompleteEmpty}>No matching talks.</Text>}
+                />
+              </View>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={closeAssignModal}>
+                  <Text style={styles.btnTextCancel}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnConfirm, (stagedMembers.length === 0 || stagedTalkIds.size === 0 || assigning) && styles.btnDisabled]}
+                  onPress={handleAssignTalks}
+                  disabled={stagedMembers.length === 0 || stagedTalkIds.size === 0 || assigning}
+                >
+                  {assigning ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.btnTextConfirm}>Assign</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -435,4 +658,73 @@ const styles = StyleSheet.create({
   areaBadgeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
 
   empty: { textAlign: 'center', color: '#94a3b8', marginTop: 40, marginBottom: 20 },
+
+  assignBtn: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#002060',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
+  },
+  assignBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
+
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'center', alignItems: 'center', padding: 20,
+  },
+  modalScrollContainer: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 20 },
+  modalContent: {
+    backgroundColor: '#ffffff', borderRadius: 14, padding: 20, width: '100%', maxWidth: 520,
+    ...Platform.select({
+      web: { boxShadow: '0 4px 10px 0 rgba(0,0,0,0.1)' },
+      default: { elevation: 5 },
+    }),
+  },
+  modalTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 16 },
+  inputLabel: { fontSize: 11, fontWeight: '700', color: '#475569', textTransform: 'uppercase', marginBottom: 6 },
+
+  stagedContainer: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: '#f8fafc',
+    padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 10,
+  },
+  stagedChip: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff',
+    borderWidth: 1, borderColor: '#bfdbfe', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, maxWidth: 220,
+  },
+  stagedChipText: { fontSize: 12, fontWeight: '600', color: '#1e40af' },
+  stagedChipRemove: { marginLeft: 6, paddingHorizontal: 2 },
+
+  modalSearchBar: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9, marginBottom: 4,
+  },
+  modalSearchInput: { flex: 1, fontSize: 13, color: '#1e293b' },
+
+  autocompleteBox: {
+    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
+    marginTop: 4, marginBottom: 10, overflow: 'hidden',
+  },
+  autocompleteEmpty: { fontSize: 12, color: '#94a3b8', textAlign: 'center', paddingVertical: 14 },
+  autocompleteRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+  },
+  autocompleteRowText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
+  autocompleteRowSub: { fontSize: 11, color: '#64748b' },
+
+  talkListBox: {
+    maxHeight: 240, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    marginTop: 4, marginBottom: 16, overflow: 'hidden',
+  },
+  talkRow: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9,
+    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+  },
+  talkRowText: { fontSize: 13, fontWeight: '600', color: '#1e293b' },
+  talkRowGroup: { fontSize: 10, color: '#94a3b8', marginTop: 1, textTransform: 'uppercase', fontWeight: '700' },
+
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  btn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, minWidth: 90, alignItems: 'center' },
+  btnCancel: { backgroundColor: '#f1f5f9' },
+  btnConfirm: { backgroundColor: '#2563eb' },
+  btnDisabled: { backgroundColor: '#cbd5e1', opacity: 0.6 },
+  btnTextCancel: { color: '#475569', fontSize: 13, fontWeight: '600' },
+  btnTextConfirm: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
 });
