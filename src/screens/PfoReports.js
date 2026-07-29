@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
-import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -187,11 +186,6 @@ const getCleanTrackCode = (rawId) => {
   const segment = rawId.split('-')[0];
   return segment.replace('_', '.').replace(/\s+/g, '');
 };
-
-const escapeHtml = (str) => str
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;');
 
 export default function PfoTrainingReports() {
   const [selectedTrainings, setSelectedTrainings] = useState([TRAINING_COLUMNS[0]]);
@@ -380,62 +374,6 @@ export default function PfoTrainingReports() {
     }
   }
 
-  async function handleExportPdf() {
-    if (selectedTrainings.length === 0) {
-      Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
-      return;
-    }
-    if (reportData.length === 0) {
-      Alert.alert('Empty Dataset', 'There are no member records available to process.');
-      return;
-    }
-    try {
-      setLoading(true);
-
-      const { textContent, fileTimestamp } = buildReportContent();
-      const safeFileName = `cfc-pfo-report-${fileTimestamp}.pdf`;
-
-      // Same textContent as the TXT export, just laid out as preformatted
-      // HTML so expo-print can rasterize it into a PDF.
-      const html = `
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <style>
-              body { margin: 0; padding: 24px; }
-              pre { font-family: 'Courier New', Courier, monospace; font-size: 9px; white-space: pre-wrap; word-break: break-word; }
-            </style>
-          </head>
-          <body><pre>${escapeHtml(textContent)}</pre></body>
-        </html>
-      `;
-
-      if (Platform.OS === 'web') {
-        // On web, expo-print opens the browser's native print dialog, which
-        // lets the user "Save as PDF" — there is no direct programmatic
-        // file-download path on that platform.
-        await Print.printToFileAsync({ html });
-        return;
-      }
-
-      const { uri } = await Print.printToFileAsync({ html });
-      const printedFile = new File(uri);
-      const destFile = new File(Paths.document, safeFileName);
-      printedFile.copy(destFile);
-
-      await Sharing.shareAsync(destFile.uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: 'Export Matrix Registry (PDF)',
-        UTI: '.pdf',
-      });
-    } catch (err) {
-      Alert.alert('Export Failed', 'An error occurred while compiling your matrix PDF file.');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const renderReportItem = ({ item, index }) => {
     const fullName = item.members 
       ? `${item.members.Lastname}, ${item.members.Firstname}` 
@@ -559,16 +497,6 @@ export default function PfoTrainingReports() {
             <Ionicons name="document-text-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
             <Text style={styles.actionButtonText}>Export as TXT</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.actionButton, styles.pdfButton]}
-            activeOpacity={0.7}
-            onPress={handleExportPdf}
-            disabled={loading}
-          >
-            <Ionicons name="document-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
-            <Text style={styles.actionButtonText}>Export as PDF</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -653,7 +581,6 @@ const styles = StyleSheet.create({
   buttonsContainer: { flex: 0.65, flexDirection: 'row', gap: 8, justifyContent: 'center' },
   actionButton: { flex: 1, flexDirection: 'row', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' },
   completedButton: { backgroundColor: '#2563eb' },
-  pdfButton: { backgroundColor: '#dc2626' },
   actionButtonIcon: { marginRight: 8 },
   actionButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
