@@ -1,7 +1,7 @@
 {
   "name": "oracle-app",
   "main": "expo-router/entry",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "dependencies": {
     "@expo/ui": "~57.0.7",
     "@expo/vector-icons": "^15.0.2",
@@ -14,6 +14,7 @@
     "expo-glass-effect": "~57.0.1",
     "expo-image": "~57.0.1",
     "expo-image-picker": "~57.0.6",
+    "expo-linear-gradient": "~57.0.1",
     "expo-linking": "~57.0.3",
     "expo-print": "~57.0.1",
     "expo-router": "~57.0.7",
