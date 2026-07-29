@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
+import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -187,6 +188,11 @@ const getCleanTrackCode = (rawId) => {
   return segment.replace('_', '.').replace(/\s+/g, '');
 };
 
+const escapeHtml = (str) => str
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
 export default function PfoTrainingReports() {
   const [selectedTrainings, setSelectedTrainings] = useState([TRAINING_COLUMNS[0]]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -258,88 +264,93 @@ export default function PfoTrainingReports() {
     });
   }, [searchQuery]);
 
-  async function executeExtractionPipeline() {
+  // Builds the exact same matrix content used by both the TXT and PDF exports,
+  // so the two formats never drift out of sync with each other.
+  function buildReportContent() {
+    const matrixRegistry = reportData;
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+
+    const fileTimestamp = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+    const displayTimestamp = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    let textContent = `=======================================================================\n`;
+    textContent += `                     PFO TRAINING MATRIX ACCREDITATION\n`;
+    textContent += `=======================================================================\n`;
+    textContent += `COMPILED DATE:     ${displayTimestamp} ${hours}:${minutes}:${seconds}\n`;
+    textContent += `TOTAL DATA COUNT:  ${matrixRegistry.length} Registered Row Entries\n`;
+    textContent += `STATUS KEY:        Y = Attended Already | N = Not Yet Attended\n`;
+    textContent += `-----------------------------------------------------------------------\n`;
+    textContent += `MANDATED TRACK FILTER TARGETS CHECKED:\n`;
+
+    selectedTrainings.forEach((t) => {
+      textContent += `  [${getCleanTrackCode(t.id)}]: — ${t.label}\n`;
+    });
+
+    textContent += `-----------------------------------------------------------------------\n\n`;
+
+    let tableHeaderStr = `   #   | MEMBER NAME                              | ID NUMBER   | STATUS BREAKDOWN\n`;
+    let dividerLine    = `-------|------------------------------------------|-------------|------------------\n`;
+    textContent += tableHeaderStr + dividerLine;
+
+    matrixRegistry.forEach((item, index) => {
+      const num = String(index + 1).padEnd(4, ' ');
+      const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
+      const paddedName = name.padEnd(40, ' ').substring(0, 40);
+      const idNo = (item.MemberIDNo || 'N/A').padEnd(11, ' ');
+
+      const attendedTracks = [];
+      const notAttendedTracks = [];
+
+      selectedTrainings.forEach((t) => {
+        const recordVal = item[t.id];
+        const code = getCleanTrackCode(t.id);
+        if (recordVal === 'Y' || recordVal === 'y') {
+          attendedTracks.push(code);
+        } else {
+          notAttendedTracks.push(code);
+        }
+      });
+
+      let trackBreakdown = '';
+      if (attendedTracks.length > 0) {
+        trackBreakdown += `Attended: ${attendedTracks.join(', ')}`;
+      }
+
+      if (notAttendedTracks.length > 0) {
+        const notAttendedStr = notAttendedTracks.length === selectedTrainings.length ? 'All' : notAttendedTracks.join(', ');
+        trackBreakdown += trackBreakdown ? ` | Not Attended: ${notAttendedStr}` : `Not Attended: ${notAttendedStr}`;
+      }
+
+      textContent += ` ${num} | ${paddedName} | ${idNo} | ${trackBreakdown}\n`;
+    });
+
+    textContent += `\n-----------------------------------------------------------------------\n`;
+    textContent += `End of Matrix Document — Securely compiled via PFO Portal Engine.\n`;
+
+    return { textContent, fileTimestamp };
+  }
+
+  async function handleExportTxt() {
     if (selectedTrainings.length === 0) {
       Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
+      return;
+    }
+    if (reportData.length === 0) {
+      Alert.alert('Empty Dataset', 'There are no member records available to process.');
       return;
     }
     try {
       setLoading(true);
 
-      if (reportData.length === 0) {
-        Alert.alert('Empty Dataset', 'There are no member records available to process.');
-        return;
-      }
-
-      // Matrix registry now processes all current elements inside reportData, including zero-attendance matches
-      const matrixRegistry = reportData;
-
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-      const seconds = String(now.getSeconds()).padStart(2, '0');
-      
-      const fileTimestamp = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+      const { textContent, fileTimestamp } = buildReportContent();
       const safeFileName = `cfc-pfo-report-${fileTimestamp}.txt`;
-
-      const displayTimestamp = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-      let textContent = `=======================================================================\n`;
-      textContent += `                     PFO TRAINING MATRIX ACCREDITATION\n`;
-      textContent += `=======================================================================\n`;
-      textContent += `COMPILED DATE:     ${displayTimestamp} ${hours}:${minutes}:${seconds}\n`;
-      textContent += `TOTAL DATA COUNT:  ${matrixRegistry.length} Registered Row Entries\n`;
-      textContent += `STATUS KEY:        Y = Attended Already | N = Not Yet Attended\n`;
-      textContent += `-----------------------------------------------------------------------\n`;
-      textContent += `MANDATED TRACK FILTER TARGETS CHECKED:\n`;
-      
-      selectedTrainings.forEach((t) => {
-        textContent += `  [${getCleanTrackCode(t.id)}]: — ${t.label}\n`;
-      });
-      
-      textContent += `-----------------------------------------------------------------------\n\n`;
-
-      let tableHeaderStr = `   #   | MEMBER NAME                              | ID NUMBER   | STATUS BREAKDOWN\n`;
-      let dividerLine    = `-------|------------------------------------------|-------------|------------------\n`;
-      textContent += tableHeaderStr + dividerLine;
-
-      matrixRegistry.forEach((item, index) => {
-        const num = String(index + 1).padEnd(4, ' ');
-        const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
-        const paddedName = name.padEnd(40, ' ').substring(0, 40);
-        const idNo = (item.MemberIDNo || 'N/A').padEnd(11, ' ');
-
-        const attendedTracks = [];
-        const notAttendedTracks = [];
-
-        selectedTrainings.forEach((t) => {
-          const recordVal = item[t.id];
-          const code = getCleanTrackCode(t.id);
-          if (recordVal === 'Y' || recordVal === 'y') {
-            attendedTracks.push(code);
-          } else {
-            notAttendedTracks.push(code);
-          }
-        });
-
-        let trackBreakdown = '';
-        if (attendedTracks.length > 0) {
-          trackBreakdown += `Attended: ${attendedTracks.join(', ')}`;
-        }
-        
-        if (notAttendedTracks.length > 0) {
-          const notAttendedStr = notAttendedTracks.length === selectedTrainings.length ? 'All' : notAttendedTracks.join(', ');
-          trackBreakdown += trackBreakdown ? ` | Not Attended: ${notAttendedStr}` : `Not Attended: ${notAttendedStr}`;
-        }
-        
-        textContent += ` ${num} | ${paddedName} | ${idNo} | ${trackBreakdown}\n`;
-      });
-
-      textContent += `\n-----------------------------------------------------------------------\n`;
-      textContent += `End of Matrix Document — Securely compiled via PFO Portal Engine.\n`;
 
       if (Platform.OS === 'web') {
         const element = document.createElement("a");
@@ -352,16 +363,73 @@ export default function PfoTrainingReports() {
         return;
       }
 
-      const fileUri = `${FileSystem.documentDirectory}${safeFileName}`;
-      
-      await FileSystem.writeAsStringAsync(fileUri, textContent, { encoding: FileSystem.EncodingType.UTF8 });
-      await Sharing.shareAsync(fileUri, { 
-        mimeType: 'text/plain', 
-        dialogTitle: `Export Matrix Registry` 
+      const file = new File(Paths.document, safeFileName);
+      file.create({ overwrite: true });
+      file.write(textContent);
+
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'text/plain',
+        dialogTitle: `Export Matrix Registry`
       });
 
     } catch (err) {
       Alert.alert('Export Failed', 'An error occurred while compiling your matrix text file.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleExportPdf() {
+    if (selectedTrainings.length === 0) {
+      Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
+      return;
+    }
+    if (reportData.length === 0) {
+      Alert.alert('Empty Dataset', 'There are no member records available to process.');
+      return;
+    }
+    try {
+      setLoading(true);
+
+      const { textContent, fileTimestamp } = buildReportContent();
+      const safeFileName = `cfc-pfo-report-${fileTimestamp}.pdf`;
+
+      // Same textContent as the TXT export, just laid out as preformatted
+      // HTML so expo-print can rasterize it into a PDF.
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { margin: 0; padding: 24px; }
+              pre { font-family: 'Courier New', Courier, monospace; font-size: 9px; white-space: pre-wrap; word-break: break-word; }
+            </style>
+          </head>
+          <body><pre>${escapeHtml(textContent)}</pre></body>
+        </html>
+      `;
+
+      if (Platform.OS === 'web') {
+        // On web, expo-print opens the browser's native print dialog, which
+        // lets the user "Save as PDF" — there is no direct programmatic
+        // file-download path on that platform.
+        await Print.printToFileAsync({ html });
+        return;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html });
+      const printedFile = new File(uri);
+      const destFile = new File(Paths.document, safeFileName);
+      printedFile.copy(destFile);
+
+      await Sharing.shareAsync(destFile.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Export Matrix Registry (PDF)',
+        UTI: '.pdf',
+      });
+    } catch (err) {
+      Alert.alert('Export Failed', 'An error occurred while compiling your matrix PDF file.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -482,14 +550,24 @@ export default function PfoTrainingReports() {
         </View>
 
         <View style={styles.buttonsContainer}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.actionButton, styles.completedButton]}
             activeOpacity={0.7}
-            onPress={executeExtractionPipeline}
+            onPress={handleExportTxt}
             disabled={loading}
           >
-            <Ionicons name="download-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
-            <Text style={styles.actionButtonText}>Export Dynamic Matrix File</Text>
+            <Ionicons name="document-text-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
+            <Text style={styles.actionButtonText}>Export as TXT</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.pdfButton]}
+            activeOpacity={0.7}
+            onPress={handleExportPdf}
+            disabled={loading}
+          >
+            <Ionicons name="document-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
+            <Text style={styles.actionButtonText}>Export as PDF</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -572,9 +650,10 @@ const styles = StyleSheet.create({
   kpiSplitCard: { flex: 0.35, backgroundColor: '#ffffff', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center' },
   kpiLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   kpiValue: { fontSize: 22, fontWeight: '800', color: '#002060', marginTop: 2 },
-  buttonsContainer: { flex: 0.65, justifyContent: 'center' },
-  actionButton: { flexDirection: 'row', width: '100%', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
+  buttonsContainer: { flex: 0.65, flexDirection: 'row', gap: 8, justifyContent: 'center' },
+  actionButton: { flex: 1, flexDirection: 'row', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' },
   completedButton: { backgroundColor: '#2563eb' },
+  pdfButton: { backgroundColor: '#dc2626' },
   actionButtonIcon: { marginRight: 8 },
   actionButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
