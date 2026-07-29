@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
     Dimensions,
+    Image,
     Platform,
     SafeAreaView,
     StyleSheet,
@@ -127,6 +128,30 @@ export default function Page() {
           <Text style={styles.headerTitle}>ORACLE</Text>
           <Text style={styles.headerSubtitle}>MEMBERS PORTAL</Text>
         </View>
+
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            style={styles.headerAvatarButton}
+            onPress={() => handleSelectTab('profile')}
+          >
+            {session.user?.user_metadata?.avatar_url ? (
+              <Image source={{ uri: session.user.user_metadata.avatar_url }} style={styles.headerAvatarImage} />
+            ) : (
+              <View style={styles.headerAvatarFallback}>
+                <Text style={styles.headerAvatarFallbackText}>
+                  {(session.user?.email || '?').slice(0, 2).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerLogoutButton}
+            onPress={() => supabase.auth.signOut()}
+          >
+            <Ionicons name="log-out-outline" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Primary Workspace Layout */}
@@ -210,11 +235,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   
   // Header Adjustments
-  header: { backgroundColor: '#002060', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderColor: '#001540', zIndex: 10 },
-  headerContent: { width: '100%', flexDirection: 'row', alignItems: 'center' },
+  header: { backgroundColor: '#002060', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderColor: '#001540', zIndex: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headerContent: { flexDirection: 'row', alignItems: 'center' },
   menuToggleButton: { marginRight: 16, padding: 4 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: 2 },
   headerSubtitle: { fontSize: 11, color: '#93c5fd', marginLeft: 10, letterSpacing: 1, fontWeight: '500', marginTop: 4 },
+  headerRight: { flexDirection: 'row', alignItems: 'center' },
+  headerAvatarButton: { marginRight: 12 },
+  headerAvatarImage: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
+  headerAvatarFallback: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#1e3a8a', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
+  headerAvatarFallbackText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  headerLogoutButton: { padding: 6, borderRadius: 8 },
   
   // Dashboard Structure split
   dashboardBody: { flex: 1, flexDirection: 'row', position: 'relative' },
