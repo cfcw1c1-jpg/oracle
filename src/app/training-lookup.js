@@ -51,15 +51,26 @@ export default function TrainingLookup() {
     let resultsCount = null;
     try {
       setSearching(true);
-      const { data, error } = await supabase
-        .from('members')
-        .select('MemberIDNo, Firstname, Lastname')
-        .or(`Firstname.ilike.%${q}%,Lastname.ilike.%${q}%`)
-        .order('Lastname', { ascending: true })
-        .limit(10);
-      if (error) throw error;
-      setResults(data || []);
-      resultsCount = (data || []).length;
+      // Two separate ilike() calls instead of a single .or() DSL string —
+      // .or() treats ".", ",", "(", ")" as filter syntax, so a searched
+      // name containing any of those (e.g. "Q." in a middle initial) would
+      // break the server-side parser. ilike() takes the pattern as an
+      // opaque, safely-encoded value with no such risk.
+      const pattern = `%${q}%`;
+      const [{ data: byFirst, error: firstError }, { data: byLast, error: lastError }] = await Promise.all([
+        supabase.from('members').select('MemberIDNo, Firstname, Lastname').ilike('Firstname', pattern).limit(10),
+        supabase.from('members').select('MemberIDNo, Firstname, Lastname').ilike('Lastname', pattern).limit(10),
+      ]);
+      if (firstError) throw firstError;
+      if (lastError) throw lastError;
+
+      const merged = [...(byFirst || []), ...(byLast || [])];
+      const deduped = [...new Map(merged.map((m) => [m.MemberIDNo, m])).values()];
+      deduped.sort((a, b) => (a.Lastname || '').localeCompare(b.Lastname || ''));
+      const limited = deduped.slice(0, 10);
+
+      setResults(limited);
+      resultsCount = limited.length;
     } catch (err) {
       console.error('Member search failed:', err.message);
       setResults([]);
