@@ -14,6 +14,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import packageJson from '../../package.json';
 import Login from '../auth/Login';
+import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
 import MembersList from '../screens/MembersList';
@@ -30,6 +31,7 @@ const NAV_ITEMS = [
   { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
+  { key: 'auditLogs', label: 'Audit Logs', icon: 'terminal-outline' },
 ];
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
@@ -250,6 +252,7 @@ export default function Page() {
           {currentTab === 'pfoReports' && <PfoReport />}
           {currentTab === 'pfoStats' && <PfoStatGenerator />}
           {currentTab === 'clp' && <ClpMaintenance />}
+          {currentTab === 'auditLogs' && <AuditLogs />}
           {currentTab === 'predictor' && <PredictorScreen />}
           {currentTab === 'profile' && <ProfileScreen />}
         </View>
