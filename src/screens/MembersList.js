@@ -25,8 +25,9 @@ const CHECKBOX_COL = { width: 44 };
 const NAME_COL = { flexGrow: 2.2, flexShrink: 1, flexBasis: 0, minWidth: 200 };
 const HOUSEHOLD_COL = { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 };
 const GENDER_COL = { width: 120 };
+const STATUS_COL = { width: 130 };
 const ROLE_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 180 };
-const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 180;
+const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 130 + 180;
 
 function getInitials(firstName, lastName) {
   const first = (firstName || '').trim().charAt(0);
@@ -61,6 +62,26 @@ function getRoleLabel(code) {
 }
 
 const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
+
+// A member without a Status yet is treated as Active (matches the
+// dashboard's "Total Active Members" count, which predates this column).
+const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'Sold'];
+
+function getStatusLabel(status) {
+  return status || 'Active';
+}
+
+const STATUS_COLORS = {
+  Active: { bg: '#dcfce7', border: '#16a34a', text: '#15803d' },
+  Inactive: { bg: '#f1f5f9', border: '#94a3b8', text: '#64748b' },
+  Deceased: { bg: '#f3f4f6', border: '#6b7280', text: '#374151' },
+  Sold: { bg: '#fef3c7', border: '#d97706', text: '#b45309' },
+};
+const UNKNOWN_STATUS_COLORS = { bg: '#f1f5f9', border: '#cbd5e1', text: '#64748b' };
+
+function getStatusColors(status) {
+  return STATUS_COLORS[status] || UNKNOWN_STATUS_COLORS;
+}
 
 // A small "value: X ▾" pressable that opens a single-select list of options.
 // Used three times below (Gender / Role / Area) so it's factored out once.
@@ -106,11 +127,14 @@ export default function MembersList() {
   const [genderFilter, setGenderFilter] = useState('All');
   const [roleFilter, setRoleFilter] = useState('All');
   const [areaFilter, setAreaFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
   const [sortAsc, setSortAsc] = useState(true);
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [roleMenuOpenFor, setRoleMenuOpenFor] = useState(null);
   const [changingRoleId, setChangingRoleId] = useState(null);
+  const [statusMenuOpenFor, setStatusMenuOpenFor] = useState(null);
+  const [changingStatusId, setChangingStatusId] = useState(null);
 
   // FlatList renders each row in its own cell wrapper, so a zIndex set on our
   // row's own View never wins against sibling rows below it (they belong to
@@ -118,13 +142,13 @@ export default function MembersList() {
   // zIndex on that outer per-row wrapper instead, so the open row's dropdown
   // can actually paint above the rows underneath it.
   const RoleMenuAwareRow = useCallback(({ item, style, children, ...rest }) => {
-    const isOpen = item && roleMenuOpenFor === item.MemberIDNo;
+    const isOpen = item && (roleMenuOpenFor === item.MemberIDNo || statusMenuOpenFor === item.MemberIDNo);
     return (
       <View style={[style, isOpen && { zIndex: 50 }]} {...rest}>
         {children}
       </View>
     );
-  }, [roleMenuOpenFor]);
+  }, [roleMenuOpenFor, statusMenuOpenFor]);
 
   // --- Assign Talks Modal state ---
   const [assignModalVisible, setAssignModalVisible] = useState(false);
@@ -211,6 +235,30 @@ export default function MembersList() {
     }
   }
 
+  // Handle Status updates to Supabase (Active / Inactive / Deceased / Sold)
+  async function handleChangeStatus(memberId, currentStatus, targetStatus) {
+    setStatusMenuOpenFor(null);
+    if (getStatusLabel(currentStatus) === targetStatus) return; // No change
+
+    try {
+      setChangingStatusId(memberId);
+      const { error } = await supabase
+        .from('members')
+        .update({ Status: targetStatus })
+        .eq('MemberIDNo', memberId);
+
+      if (error) throw error;
+
+      setMembers((prevMembers) =>
+        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, Status: targetStatus } : m))
+      );
+    } catch (error) {
+      showAlert('Database Exception', `Failed updating status: ${error.message}`);
+    } finally {
+      setChangingStatusId(null);
+    }
+  }
+
   const roleOptions = useMemo(() => {
     const values = new Set(members.map((m) => (m.PastoralService || 'MEMBER').trim()));
     return ['All', ...Array.from(values).sort()];
@@ -233,14 +281,15 @@ export default function MembersList() {
       const matchesGender = genderFilter === 'All' || member.Gender === genderFilter;
       const matchesRole = roleFilter === 'All' || (member.PastoralService || 'MEMBER').trim() === roleFilter;
       const matchesArea = areaFilter === 'All' || (member.AreaName || 'No Area').trim() === areaFilter;
-      return matchesSearch && matchesGender && matchesRole && matchesArea;
+      const matchesStatus = statusFilter === 'All' || getStatusLabel(member.Status) === statusFilter;
+      return matchesSearch && matchesGender && matchesRole && matchesArea && matchesStatus;
     });
 
     return result.sort((a, b) => {
       const cmp = (a.Lastname || '').localeCompare(b.Lastname || '');
       return sortAsc ? cmp : -cmp;
     });
-  }, [searchQuery, members, genderFilter, roleFilter, areaFilter, sortAsc]);
+  }, [searchQuery, members, genderFilter, roleFilter, areaFilter, statusFilter, sortAsc]);
 
   const allFilteredSelected = filteredMembers.length > 0 && filteredMembers.every((m) => selectedIds.has(m.MemberIDNo));
 
@@ -440,6 +489,7 @@ export default function MembersList() {
           <FilterDropdown label="Gender" value={genderFilter} options={['All', 'Male', 'Female']} onChange={setGenderFilter} />
           <FilterDropdown label="Role" value={roleFilter} options={roleOptions} onChange={setRoleFilter} getLabel={getRoleLabel} />
           <FilterDropdown label="Area" value={areaFilter} options={areaOptions} onChange={setAreaFilter} />
+          <FilterDropdown label="Status" value={statusFilter} options={['All', ...STATUS_OPTIONS]} onChange={setStatusFilter} />
         </View>
 
         {selectedIds.size > 0 && (
@@ -477,6 +527,9 @@ export default function MembersList() {
               <View style={[styles.headerCell, GENDER_COL]}>
                 <Text style={styles.headerText}>GENDER</Text>
               </View>
+              <View style={[styles.headerCell, STATUS_COL]}>
+                <Text style={styles.headerText}>STATUS</Text>
+              </View>
               <View style={[styles.headerCell, ROLE_COL, { justifyContent: 'center' }]}>
                 <Text style={styles.headerText}>ROLE & AREA</Text>
               </View>
@@ -488,13 +541,16 @@ export default function MembersList() {
               CellRendererComponent={RoleMenuAwareRow}
               renderItem={({ item }) => {
                 const currentGender = item.Gender;
+                const currentStatus = getStatusLabel(item.Status);
                 const isRowUpdating = updatingId === item.MemberIDNo;
                 const isSelected = selectedIds.has(item.MemberIDNo);
                 const isRoleMenuOpen = roleMenuOpenFor === item.MemberIDNo;
                 const isChangingRole = changingRoleId === item.MemberIDNo;
+                const isStatusMenuOpen = statusMenuOpenFor === item.MemberIDNo;
+                const isChangingStatus = changingStatusId === item.MemberIDNo;
 
                 return (
-                  <View style={[styles.tableRow, isRoleMenuOpen && { zIndex: 50 }]}>
+                  <View style={[styles.tableRow, (isRoleMenuOpen || isStatusMenuOpen) && { zIndex: 50 }]}>
                     <View style={[styles.cell, CHECKBOX_COL]}>
                       <Pressable
                         style={[styles.checkbox, isSelected && styles.checkboxChecked]}
@@ -539,6 +595,51 @@ export default function MembersList() {
                       )}
                     </View>
 
+                    <View style={[styles.cell, STATUS_COL]}>
+                      <View style={styles.statusBadgeWrapper}>
+                        {isChangingStatus ? (
+                          <ActivityIndicator size="small" color="#002060" />
+                        ) : (
+                          <TouchableOpacity
+                            style={[styles.statusBadge, { backgroundColor: getStatusColors(currentStatus).bg, borderColor: getStatusColors(currentStatus).border }]}
+                            onPress={() => {
+                              setRoleMenuOpenFor(null);
+                              setStatusMenuOpenFor(isStatusMenuOpen ? null : item.MemberIDNo);
+                            }}
+                          >
+                            <Text style={[styles.statusBadgeText, { color: getStatusColors(currentStatus).text }]}>
+                              {currentStatus}
+                            </Text>
+                            <Ionicons
+                              name={isStatusMenuOpen ? 'chevron-up' : 'chevron-down'}
+                              size={11}
+                              color={getStatusColors(currentStatus).text}
+                              style={styles.statusBadgeIcon}
+                            />
+                          </TouchableOpacity>
+                        )}
+
+                        {isStatusMenuOpen && (
+                          <View style={styles.statusMenu}>
+                            {STATUS_OPTIONS.map((option) => {
+                              const isCurrent = currentStatus === option;
+                              return (
+                                <TouchableOpacity
+                                  key={option}
+                                  style={[styles.roleMenuItem, isCurrent && styles.roleMenuItemActive]}
+                                  onPress={() => handleChangeStatus(item.MemberIDNo, item.Status, option)}
+                                >
+                                  <Text style={[styles.roleMenuItemText, isCurrent && styles.roleMenuItemTextActive]}>
+                                    {option}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
                     <View style={[styles.cell, ROLE_COL, { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }]}>
                       <View style={styles.roleBadgeWrapper}>
                         {isChangingRole ? (
@@ -546,7 +647,10 @@ export default function MembersList() {
                         ) : (
                           <TouchableOpacity
                             style={styles.roleBadge}
-                            onPress={() => setRoleMenuOpenFor(isRoleMenuOpen ? null : item.MemberIDNo)}
+                            onPress={() => {
+                              setStatusMenuOpenFor(null);
+                              setRoleMenuOpenFor(isRoleMenuOpen ? null : item.MemberIDNo);
+                            }}
                           >
                             <Text style={styles.roleBadgeText}>{getRoleLabel(item.PastoralService)}</Text>
                             <Ionicons name={isRoleMenuOpen ? 'chevron-up' : 'chevron-down'} size={11} color="#002060" style={{ marginLeft: 4 }} />
@@ -582,7 +686,7 @@ export default function MembersList() {
               }}
               ListEmptyComponent={
                 <Text style={styles.empty}>
-                  {searchQuery || genderFilter !== 'All' || roleFilter !== 'All' || areaFilter !== 'All'
+                  {searchQuery || genderFilter !== 'All' || roleFilter !== 'All' || areaFilter !== 'All' || statusFilter !== 'All'
                     ? 'No members matched your search and filters.'
                     : 'No members found.'}
                 </Text>
@@ -803,6 +907,20 @@ const styles = StyleSheet.create({
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
   areaBadge: { backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   areaBadgeText: { fontSize: 11, fontWeight: '700', color: '#475569' },
+
+  statusBadgeWrapper: { position: 'relative', alignSelf: 'flex-start' },
+  statusBadge: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 20, borderWidth: 1, alignSelf: 'flex-start',
+  },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  statusBadgeIcon: { marginLeft: 5 },
+  statusMenu: {
+    position: 'absolute', top: 30, left: 0, minWidth: 140,
+    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8,
+    elevation: 8, zIndex: 60, paddingVertical: 4,
+  },
 
   roleMenu: {
     position: 'absolute', top: 30, left: 0, minWidth: 190,
