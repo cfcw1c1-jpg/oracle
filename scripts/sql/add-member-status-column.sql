@@ -17,7 +17,7 @@ ALTER TABLE public.members
 DO $$
 BEGIN
   ALTER TABLE public.members
-    ADD CONSTRAINT members_status_check CHECK ("Status" IN ('Active', 'Inactive', 'Deceased', 'Sold'));
+    ADD CONSTRAINT members_status_check CHECK ("Status" IN ('Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'));
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;

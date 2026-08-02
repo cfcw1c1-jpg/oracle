@@ -65,7 +65,7 @@ const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
 
 // A member without a Status yet is treated as Active (matches the
 // dashboard's "Total Active Members" count, which predates this column).
-const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'Sold'];
+const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
 
 function getStatusLabel(status) {
   return status || 'Active';
@@ -75,7 +75,8 @@ const STATUS_COLORS = {
   Active: { bg: '#dcfce7', border: '#16a34a', text: '#15803d' },
   Inactive: { bg: '#f1f5f9', border: '#94a3b8', text: '#64748b' },
   Deceased: { bg: '#f3f4f6', border: '#6b7280', text: '#374151' },
-  Sold: { bg: '#fef3c7', border: '#d97706', text: '#b45309' },
+  SOLD: { bg: '#fef3c7', border: '#d97706', text: '#b45309' },
+  HANDMAID: { bg: '#ede9fe', border: '#7c3aed', text: '#6d28d9' },
 };
 const UNKNOWN_STATUS_COLORS = { bg: '#f1f5f9', border: '#cbd5e1', text: '#64748b' };
 
@@ -235,7 +236,7 @@ export default function MembersList() {
     }
   }
 
-  // Handle Status updates to Supabase (Active / Inactive / Deceased / Sold)
+  // Handle Status updates to Supabase (Active / Inactive / Deceased / SOLD / HANDMAID)
   async function handleChangeStatus(memberId, currentStatus, targetStatus) {
     setStatusMenuOpenFor(null);
     if (getStatusLabel(currentStatus) === targetStatus) return; // No change
