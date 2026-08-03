@@ -93,6 +93,12 @@ function isNonMemberRole(code) {
   return normalized !== '' && normalized !== 'MEMBER';
 }
 
+// A member with no Status yet (legacy rows) counts as Active; only an
+// explicit non-Active status (Inactive/Deceased/SOLD/HANDMAID) excludes them.
+function isActiveStatus(status) {
+  return !status || status === 'Active';
+}
+
 // A track is "complete" for a member only if every column in its group is Y/y,
 // matching the same all-or-nothing logic PfoReports.js uses for "attendedAll".
 export function computeTrackStat(track, pfoRows, totalMembers) {
@@ -124,7 +130,6 @@ function buildStageInsight(trackedPercentages) {
 export default function PfoStatGenerator() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [totalMembers, setTotalMembers] = useState(0);
   const [membersRows, setMembersRows] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
   const [leadersOnly, setLeadersOnly] = useState(false);
@@ -138,14 +143,13 @@ export default function PfoStatGenerator() {
       setLoading(true);
 
       const [{ data: members, error: memberError }, { data, error: pfoError }] = await Promise.all([
-        supabase.from('members').select('MemberIDNo, PastoralService'),
-        supabase.from('pfo_members').select('*, members (PastoralService)'),
+        supabase.from('members').select('MemberIDNo, PastoralService, Status'),
+        supabase.from('pfo_members').select('*, members (PastoralService, Status)'),
       ]);
 
       if (memberError) throw memberError;
       if (pfoError) throw pfoError;
 
-      setTotalMembers(members?.length || 0);
       setMembersRows(members || []);
       setPfoRows(data || []);
     } catch (err) {
@@ -155,18 +159,26 @@ export default function PfoStatGenerator() {
     }
   }
 
-  // Denominator: everyone, or just members holding a non-"Member" role
-  // (Unit Head, Household Head, Chapter Leader, etc.) when the checkbox is on.
+  // Non-Active members (Inactive/Deceased/SOLD/HANDMAID) are excluded from
+  // every count below, regardless of the leaders-only toggle.
+  const activeMembersRows = useMemo(
+    () => membersRows.filter((m) => isActiveStatus(m.Status)),
+    [membersRows]
+  );
+
+  // Denominator: everyone active, or just active members holding a non-"Member"
+  // role (Unit Head, Household Head, Chapter Leader, etc.) when the checkbox is on.
   const activeTotalMembers = useMemo(() => {
-    if (!leadersOnly) return totalMembers;
-    return membersRows.filter((m) => isNonMemberRole(m.PastoralService)).length;
-  }, [leadersOnly, membersRows, totalMembers]);
+    if (!leadersOnly) return activeMembersRows.length;
+    return activeMembersRows.filter((m) => isNonMemberRole(m.PastoralService)).length;
+  }, [leadersOnly, activeMembersRows]);
 
   // Numerator has to be drawn from the same subset as the denominator, otherwise
-  // completions from plain "Member" rows would inflate the leaders-only percentage.
+  // completions from non-Active or plain "Member" rows would inflate the percentage.
   const activePfoRows = useMemo(() => {
-    if (!leadersOnly) return pfoRows;
-    return pfoRows.filter((row) => isNonMemberRole(row.members?.PastoralService));
+    const statusFiltered = pfoRows.filter((row) => isActiveStatus(row.members?.Status));
+    if (!leadersOnly) return statusFiltered;
+    return statusFiltered.filter((row) => isNonMemberRole(row.members?.PastoralService));
   }, [leadersOnly, pfoRows]);
 
   const stageResults = useMemo(() => {

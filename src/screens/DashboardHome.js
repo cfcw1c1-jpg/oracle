@@ -36,6 +36,12 @@ function average(numbers) {
   return numbers.reduce((sum, n) => sum + n, 0) / numbers.length;
 }
 
+// A member with no Status yet (legacy rows) counts as Active; only an
+// explicit non-Active status (Inactive/Deceased/SOLD/HANDMAID) excludes them.
+function isActiveStatus(status) {
+  return !status || status === 'Active';
+}
+
 function formatShortDate(dateStr) {
   if (!dateStr) return '';
   const date = new Date(dateStr);
@@ -116,8 +122,8 @@ export default function DashboardHome({ onNavigate }) {
 
       const [{ data: sessionData }, membersRes, pfoRes, clpRes] = await Promise.all([
         supabase.auth.getSession(),
-        supabase.from('members').select('Gender'),
-        supabase.from('pfo_members').select('*'),
+        supabase.from('members').select('Gender, Status'),
+        supabase.from('pfo_members').select('*, members (Status)'),
         supabase.from('clp_trainings').select('*').order('start_date', { ascending: false }),
       ]);
 
@@ -136,11 +142,22 @@ export default function DashboardHome({ onNavigate }) {
     }
   }
 
-  const totalMembers = memberGenders.length;
+  const activeMembers = useMemo(
+    () => memberGenders.filter((m) => isActiveStatus(m.Status)),
+    [memberGenders]
+  );
+  const totalMembers = activeMembers.length;
+
+  // Completions from non-Active members are excluded too, so the numerator
+  // and denominator of every percentage below share the same active cohort.
+  const activePfoRows = useMemo(
+    () => pfoRows.filter((row) => isActiveStatus(row.members?.Status)),
+    [pfoRows]
+  );
 
   const genderSegments = useMemo(() => {
-    const male = memberGenders.filter((m) => m.Gender === 'Male').length;
-    const female = memberGenders.filter((m) => m.Gender === 'Female').length;
+    const male = activeMembers.filter((m) => m.Gender === 'Male').length;
+    const female = activeMembers.filter((m) => m.Gender === 'Female').length;
     const other = totalMembers - male - female;
 
     const segments = [
@@ -149,27 +166,27 @@ export default function DashboardHome({ onNavigate }) {
     ];
     if (other > 0) segments.push({ label: 'Unspecified', count: other, color: '#e2e8f0' });
     return segments;
-  }, [memberGenders, totalMembers]);
+  }, [activeMembers, totalMembers]);
 
   const stageProgress = useMemo(() => {
     return FORMATION_STAGES.map((stage) => {
       const trackedPercentages = stage.tracks
-        .map((track) => computeTrackStat(track, pfoRows, totalMembers))
+        .map((track) => computeTrackStat(track, activePfoRows, totalMembers))
         .filter((t) => t.tracked)
         .map((t) => t.percent);
       return { ...stage, avgPercent: average(trackedPercentages) };
     });
-  }, [pfoRows, totalMembers]);
+  }, [activePfoRows, totalMembers]);
 
   const overallPfoAvg = useMemo(() => {
     const allPercentages = FORMATION_STAGES.flatMap((stage) =>
       stage.tracks
-        .map((track) => computeTrackStat(track, pfoRows, totalMembers))
+        .map((track) => computeTrackStat(track, activePfoRows, totalMembers))
         .filter((t) => t.tracked)
         .map((t) => t.percent)
     );
     return average(allPercentages);
-  }, [pfoRows, totalMembers]);
+  }, [activePfoRows, totalMembers]);
 
   // Only genuinely future-dated batches count as "upcoming"; if none exist
   // yet, fall back to showing the most recent past batches instead (and
