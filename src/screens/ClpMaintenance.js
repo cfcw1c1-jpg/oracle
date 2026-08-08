@@ -7,6 +7,7 @@ import {
     Modal,
     Platform,
     ScrollView,
+    Share,
     StyleSheet,
     Text,
     TextInput,
@@ -15,8 +16,16 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+// Builds the public self-registration link for a batch. The link is
+// scoped to public_token (a random UUID), not the sequential `id`, so it
+// can't be walked/enumerated — see scripts/sql/add-clp-trainings-public-token.sql.
+function buildPublicRegistrationLink(training) {
+  const origin = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origin}/clp-registration?token=${training.public_token}`;
+}
+
 // Supported assignment designations for Service Team entities
-const SERVICE_SUB_TYPES = [
+export const SERVICE_SUB_TYPES = [
   'Team Leader',
   'Assistant Team Leader',
   'Supervising Unit Head',
@@ -56,6 +65,9 @@ export default function ClpMaintenance() {
   const [searchResults, setSearchResults] = useState([]);
   const [searchingMembers, setSearchingMembers] = useState(false);
   const [stagedMembers, setStagedMembers] = useState([]);
+
+  // --- PUBLIC LINK SHARE STATE ---
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // --- DERIVED METRICS ---
   const activeParticipantsCount = participants.filter(p => p.type === 'participant').length;
@@ -221,6 +233,28 @@ export default function ClpMaintenance() {
       showAlert('Registration Failed', err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCopyPublicLink() {
+    if (!selectedTraining) return;
+    const url = buildPublicRegistrationLink(selectedTraining);
+
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(url);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } catch (err) {
+        showAlert('Copy Failed', `Please copy the link manually:\n\n${url}`);
+      }
+      return;
+    }
+
+    try {
+      await Share.share({ message: url });
+    } catch (err) {
+      if (err.message !== 'User did not share') showAlert('Share Failed', err.message);
     }
   }
 
@@ -396,6 +430,21 @@ export default function ClpMaintenance() {
             <Text style={styles.metaLabel}>Service Team</Text>
             <Text style={styles.metaValue}>{serviceTeamCount}</Text>
           </View>
+        </View>
+      )}
+
+      {/* Public Self-Registration Link */}
+      {selectedTraining && (
+        <View style={styles.linkCard}>
+          <Ionicons name="link-outline" size={16} color="#002060" style={{ marginRight: 8 }} />
+          <View style={styles.linkTextWrap}>
+            <Text style={styles.linkLabel}>Public Registration Link</Text>
+            <Text style={styles.linkUrl} numberOfLines={1}>{buildPublicRegistrationLink(selectedTraining)}</Text>
+          </View>
+          <TouchableOpacity style={styles.copyLinkBtn} onPress={handleCopyPublicLink}>
+            <Ionicons name={linkCopied ? 'checkmark' : 'copy-outline'} size={14} color="#ffffff" style={{ marginRight: 4 }} />
+            <Text style={styles.copyLinkBtnText}>{linkCopied ? 'Copied' : 'Copy'}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -670,6 +719,12 @@ const styles = StyleSheet.create({
   metaBlock: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#e2e8f0' },
   metaLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   metaValue: { fontSize: 14, fontWeight: '700', color: '#002060', marginTop: 2 },
+  linkCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 },
+  linkTextWrap: { flex: 1, marginRight: 8 },
+  linkLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
+  linkUrl: { fontSize: 12, color: '#002060', marginTop: 2, fontWeight: '600' },
+  copyLinkBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#002060', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 6 },
+  copyLinkBtnText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
   tableCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden', marginBottom: 16 },
   tableHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 1, borderColor: '#e2e8f0' },
   tableHeaderText: { fontSize: 12, fontWeight: '700', color: '#475569', textTransform: 'uppercase' },
