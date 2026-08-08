@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -32,8 +32,10 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
+  const passwordInputRef = useRef(null);
 
   async function handleLogin() {
+    if (loading) return;
     if (!email || !password) {
       showAlert('Missing Information', 'Please fill in all fields.');
       return;
@@ -90,10 +92,14 @@ export default function Login() {
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete={Platform.OS === 'web' ? 'email' : 'username'}
+            returnKeyType="next"
+            onSubmitEditing={() => passwordInputRef.current?.focus()}
+            blurOnSubmit={false}
             style={styles.flatInput}
           />
 
           <TextInput
+            ref={passwordInputRef}
             placeholder="Password"
             placeholderTextColor="#94a3b8"
             onChangeText={setPassword}
@@ -101,6 +107,8 @@ export default function Login() {
             secureTextEntry
             autoCapitalize="none"
             autoComplete="current-password"
+            returnKeyType="go"
+            onSubmitEditing={handleLogin}
             style={styles.flatInput}
           />
 
