@@ -34,6 +34,7 @@ export const SERVICE_SUB_TYPES = [
   'Prayer Warrior',
   'Music Ministry',
   'Facilitator',
+  'Assistant Facilitator',
   'Service Team',
   'Secretariat',
 ];
