@@ -133,18 +133,40 @@ export default function PfoStatGenerator() {
   const [membersRows, setMembersRows] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
   const [leadersOnly, setLeadersOnly] = useState(false);
+  const [assignedAreaNames, setAssignedAreaNames] = useState([]);
+  const [areaFilter, setAreaFilter] = useState('All');
+  const [areaDropdownOpen, setAreaDropdownOpen] = useState(false);
 
   useEffect(() => {
     generateStats();
+    loadAssignedAreas();
   }, []);
+
+  // Areas explicitly assigned to the signed-in account (Portal Users ->
+  // Areas) -- same convention as the Directory/PFO Trainings Area filters.
+  async function loadAssignedAreas() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('user_areas')
+        .select('areas ( name )')
+        .eq('profile_id', user.id);
+      if (error) throw error;
+      const names = (data || []).map((row) => row.areas?.name).filter(Boolean);
+      setAssignedAreaNames(names);
+    } catch (err) {
+      console.error('Error loading assigned areas:', err.message);
+    }
+  }
 
   async function generateStats() {
     try {
       setLoading(true);
 
       const [{ data: members, error: memberError }, { data, error: pfoError }] = await Promise.all([
-        supabase.from('members').select('MemberIDNo, PastoralService, Status'),
-        supabase.from('pfo_members').select('*, members (PastoralService, Status)'),
+        supabase.from('members').select('MemberIDNo, PastoralService, Status, AreaName'),
+        supabase.from('pfo_members').select('*, members (PastoralService, Status, AreaName)'),
       ]);
 
       if (memberError) throw memberError;
@@ -159,11 +181,28 @@ export default function PfoStatGenerator() {
     }
   }
 
+  const areaOptions = useMemo(() => {
+    if (assignedAreaNames.length > 0) {
+      return ['All', ...Array.from(new Set(assignedAreaNames)).sort()];
+    }
+    const values = new Set(membersRows.map((m) => (m.AreaName || 'No Area').trim()));
+    return ['All', ...Array.from(values).sort()];
+  }, [membersRows, assignedAreaNames]);
+
+  // Prefix match (same convention used across the app) so an Area named
+  // "West 1C2" also covers AreaName variants like "West 1C2B"/"West 1C2D".
+  function matchesAreaFilter(areaName) {
+    if (areaFilter === 'All') return true;
+    const value = (areaName || '').trim();
+    return areaFilter === 'No Area' ? !value : value.toLowerCase().startsWith(areaFilter.toLowerCase());
+  }
+
   // Non-Active members (Inactive/Deceased/SOLD/HANDMAID) are excluded from
-  // every count below, regardless of the leaders-only toggle.
+  // every count below, regardless of the leaders-only toggle. The Area
+  // filter narrows the same way.
   const activeMembersRows = useMemo(
-    () => membersRows.filter((m) => isActiveStatus(m.Status)),
-    [membersRows]
+    () => membersRows.filter((m) => isActiveStatus(m.Status) && matchesAreaFilter(m.AreaName)),
+    [membersRows, areaFilter]
   );
 
   // Denominator: everyone active, or just active members holding a non-"Member"
@@ -176,10 +215,10 @@ export default function PfoStatGenerator() {
   // Numerator has to be drawn from the same subset as the denominator, otherwise
   // completions from non-Active or plain "Member" rows would inflate the percentage.
   const activePfoRows = useMemo(() => {
-    const statusFiltered = pfoRows.filter((row) => isActiveStatus(row.members?.Status));
+    const statusFiltered = pfoRows.filter((row) => isActiveStatus(row.members?.Status) && matchesAreaFilter(row.members?.AreaName));
     if (!leadersOnly) return statusFiltered;
     return statusFiltered.filter((row) => isNonMemberRole(row.members?.PastoralService));
-  }, [leadersOnly, pfoRows]);
+  }, [leadersOnly, pfoRows, areaFilter]);
 
   const stageResults = useMemo(() => {
     return FORMATION_STAGES.map((stage) => {
@@ -279,6 +318,37 @@ export default function PfoStatGenerator() {
         </Text>
       </TouchableOpacity>
 
+      <View style={styles.areaDropdownWrapper}>
+        <Text style={styles.fieldLabel}>Area:</Text>
+        <TouchableOpacity
+          style={styles.dropdownHeader}
+          activeOpacity={0.8}
+          onPress={() => setAreaDropdownOpen((v) => !v)}
+        >
+          <Text style={styles.dropdownHeaderText} numberOfLines={1}>{areaFilter}</Text>
+          <Ionicons name={areaDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
+        </TouchableOpacity>
+
+        {areaDropdownOpen && (
+          <View style={styles.dropdownMenuContainer}>
+            {areaOptions.map((option) => {
+              const isSelected = option === areaFilter;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
+                  onPress={() => { setAreaFilter(option); setAreaDropdownOpen(false); }}
+                >
+                  <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
       <View style={styles.actionRow}>
         <TouchableOpacity style={styles.refreshBtn} onPress={generateStats}>
           <Ionicons name="refresh-outline" size={15} color="#334155" style={styles.btnIcon} />
@@ -360,6 +430,23 @@ const styles = StyleSheet.create({
   },
   checkboxChecked: { backgroundColor: '#002060', borderColor: '#002060' },
   leadersOnlyText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#334155', lineHeight: 17 },
+
+  areaDropdownWrapper: { zIndex: 10, marginBottom: 14, maxWidth: 260 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
+  dropdownHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0',
+    paddingHorizontal: 14, paddingVertical: 12,
+  },
+  dropdownHeaderText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  dropdownMenuContainer: {
+    marginTop: 6, backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
+    maxHeight: 220, overflow: 'hidden',
+  },
+  dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  dropdownItemActive: { backgroundColor: '#eff6ff' },
+  dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
+  dropdownItemTextActive: { color: '#002060', fontWeight: '700' },
 
   actionRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   refreshBtn: {

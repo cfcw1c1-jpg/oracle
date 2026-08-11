@@ -193,10 +193,35 @@ export default function PfoTrainingReports() {
   const [searchQuery, setSearchQuery] = useState('');
   const [reportData, setReportData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [assignedAreaNames, setAssignedAreaNames] = useState([]);
+  const [areaFilter, setAreaFilter] = useState('All');
+  const [areaDropdownOpen, setAreaDropdownOpen] = useState(false);
 
   useEffect(() => {
     generateReport();
   }, [selectedTrainings]);
+
+  useEffect(() => {
+    loadAssignedAreas();
+  }, []);
+
+  // Areas explicitly assigned to the signed-in account (Portal Users ->
+  // Areas) -- same convention as the Directory/PFO Trainings Area filters.
+  async function loadAssignedAreas() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('user_areas')
+        .select('areas ( name )')
+        .eq('profile_id', user.id);
+      if (error) throw error;
+      const names = (data || []).map((row) => row.areas?.name).filter(Boolean);
+      setAssignedAreaNames(names);
+    } catch (err) {
+      console.error('Error loading assigned areas:', err.message);
+    }
+  }
 
   const handleToggleTraining = (item) => {
     // Guards removed so any item (including the first chosen item) can be unchecked smoothly
@@ -218,7 +243,7 @@ export default function PfoTrainingReports() {
       const selectionColumns = selectedTrainings.map(t => `"${t.id}"`).join(', ');
       const { data, error } = await supabase
         .from('pfo_members')
-        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname)`);
+        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName)`);
 
       if (error) throw error;
 
@@ -258,10 +283,28 @@ export default function PfoTrainingReports() {
     });
   }, [searchQuery]);
 
+  const areaOptions = useMemo(() => {
+    if (assignedAreaNames.length > 0) {
+      return ['All', ...Array.from(new Set(assignedAreaNames)).sort()];
+    }
+    const values = new Set(reportData.map((row) => (row.members?.AreaName || 'No Area').trim()));
+    return ['All', ...Array.from(values).sort()];
+  }, [reportData, assignedAreaNames]);
+
+  // Prefix match (same convention used across the app) so an Area named
+  // "West 1C2" also covers AreaName variants like "West 1C2B"/"West 1C2D".
+  const filteredReportData = useMemo(() => {
+    if (areaFilter === 'All') return reportData;
+    return reportData.filter((row) => {
+      const memberAreaName = (row.members?.AreaName || '').trim();
+      return areaFilter === 'No Area' ? !memberAreaName : memberAreaName.toLowerCase().startsWith(areaFilter.toLowerCase());
+    });
+  }, [reportData, areaFilter]);
+
   // Builds the exact same matrix content used by both the TXT and PDF exports,
   // so the two formats never drift out of sync with each other.
   function buildReportContent() {
-    const matrixRegistry = reportData;
+    const matrixRegistry = filteredReportData;
 
     const now = new Date();
     const year = now.getFullYear();
@@ -336,7 +379,7 @@ export default function PfoTrainingReports() {
       Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
       return;
     }
-    if (reportData.length === 0) {
+    if (filteredReportData.length === 0) {
       Alert.alert('Empty Dataset', 'There are no member records available to process.');
       return;
     }
@@ -396,8 +439,8 @@ export default function PfoTrainingReports() {
   };
 
   const passedCount = useMemo(() => {
-    return reportData.filter(item => item.attendedAll).length;
-  }, [reportData]);
+    return filteredReportData.filter(item => item.attendedAll).length;
+  }, [filteredReportData]);
 
   return (
     <View style={styles.container}>
@@ -481,6 +524,42 @@ export default function PfoTrainingReports() {
         )}
       </View>
 
+      <View style={styles.areaDropdownWrapper}>
+        <Text style={styles.fieldLabel}>Area:</Text>
+        <TouchableOpacity
+          style={styles.dropdownHeader}
+          activeOpacity={0.8}
+          onPress={() => setAreaDropdownOpen((v) => !v)}
+        >
+          <Text style={styles.dropdownHeaderText} numberOfLines={1}>{areaFilter}</Text>
+          <Ionicons name={areaDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
+        </TouchableOpacity>
+
+        {areaDropdownOpen && (
+          <View style={styles.dropdownMenuContainer}>
+            <FlatList
+              data={areaOptions}
+              keyExtractor={(item) => item}
+              nestedScrollEnabled
+              style={styles.dropdownMenuList}
+              renderItem={({ item }) => {
+                const isSelected = item === areaFilter;
+                return (
+                  <TouchableOpacity
+                    style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
+                    onPress={() => { setAreaFilter(item); setAreaDropdownOpen(false); }}
+                  >
+                    <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        )}
+      </View>
+
       <View style={styles.actionRowContainer}>
         <View style={styles.kpiSplitCard}>
           <Text style={styles.kpiLabel}>Passed Matches</Text>
@@ -515,7 +594,7 @@ export default function PfoTrainingReports() {
           </View>
         ) : (
           <FlatList
-            data={reportData}
+            data={filteredReportData}
             renderItem={renderReportItem}
             keyExtractor={(item) => item.MemberIDNo?.toString()}
             removeClippedSubviews={Platform.OS === 'android'}
@@ -542,6 +621,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
   dropdownWrapper: { zIndex: 10, marginBottom: 14 },
+  areaDropdownWrapper: { zIndex: 9, marginBottom: 14, maxWidth: 260 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

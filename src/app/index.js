@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Dimensions,
   Image,
   Platform,
@@ -14,15 +15,20 @@ import {
 import { supabase } from '../../lib/supabase';
 import packageJson from '../../package.json';
 import Login from '../auth/Login';
+import { fetchAccessContext } from '../lib/access';
+import Areas from '../screens/Areas';
 import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
+import ImportCsv from '../screens/ImportCsv';
 import MembersList from '../screens/MembersList';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
+import PortalUsers from '../screens/PortalUsers';
 import PredictorScreen from '../screens/PredictorScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import RolesAccess from '../screens/RolesAccess';
 
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
@@ -32,6 +38,10 @@ const NAV_ITEMS = [
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
   { key: 'auditLogs', label: 'Audit Logs', icon: 'terminal-outline' },
+  { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
+  { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
+  { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
+  { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
 ];
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
@@ -39,9 +49,10 @@ const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
 // Shared by the permanent (wide-screen) sidebar and the mobile drawer.
 // Renders a floating "glass" card (blurred/translucent) over a navy-to-violet
 // gradient backdrop, matching the transparent sidebar design reference.
-function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollapseToggle, onToggleCollapse }) {
+function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollapseToggle, onToggleCollapse, navItems, roleName }) {
   const avatarUrl = session?.user?.user_metadata?.avatar_url;
   const email = session?.user?.email;
+  const portalLabel = roleName ? `${roleName} Portal` : 'Members Portal';
 
   return (
     <LinearGradient colors={SIDEBAR_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.sidebarGradient}>
@@ -59,7 +70,7 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
           {!collapsed && (
             <View>
               <Text style={styles.brandTitle}>ORACLE</Text>
-              <Text style={styles.brandSubtitle}>Members Portal</Text>
+              <Text style={styles.brandSubtitle} numberOfLines={1}>{portalLabel}</Text>
             </View>
           )}
         </View>
@@ -90,7 +101,7 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
         {!collapsed && <Text style={styles.menuLabel}>MENU</Text>}
 
         <View style={styles.navLinksContainer}>
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = currentTab === item.key;
             return (
               <TouchableOpacity
@@ -137,6 +148,8 @@ export default function Page() {
   const [session, setSession] = useState(null);
   const [currentTab, setCurrentTab] = useState('home');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [access, setAccess] = useState(null);
+  const [accessLoading, setAccessLoading] = useState(true);
 
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
@@ -158,11 +171,59 @@ export default function Page() {
     return () => subscription?.remove();
   }, []);
 
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setAccess(null);
+      return;
+    }
+    loadAccess(session.user.id);
+  }, [session?.user?.id]);
+
+  // Once access loads, steer away from the default 'home' tab if the
+  // signed-in account isn't allowed to see it.
+  useEffect(() => {
+    if (accessLoading || !access) return;
+    if (currentTab !== 'home') return;
+    if (access.allowedPages.includes('home')) return;
+    setCurrentTab(access.allowedPages[0] || 'profile');
+  }, [accessLoading, access]);
+
+  // Only the very first load should block the screen with the full-page
+  // spinner below. Later calls (e.g. onAccessChanged firing after a Roles &
+  // Page Access checkbox toggle) must update `access` silently in the
+  // background — flipping accessLoading back to true here would unmount
+  // the whole dashboard (including whatever screen triggered the refresh)
+  // and remount it, which reads as the page reloading on every click.
+  async function loadAccess(userId) {
+    try {
+      const context = await fetchAccessContext(userId);
+      setAccess(context);
+    } catch (err) {
+      console.error('Error loading access context:', err.message);
+      setAccess((prev) => prev ?? { profile: null, roleName: null, isAdmin: false, allowedPages: [] });
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
   if (!session) {
     return <Login />;
   }
 
+  if (accessLoading) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centeredFull]}>
+        <ActivityIndicator size="large" color="#002060" />
+      </SafeAreaView>
+    );
+  }
+
   const isLargeScreen = screenWidth >= 768; // Desktop / Tablet breakpoint
+
+  const allowedPageKeys = new Set(access?.allowedPages || []);
+  const visibleNavItems = NAV_ITEMS.filter((item) => allowedPageKeys.has(item.key));
+  const canView = (pageKey) => allowedPageKeys.has(pageKey);
+  const headerPortalLabel = access?.roleName ? `${access.roleName.toUpperCase()} PORTAL` : 'MEMBERS PORTAL';
 
   function handleSelectTab(tabKey) {
     setCurrentTab(tabKey);
@@ -183,7 +244,7 @@ export default function Page() {
             </TouchableOpacity>
           )}
           <Text style={styles.headerTitle}>ORACLE</Text>
-          <Text style={styles.headerSubtitle}>MEMBERS PORTAL</Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>{headerPortalLabel}</Text>
         </View>
 
         <View style={styles.headerRight}>
@@ -224,6 +285,8 @@ export default function Page() {
               session={session}
               showCollapseToggle
               onToggleCollapse={() => setIsSidebarCollapsed((v) => !v)}
+              navItems={visibleNavItems}
+              roleName={access?.roleName}
             />
           </View>
         )}
@@ -238,6 +301,8 @@ export default function Page() {
                 collapsed={false}
                 session={session}
                 showCollapseToggle={false}
+                navItems={visibleNavItems}
+                roleName={access?.roleName}
               />
             </View>
             <TouchableOpacity style={styles.drawerDismissZone} onPress={() => setIsMobileMenuOpen(false)} />
@@ -246,49 +311,75 @@ export default function Page() {
 
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
-          {currentTab === 'home' && <DashboardHome onNavigate={setCurrentTab} />}
-          {currentTab === 'members' && <MembersList />}
-          {currentTab === 'pfo' && <PfoList />}
-          {currentTab === 'pfoReports' && <PfoReport />}
-          {currentTab === 'pfoStats' && <PfoStatGenerator />}
-          {currentTab === 'clp' && <ClpMaintenance />}
-          {currentTab === 'auditLogs' && <AuditLogs />}
+          {currentTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} />}
+          {currentTab === 'members' && canView('members') && <MembersList />}
+          {currentTab === 'pfo' && canView('pfo') && <PfoList />}
+          {currentTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
+          {currentTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
+          {currentTab === 'clp' && canView('clp') && <ClpMaintenance />}
+          {currentTab === 'auditLogs' && canView('auditLogs') && <AuditLogs />}
+          {currentTab === 'portalUsers' && canView('portalUsers') && (
+            <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
+          )}
+          {currentTab === 'rolesAccess' && canView('rolesAccess') && (
+            <RolesAccess onAccessChanged={() => loadAccess(session.user.id)} />
+          )}
+          {currentTab === 'areas' && canView('areas') && <Areas />}
+          {currentTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {currentTab === 'predictor' && <PredictorScreen />}
           {currentTab === 'profile' && <ProfileScreen />}
+          {NAV_ITEMS.some((item) => item.key === currentTab) && !canView(currentTab) && (
+            <View style={styles.noAccessWrap}>
+              <Ionicons name="lock-closed-outline" size={28} color="#94a3b8" />
+              <Text style={styles.noAccessText}>
+                {access?.roleName
+                  ? "You don't have access to this page yet. Ask an Admin to grant it."
+                  : 'Your account has no role assigned yet. Ask an Admin to assign one.'}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
       {/* MOBILE BOTTOM NAV BAR FALLBACK */}
       {!isLargeScreen && (
         <View style={styles.bottomTabBar}>
-          <TouchableOpacity
-            style={[styles.tabBarItem, currentTab === 'home' && styles.activeTabItem]}
-            onPress={() => setCurrentTab('home')}
-          >
-            <Text style={[styles.tabBarItemText, currentTab === 'home' && styles.activeTabBarText]}>Home</Text>
-          </TouchableOpacity>
+          {canView('home') && (
+            <TouchableOpacity
+              style={[styles.tabBarItem, currentTab === 'home' && styles.activeTabItem]}
+              onPress={() => setCurrentTab('home')}
+            >
+              <Text style={[styles.tabBarItemText, currentTab === 'home' && styles.activeTabBarText]}>Home</Text>
+            </TouchableOpacity>
+          )}
 
-          <TouchableOpacity
-            style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]}
-            onPress={() => setCurrentTab('members')}
-          >
-            <Text style={[styles.tabBarItemText, currentTab === 'members' && styles.activeTabBarText]}>Directory</Text>
-          </TouchableOpacity>
+          {canView('members') && (
+            <TouchableOpacity
+              style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]}
+              onPress={() => setCurrentTab('members')}
+            >
+              <Text style={[styles.tabBarItemText, currentTab === 'members' && styles.activeTabBarText]}>Directory</Text>
+            </TouchableOpacity>
+          )}
 
-          <TouchableOpacity 
-            style={[styles.tabBarItem, currentTab === 'pfo' && styles.activeTabItem]} 
-            onPress={() => setCurrentTab('pfo')}
-          >
-            <Text style={[styles.tabBarItemText, currentTab === 'pfo' && styles.activeTabBarText]}>PFO</Text>
-          </TouchableOpacity>
+          {canView('pfo') && (
+            <TouchableOpacity
+              style={[styles.tabBarItem, currentTab === 'pfo' && styles.activeTabItem]}
+              onPress={() => setCurrentTab('pfo')}
+            >
+              <Text style={[styles.tabBarItemText, currentTab === 'pfo' && styles.activeTabBarText]}>PFO</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Replaced PFO Reports tag with CLP on the bottom mobile bar shortcut row since spacing is finite on small mobile frames */}
-          <TouchableOpacity 
-            style={[styles.tabBarItem, currentTab === 'clp' && styles.activeTabItem]} 
-            onPress={() => setCurrentTab('clp')}
-          >
-            <Text style={[styles.tabBarItemText, currentTab === 'clp' && styles.activeTabBarText]}>CLP</Text>
-          </TouchableOpacity>
+          {canView('clp') && (
+            <TouchableOpacity
+              style={[styles.tabBarItem, currentTab === 'clp' && styles.activeTabItem]}
+              onPress={() => setCurrentTab('clp')}
+            >
+              <Text style={[styles.tabBarItemText, currentTab === 'clp' && styles.activeTabBarText]}>CLP</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </SafeAreaView>
@@ -297,7 +388,8 @@ export default function Page() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  
+  centeredFull: { justifyContent: 'center', alignItems: 'center' },
+
   // Header Adjustments
   header: { backgroundColor: '#002060', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderColor: '#001540', zIndex: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerContent: { flexDirection: 'row', alignItems: 'center' },
@@ -385,6 +477,8 @@ const styles = StyleSheet.create({
   
   // Content view pane
   mainContentPane: { flex: 1, backgroundColor: '#f8fafc' },
+  noAccessWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  noAccessText: { marginTop: 12, fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 320 },
 
   // Compact Bottom Navbar layout fallback
   bottomTabBar: { flexDirection: 'row', height: 56, backgroundColor: '#ffffff', borderTopWidth: 1, borderColor: '#e2e8f0', paddingBottom: Platform.OS === 'ios' ? 16 : 0 },

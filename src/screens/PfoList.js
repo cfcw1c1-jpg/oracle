@@ -303,6 +303,45 @@ const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selec
   );
 });
 
+// Single-select Area filter, same visual language as MemberFilterDropdown
+// above. Options are narrowed to the signed-in account's assigned areas
+// when it has any (see loadAssignedAreas in PfoList) so this always
+// matches what area-scoping RLS already limits the roster to.
+const AreaFilterDropdown = memo(function AreaFilterDropdown({ options, value, onChange }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <View style={styles.memberFilterWrapper}>
+      <TouchableOpacity style={styles.memberFilterHeader} activeOpacity={0.8} onPress={() => setOpen((v) => !v)}>
+        <Ionicons name="location-outline" size={14} color="#64748b" style={{ marginRight: 6 }} />
+        <Text style={styles.memberFilterHeaderText} numberOfLines={1}>Area: {value}</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" style={{ marginLeft: 6 }} />
+      </TouchableOpacity>
+
+      {open && (
+        <View style={styles.memberFilterMenu}>
+          <ScrollView style={styles.memberFilterList} nestedScrollEnabled>
+            {options.map((option) => {
+              const isSelected = option === value;
+              return (
+                <TouchableOpacity
+                  key={option}
+                  style={[styles.memberFilterItem, isSelected && styles.memberFilterItemActive]}
+                  onPress={() => { onChange(option); setOpen(false); }}
+                >
+                  <Text style={[styles.memberFilterItemText, isSelected && styles.memberFilterItemTextActive]} numberOfLines={1}>
+                    {option}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+});
+
 // A single Y/N cell, memoized so toggling one training column for one member
 // only re-renders that one cell instead of the whole (150-column-wide) row.
 const TrainingCell = memo(function TrainingCell({ memberId, colId, value, onToggle }) {
@@ -364,19 +403,41 @@ export default function PfoList() {
   const [matrixData, setMatrixData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [assignedAreaNames, setAssignedAreaNames] = useState([]);
+  const [areaFilter, setAreaFilter] = useState('All');
 
   const [selectedMemberIds, setSelectedMemberIds] = useState(new Set());
 
   useEffect(() => {
     fetchMatrix();
+    loadAssignedAreas();
   }, []);
+
+  // Areas explicitly assigned to the signed-in account (Portal Users ->
+  // Areas) -- same convention as MembersList.js's Directory Area filter, so
+  // this dropdown only ever offers areas the account can actually see.
+  async function loadAssignedAreas() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('user_areas')
+        .select('areas ( name )')
+        .eq('profile_id', user.id);
+      if (error) throw error;
+      const names = (data || []).map((row) => row.areas?.name).filter(Boolean);
+      setAssignedAreaNames(names);
+    } catch (err) {
+      console.error('Error loading assigned areas:', err.message);
+    }
+  }
 
   async function fetchMatrix() {
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('pfo_members')
-        .select('MemberIDNo, *, members (Firstname, Lastname)');
+        .select('MemberIDNo, *, members (Firstname, Lastname, AreaName)');
 
       if (error) throw error;
 
@@ -416,6 +477,16 @@ export default function PfoList() {
     }
   }, []);
 
+  const areaOptions = useMemo(() => {
+    if (assignedAreaNames.length > 0) {
+      return ['All', ...Array.from(new Set(assignedAreaNames)).sort()];
+    }
+    const values = new Set(
+      matrixData.map((row) => (row.members?.AreaName || 'No Area').trim())
+    );
+    return ['All', ...Array.from(values).sort()];
+  }, [matrixData, assignedAreaNames]);
+
   const filteredMatrixData = useMemo(() => {
     const cleanQuery = searchQuery.trim().toLowerCase();
 
@@ -425,9 +496,15 @@ export default function PfoList() {
       const idStr = row.MemberIDNo?.toString().toLowerCase() || '';
       const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
       const matchesMemberFilter = selectedMemberIds.size === 0 || selectedMemberIds.has(row.MemberIDNo);
-      return matchesSearch && matchesMemberFilter;
+      // Prefix match (same convention as the Directory Area filter and the
+      // area-scoping RLS) so an Area named "West 1C2" also covers AreaName
+      // variants like "West 1C2B"/"West 1C2D".
+      const memberAreaName = (row.members?.AreaName || '').trim();
+      const matchesArea = areaFilter === 'All'
+        || (areaFilter === 'No Area' ? !memberAreaName : memberAreaName.toLowerCase().startsWith(areaFilter.toLowerCase()));
+      return matchesSearch && matchesMemberFilter && matchesArea;
     });
-  }, [searchQuery, matrixData, selectedMemberIds]);
+  }, [searchQuery, matrixData, selectedMemberIds, areaFilter]);
 
   // --- Filter by Members dropdown ---
 
@@ -499,6 +576,8 @@ export default function PfoList() {
           onToggle={toggleMemberFilter}
           onClear={clearMemberFilter}
         />
+
+        <AreaFilterDropdown options={areaOptions} value={areaFilter} onChange={setAreaFilter} />
       </View>
 
       <View style={styles.tableWrapper}>
@@ -622,6 +701,7 @@ const styles = StyleSheet.create({
   memberFilterItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 9 },
   memberFilterItemActive: { backgroundColor: '#eff6ff' },
   memberFilterItemText: { fontSize: 13, fontWeight: '500', color: '#334155', flex: 1 },
+  memberFilterItemTextActive: { color: '#002060', fontWeight: '700' },
   memberFilterEmptyText: { textAlign: 'center', color: '#94a3b8', paddingVertical: 20, fontSize: 13 },
   memberFilterActionsRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

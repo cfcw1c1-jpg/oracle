@@ -15,7 +15,10 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import { TablePagination, usePagination } from '../components/admin-table';
 import { parseTrainingName, TRAINING_COLUMNS } from './PfoList';
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
 
 // Checkbox/Gender stay a fixed width (their content is compact and
 // fixed-size); Name/Household/Role grow to fill the row on wide screens but
@@ -124,12 +127,14 @@ export default function MembersList() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [updatingId, setUpdatingId] = useState(null); // Tracks network load per row toggle
+  const [assignedAreaNames, setAssignedAreaNames] = useState([]);
 
   const [genderFilter, setGenderFilter] = useState('All');
   const [roleFilter, setRoleFilter] = useState('All');
   const [areaFilter, setAreaFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [sortAsc, setSortAsc] = useState(true);
+  const [pageSize, setPageSize] = useState(20);
 
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [roleMenuOpenFor, setRoleMenuOpenFor] = useState(null);
@@ -161,6 +166,7 @@ export default function MembersList() {
 
   useEffect(() => {
     fetchMembers();
+    loadAssignedAreas();
   }, []);
 
   const showAlert = (title, message) => {
@@ -170,6 +176,27 @@ export default function MembersList() {
       Alert.alert(title, message);
     }
   };
+
+  // Areas explicitly assigned to the signed-in account (Portal Users ->
+  // Areas). When any are assigned, the Area filter is narrowed to just
+  // those (matches what area-scoping RLS already limits this account's
+  // members to) instead of every AreaName scraped off the members table.
+  // Unassigned/unrestricted accounts keep the full scraped list.
+  async function loadAssignedAreas() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('user_areas')
+        .select('areas ( name )')
+        .eq('profile_id', user.id);
+      if (error) throw error;
+      const names = (data || []).map((row) => row.areas?.name).filter(Boolean);
+      setAssignedAreaNames(names);
+    } catch (err) {
+      console.error('Error loading assigned areas:', err.message);
+    }
+  }
 
   async function fetchMembers() {
     try {
@@ -266,9 +293,12 @@ export default function MembersList() {
   }, [members]);
 
   const areaOptions = useMemo(() => {
+    if (assignedAreaNames.length > 0) {
+      return ['All', ...Array.from(new Set(assignedAreaNames)).sort()];
+    }
     const values = new Set(members.map((m) => (m.AreaName || 'No Area').trim()));
     return ['All', ...Array.from(values).sort()];
-  }, [members]);
+  }, [members, assignedAreaNames]);
 
   // Real-time search + filter
   const filteredMembers = useMemo(() => {
@@ -281,7 +311,12 @@ export default function MembersList() {
       const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
       const matchesGender = genderFilter === 'All' || member.Gender === genderFilter;
       const matchesRole = roleFilter === 'All' || (member.PastoralService || 'MEMBER').trim() === roleFilter;
-      const matchesArea = areaFilter === 'All' || (member.AreaName || 'No Area').trim() === areaFilter;
+      // Prefix match (same convention as the Areas screen's member count and
+      // the area-scoping RLS) so an Area named "West 1C2" also covers
+      // AreaName variants like "West 1C2B"/"West 1C2D".
+      const memberAreaName = (member.AreaName || '').trim();
+      const matchesArea = areaFilter === 'All'
+        || (areaFilter === 'No Area' ? !memberAreaName : memberAreaName.toLowerCase().startsWith(areaFilter.trim().toLowerCase()));
       const matchesStatus = statusFilter === 'All' || getStatusLabel(member.Status) === statusFilter;
       return matchesSearch && matchesGender && matchesRole && matchesArea && matchesStatus;
     });
@@ -291,6 +326,13 @@ export default function MembersList() {
       return sortAsc ? cmp : -cmp;
     });
   }, [searchQuery, members, genderFilter, roleFilter, areaFilter, statusFilter, sortAsc]);
+
+  const { page, pageCount, pageItems, setPage } = usePagination(filteredMembers, pageSize);
+
+  function handleChangePageSize(size) {
+    setPageSize(size);
+    setPage(1);
+  }
 
   const allFilteredSelected = filteredMembers.length > 0 && filteredMembers.every((m) => selectedIds.has(m.MemberIDNo));
 
@@ -537,7 +579,7 @@ export default function MembersList() {
             </View>
 
             <FlatList
-              data={filteredMembers}
+              data={pageItems}
               keyExtractor={(item) => item.MemberIDNo?.toString()}
               CellRendererComponent={RoleMenuAwareRow}
               renderItem={({ item }) => {
@@ -695,6 +737,32 @@ export default function MembersList() {
             />
           </View>
         </ScrollView>
+
+        <View style={styles.tableFooter}>
+          <View style={styles.pageSizeRow}>
+            <Text style={styles.pageSizeLabel}>Show</Text>
+            {PAGE_SIZE_OPTIONS.map((size) => {
+              const isActive = pageSize === size;
+              return (
+                <TouchableOpacity
+                  key={size}
+                  style={[styles.pageSizeBadge, isActive && styles.pageSizeBadgeActive]}
+                  onPress={() => handleChangePageSize(size)}
+                >
+                  <Text style={[styles.pageSizeBadgeText, isActive && styles.pageSizeBadgeTextActive]}>{size}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TablePagination
+            page={page}
+            pageCount={pageCount}
+            totalCount={filteredMembers.length}
+            pageSize={pageSize}
+            onChange={setPage}
+          />
+        </View>
       </View>
 
       <Modal visible={assignModalVisible} animationType="slide" transparent onRequestClose={closeAssignModal}>
@@ -866,6 +934,20 @@ const styles = StyleSheet.create({
   selectedPillText: { fontSize: 12, fontWeight: '600', color: '#475569' },
 
   tableCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 16 },
+
+  tableFooter: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap',
+    borderTopWidth: 1, borderTopColor: '#e2e8f0',
+  },
+  pageSizeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 16, paddingVertical: 10 },
+  pageSizeLabel: { fontSize: 11, fontWeight: '700', color: '#94a3b8', marginRight: 2 },
+  pageSizeBadge: {
+    minWidth: 30, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 20,
+    backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center',
+  },
+  pageSizeBadgeActive: { backgroundColor: '#002060', borderColor: '#002060' },
+  pageSizeBadgeText: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  pageSizeBadgeTextActive: { color: '#ffffff' },
   tableHeaderRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#f8fafc' },
   headerCell: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10 },
   headerText: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.3 },

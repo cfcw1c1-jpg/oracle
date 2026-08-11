@@ -49,6 +49,16 @@ export default function ClpMaintenance() {
   const [selectedTraining, setSelectedTraining] = useState(null);
   const [participants, setParticipants] = useState([]);
 
+  // --- AREA STATES ---
+  // Every Area (for the batch-creation picker) and which ones the signed-in
+  // account is actually assigned to (Portal Users -> Areas). A batch now
+  // belongs to exactly one Area -- see scripts/sql/add-clp-training-area-scoping.sql.
+  const [areas, setAreas] = useState([]);
+  const [assignedAreaIds, setAssignedAreaIds] = useState([]);
+  const [newTrainingAreaId, setNewTrainingAreaId] = useState(null);
+  const [areaFilter, setAreaFilter] = useState('All');
+  const [areaFilterDropdownOpen, setAreaFilterDropdownOpen] = useState(false);
+
   // Modal Visibility States
   const [trainingModalVisible, setTrainingModalVisible] = useState(false);
   const [participantModalVisible, setParticipantModalVisible] = useState(false);
@@ -57,7 +67,7 @@ export default function ClpMaintenance() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [venue, setVenue] = useState('');
-  
+
   const [isServiceTeam, setIsServiceTeam] = useState(false);
   const [selectedSubType, setSelectedSubType] = useState('Team Leader'); // Default assignment subset
 
@@ -74,6 +84,40 @@ export default function ClpMaintenance() {
   const activeParticipantsCount = participants.filter(p => p.type === 'participant').length;
   const serviceTeamCount = participants.filter(p => p.type === 'service_team').length;
 
+  // Areas an account may create a new batch under: its assigned areas plus
+  // everything nested under them, or every Area when unrestricted.
+  function expandToDescendantIds(areasList, rootIds) {
+    const ids = new Set(rootIds);
+    const stack = [...rootIds];
+    while (stack.length) {
+      const current = stack.pop();
+      areasList.forEach((a) => {
+        if (a.parent_id === current && !ids.has(a.id)) {
+          ids.add(a.id);
+          stack.push(a.id);
+        }
+      });
+    }
+    return ids;
+  }
+
+  const selectableAreaIds = assignedAreaIds.length > 0
+    ? expandToDescendantIds(areas, assignedAreaIds)
+    : new Set(areas.map((a) => a.id));
+  const selectableAreas = areas.filter((a) => selectableAreaIds.has(a.id));
+
+  // The Area filter dropdown only ever offers the signed-in account's own
+  // assigned areas (not their descendants, unlike the batch-creation
+  // picker above) -- same convention as the Directory/PFO Area filters.
+  // Unrestricted accounts (none assigned) still see every area.
+  const filterAreaOptions = assignedAreaIds.length > 0
+    ? areas.filter((a) => assignedAreaIds.includes(a.id))
+    : areas;
+
+  const filteredTrainings = areaFilter === 'All'
+    ? trainings
+    : trainings.filter((t) => t.area_id === areaFilter);
+
   // --- CROSS-PLATFORM ALERT HELPER ---
   const showAlert = (title, message) => {
     if (Platform.OS === 'web') {
@@ -86,7 +130,30 @@ export default function ClpMaintenance() {
   // Load trainings on mount
   useEffect(() => {
     fetchTrainings();
+    loadAreas();
   }, []);
+
+  async function loadAreas() {
+    try {
+      const [{ data: areasData, error: areasErr }, { data: { user } }] = await Promise.all([
+        supabase.from('areas').select('id, name, type, parent_id').order('name'),
+        supabase.auth.getUser(),
+      ]);
+      if (areasErr) throw areasErr;
+      setAreas(areasData || []);
+
+      if (user) {
+        const { data: userAreasData, error: uaErr } = await supabase
+          .from('user_areas')
+          .select('area_id')
+          .eq('profile_id', user.id);
+        if (uaErr) throw uaErr;
+        setAssignedAreaIds((userAreasData || []).map((row) => row.area_id));
+      }
+    } catch (err) {
+      console.error('Error loading areas:', err.message);
+    }
+  }
 
   // Fetch participants whenever the selected training changes
   useEffect(() => {
@@ -96,6 +163,18 @@ export default function ClpMaintenance() {
       setParticipants([]);
     }
   }, [selectedTraining]);
+
+  // Reconciles the selected batch against the Area filter: if it no longer
+  // matches (or was never set), fall back to the first batch that does, or
+  // clear the selection entirely so the detail panel/roster below don't
+  // keep showing a stale batch from a different area.
+  useEffect(() => {
+    const visibleForFilter = areaFilter === 'All' ? trainings : trainings.filter((t) => t.area_id === areaFilter);
+    const stillValid = visibleForFilter.some((t) => t.id === selectedTraining?.id);
+    if (!stillValid) {
+      setSelectedTraining(visibleForFilter[0] || null);
+    }
+  }, [areaFilter, trainings]);
 
   // Trigger dynamic lookup when name queries change
   useEffect(() => {
@@ -113,7 +192,7 @@ export default function ClpMaintenance() {
       setLoading(true);
       const { data, error } = await supabase
         .from('clp_trainings')
-        .select('*')
+        .select('*, areas ( id, name, type )')
         .order('start_date', { ascending: false });
 
       if (error) throw error;
@@ -175,12 +254,16 @@ export default function ClpMaintenance() {
       showAlert('Validation Error', 'Please fill in all training fields.');
       return;
     }
+    if (!newTrainingAreaId) {
+      showAlert('Validation Error', 'Please select an Area for this training batch.');
+      return;
+    }
 
     try {
       setLoading(true);
       const { data, error } = await supabase
         .from('clp_trainings')
-        .insert([{ start_date: startDate, end_date: endDate, venue }])
+        .insert([{ start_date: startDate, end_date: endDate, venue, area_id: newTrainingAreaId }])
         .select();
 
       if (error) throw error;
@@ -190,7 +273,8 @@ export default function ClpMaintenance() {
       setStartDate('');
       setEndDate('');
       setVenue('');
-      
+      setNewTrainingAreaId(null);
+
       await fetchTrainings();
       if (data && data[0]) setSelectedTraining(data[0]);
     } catch (err) {
@@ -381,19 +465,65 @@ export default function ClpMaintenance() {
           <Text style={styles.sectionLabel}>Select Active Training Batch:</Text>
           <TouchableOpacity
             style={styles.inlineAddBatchBtn}
-            onPress={() => setTrainingModalVisible(true)}
+            onPress={() => {
+              setNewTrainingAreaId(selectableAreas.length === 1 ? selectableAreas[0].id : null);
+              setTrainingModalVisible(true);
+            }}
           >
             <Ionicons name="add-outline" size={14} color="#334155" style={styles.inlineAddBatchBtnIcon} />
             <Text style={styles.inlineAddBatchBtnText}>Add New Batch</Text>
           </TouchableOpacity>
         </View>
-        
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={Platform.OS === 'web'} 
+
+        {filterAreaOptions.length > 0 && (
+          <View style={styles.areaFilterWrapper}>
+            <TouchableOpacity
+              style={styles.areaFilterHeader}
+              activeOpacity={0.8}
+              onPress={() => setAreaFilterDropdownOpen((v) => !v)}
+            >
+              <Ionicons name="location-outline" size={13} color="#64748b" style={{ marginRight: 6 }} />
+              <Text style={styles.areaFilterHeaderText} numberOfLines={1}>
+                Area: {areaFilter === 'All' ? 'All' : (filterAreaOptions.find((a) => a.id === areaFilter)?.name || 'All')}
+              </Text>
+              <Ionicons name={areaFilterDropdownOpen ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" />
+            </TouchableOpacity>
+
+            {areaFilterDropdownOpen && (
+              <View style={styles.areaFilterMenu}>
+                <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled>
+                  <TouchableOpacity
+                    style={[styles.areaFilterItem, areaFilter === 'All' && styles.areaFilterItemActive]}
+                    onPress={() => { setAreaFilter('All'); setAreaFilterDropdownOpen(false); }}
+                  >
+                    <Text style={[styles.areaFilterItemText, areaFilter === 'All' && styles.areaFilterItemTextActive]}>All</Text>
+                  </TouchableOpacity>
+                  {filterAreaOptions.map((a) => (
+                    <TouchableOpacity
+                      key={a.id}
+                      style={[styles.areaFilterItem, areaFilter === a.id && styles.areaFilterItemActive]}
+                      onPress={() => { setAreaFilter(a.id); setAreaFilterDropdownOpen(false); }}
+                    >
+                      <Text style={[styles.areaFilterItemText, areaFilter === a.id && styles.areaFilterItemTextActive]}>
+                        {a.name} ({a.type})
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+
+        {filteredTrainings.length === 0 ? (
+          <Text style={styles.noDataText}>No data found for this Area.</Text>
+        ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={Platform.OS === 'web'}
           style={[styles.horizontalScroll, Platform.OS === 'web' && { overflowX: 'auto', WebkitOverflowScrolling: 'touch' }]}
         >
-          {trainings.map((t) => {
+          {filteredTrainings.map((t) => {
             const isSelected = selectedTraining?.id === t.id;
             return (
               <TouchableOpacity
@@ -410,10 +540,14 @@ export default function ClpMaintenance() {
                 <Text style={[styles.batchChipSubText, isSelected && styles.batchChipSubTextActive]}>
                   {t.start_date} to {t.end_date}
                 </Text>
+                <Text style={[styles.batchChipAreaText, isSelected && styles.batchChipSubTextActive]} numberOfLines={1}>
+                  {t.areas?.name || 'No Area'}
+                </Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
+        )}
       </View>
 
       {/* Selected Batch Metrics Grid */}
@@ -422,6 +556,10 @@ export default function ClpMaintenance() {
           <View style={styles.metaBlock}>
             <Text style={styles.metaLabel}>Current Venue</Text>
             <Text style={styles.metaValue} numberOfLines={1}>{selectedTraining.venue}</Text>
+          </View>
+          <View style={styles.metaBlock}>
+            <Text style={styles.metaLabel}>Area</Text>
+            <Text style={styles.metaValue} numberOfLines={1}>{selectedTraining.areas?.name || 'No Area'}</Text>
           </View>
           <View style={styles.metaBlock}>
             <Text style={styles.metaLabel}>Active Participants</Text>
@@ -476,9 +614,11 @@ export default function ClpMaintenance() {
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
-                  {selectedTraining 
-                    ? 'No members registered under this batch framework yet.' 
-                    : 'Please select or construct a dynamic training batch above.'}
+                  {selectedTraining
+                    ? 'No members registered under this batch framework yet.'
+                    : (filteredTrainings.length === 0
+                      ? 'No data found for this Area.'
+                      : 'Please select or construct a dynamic training batch above.')}
                 </Text>
               </View>
             }
@@ -529,13 +669,43 @@ export default function ClpMaintenance() {
             )}
 
             <Text style={styles.inputLabel}>Venue Destination</Text>
-            <TextInput 
-              style={styles.input} 
+            <TextInput
+              style={styles.input}
               placeholder="e.g., Chapter Hall Room B"
               placeholderTextColor="#94a3b8"
-              value={venue} 
-              onChangeText={setVenue} 
+              value={venue}
+              onChangeText={setVenue}
             />
+
+            <Text style={styles.inputLabel}>Area</Text>
+            <View style={styles.areaPickerBox}>
+              <ScrollView style={{ maxHeight: 160 }} nestedScrollEnabled>
+                {selectableAreas.length === 0 ? (
+                  <Text style={styles.noResultsInline}>No areas available. Create one under Administration &gt; Areas first.</Text>
+                ) : (
+                  selectableAreas.map((a) => {
+                    const isSelected = newTrainingAreaId === a.id;
+                    return (
+                      <TouchableOpacity
+                        key={a.id}
+                        style={[styles.areaPickerItem, isSelected && styles.areaPickerItemActive]}
+                        onPress={() => setNewTrainingAreaId(a.id)}
+                      >
+                        <Ionicons
+                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                          size={15}
+                          color={isSelected ? '#2563eb' : '#94a3b8'}
+                          style={{ marginRight: 8 }}
+                        />
+                        <Text style={[styles.areaPickerItemText, isSelected && styles.areaPickerItemTextActive]}>
+                          {a.name} ({a.type})
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={() => setTrainingModalVisible(false)}>
@@ -701,13 +871,14 @@ const styles = StyleSheet.create({
   titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
-  sectionCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12 },
+  sectionCard: { backgroundColor: '#ffffff', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e2e8f0', marginBottom: 12, zIndex: 15 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: '#475569', textTransform: 'uppercase' },
   inlineAddBatchBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#cbd5e1' },
   inlineAddBatchBtnIcon: { marginRight: 4 },
   inlineAddBatchBtnText: { fontSize: 11, fontWeight: '700', color: '#334155' },
   horizontalScroll: { flexDirection: 'row' },
+  noDataText: { fontSize: 13, color: '#94a3b8', fontWeight: '500', paddingVertical: 14, textAlign: 'center' },
   batchChip: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0', minWidth: 140, maxWidth: 180 },
   batchChipActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
   batchChipVenueRow: { flexDirection: 'row', alignItems: 'center' },
@@ -716,6 +887,32 @@ const styles = StyleSheet.create({
   batchChipTextActive: { color: '#2563eb' },
   batchChipSubText: { fontSize: 10, color: '#64748b', marginTop: 2 },
   batchChipSubTextActive: { color: '#3b82f6' },
+  batchChipAreaText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700' },
+
+  areaFilterWrapper: { position: 'relative', marginBottom: 10, maxWidth: 260, zIndex: 20 },
+  areaFilterHeader: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc',
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  areaFilterHeaderText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#334155' },
+  areaFilterMenu: {
+    position: 'absolute', top: 42, left: 0, right: 0,
+    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8,
+    elevation: 6, zIndex: 30,
+  },
+  areaFilterItem: { paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  areaFilterItemActive: { backgroundColor: '#eff6ff' },
+  areaFilterItemText: { fontSize: 12, color: '#334155', fontWeight: '500' },
+  areaFilterItemTextActive: { color: '#002060', fontWeight: '700' },
+
+  areaPickerBox: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, marginBottom: 14, overflow: 'hidden',
+  },
+  areaPickerItem: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  areaPickerItemActive: { backgroundColor: '#eff6ff' },
+  areaPickerItemText: { fontSize: 13, color: '#334155', fontWeight: '500' },
+  areaPickerItemTextActive: { color: '#002060', fontWeight: '700' },
   metaRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   metaBlock: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: '#e2e8f0' },
   metaLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
