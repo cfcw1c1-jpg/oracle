@@ -168,22 +168,38 @@ export default function Page() {
   }, [currentTab]);
 
   useEffect(() => {
-    // Listen for auth state changes
+    // Listen for auth state changes. Supabase fires a "SIGNED_IN" event both
+    // for an actual interactive login AND for restoring an already-persisted
+    // session on page load/refresh -- the event name alone can't tell them
+    // apart, and racing it against getSession()'s own resolution isn't
+    // reliable either (both settle around the same time on mount). Instead,
+    // "SIGNED_IN" is only trusted once this component has been mounted for
+    // a moment -- a real login always happens well after that, since it
+    // requires the user to actually type credentials and submit first.
+    let readyForSignInEvents = false;
+    const readyTimer = setTimeout(() => {
+      readyForSignInEvents = true;
+    }, 500);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
     });
-    supabase.auth.onAuthStateChange((event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
-      // Only a real sign-in action should trigger the disclaimer -- not a
-      // page refresh restoring an already-persisted session.
-      if (event === 'SIGNED_IN') setDisclaimerVisible(true);
+      if (event === 'SIGNED_IN' && readyForSignInEvents) {
+        setDisclaimerVisible(true);
+      }
     });
 
     // Handle screen resize events (critical for web testing & rotation)
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
       setScreenWidth(window.width);
     });
-    return () => subscription?.remove();
+    return () => {
+      clearTimeout(readyTimer);
+      subscription?.remove();
+      authListener?.subscription?.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
