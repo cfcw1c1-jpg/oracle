@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS "public"."audit_log" (
     "old_data" "jsonb",
     "new_data" "jsonb",
     "changed_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "audit_log_action_check" CHECK (("action" = ANY (ARRAY['INSERT'::"text", 'UPDATE'::"text", 'DELETE'::"text"])))
+    CONSTRAINT "audit_log_action_check" CHECK (("action" = ANY (ARRAY['INSERT'::"text", 'UPDATE'::"text", 'DELETE'::"text", 'PAGE_VIEW'::"text"])))
 );
 
 ALTER TABLE "public"."audit_log" OWNER TO "postgres";
@@ -121,6 +121,15 @@ DROP POLICY IF EXISTS "Admins can view audit log" ON "public"."audit_log";
 CREATE POLICY "Admins can view audit log" ON "public"."audit_log"
 FOR SELECT TO "authenticated"
 USING ("public"."is_admin"());
+
+-- Page-view events have no underlying table row/trigger to log them, so
+-- the client inserts them directly -- restricted to logging as yourself,
+-- and only ever as a PAGE_VIEW (never able to fabricate an INSERT/UPDATE/
+-- DELETE row for something that didn't happen).
+DROP POLICY IF EXISTS "Users can log their own page views" ON "public"."audit_log";
+CREATE POLICY "Users can log their own page views" ON "public"."audit_log"
+FOR INSERT TO "authenticated"
+WITH CHECK ("actor_id" = "auth"."uid"() AND "action" = 'PAGE_VIEW');
 
 GRANT SELECT ON TABLE "public"."audit_log" TO "authenticated";
 GRANT ALL ON TABLE "public"."audit_log" TO "service_role";

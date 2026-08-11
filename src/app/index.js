@@ -23,6 +23,7 @@ import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
 import ImportCsv from '../screens/ImportCsv';
+import ManageMembers from '../screens/ManageMembers';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
 import PfoList from '../screens/PfoList';
@@ -37,6 +38,7 @@ import SystemAuditLog from '../screens/SystemAuditLog';
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
   { key: 'members', label: 'Directory', icon: 'people-outline' },
+  { key: 'manageMembers', label: 'Manage Members', icon: 'list-outline' },
   { key: 'pfo', label: 'PFO Trainings', icon: 'bar-chart-outline' },
   { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
@@ -48,6 +50,14 @@ const NAV_ITEMS = [
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
   { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline' },
 ];
+
+// Human-readable labels for the System Audit Log's PAGE_VIEW rows -- every
+// NAV_ITEMS entry, plus the few tabs reachable outside the sidebar
+// (avatar -> profile, the message toast -> messages).
+const PAGE_VIEW_LABELS = NAV_ITEMS.reduce((acc, item) => {
+  acc[item.key] = item.label;
+  return acc;
+}, { profile: 'My Profile', messages: 'Messages', predictor: 'Predictor' });
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
 
@@ -151,6 +161,7 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
 
 export default function Page() {
   const [session, setSession] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [currentTab, setCurrentTab] = useState('home');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [access, setAccess] = useState(null);
@@ -185,9 +196,11 @@ export default function Page() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      setAuthChecked(true);
     });
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
+      setAuthChecked(true);
       if (event === 'SIGNED_IN' && readyForSignInEvents) {
         setDisclaimerVisible(true);
       }
@@ -207,6 +220,11 @@ export default function Page() {
   useEffect(() => {
     if (!session?.user?.id) {
       setAccess(null);
+      // A subsequent login on the same page (no full reload) reuses this
+      // component, so accessLoading must be reset here too -- otherwise it's
+      // still false from the previous session and the accessLoading gate
+      // below lets the render through with access still null.
+      setAccessLoading(true);
       return;
     }
     loadAccess(session.user.id);
@@ -297,6 +315,17 @@ export default function Page() {
     return () => clearTimeout(timer);
   }, [messageToast]);
 
+  // Reading the persisted session out of storage is async -- until that
+  // first check resolves, "no session yet" doesn't mean "logged out". Show
+  // a neutral spinner instead of flashing the Login screen every refresh.
+  if (!authChecked) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centeredFull]}>
+        <ActivityIndicator size="large" color="#002060" />
+      </SafeAreaView>
+    );
+  }
+
   if (!session) {
     return <Login />;
   }
@@ -316,9 +345,41 @@ export default function Page() {
   const canView = (pageKey) => allowedPageKeys.has(pageKey);
   const headerPortalLabel = access?.roleName ? `${access.roleName.toUpperCase()} PORTAL` : 'MEMBERS PORTAL';
 
+  // currentTab defaults to 'home'. The effect above steers away from it once
+  // access loads if this account can't see it, but that's a state update
+  // applied after render -- there's an in-between render, right as access
+  // finishes loading, where currentTab is still 'home' and canView('home')
+  // is already false. Computing the effective tab here instead of waiting
+  // for that effect to land means the very first render after access loads
+  // already shows the right page, with no "no access" flash in between.
+  const effectiveTab = currentTab === 'home' && access && !canView('home')
+    ? (access.allowedPages[0] || 'profile')
+    : currentTab;
+
   function handleSelectTab(tabKey) {
+    if (tabKey !== currentTab) logPageView(tabKey);
     setCurrentTab(tabKey);
     setIsMobileMenuOpen(false);
+  }
+
+  // Page views have no underlying table row to trigger off of, so they're
+  // logged directly from here into the same audit_log the System Audit Log
+  // screen reads -- table_name is prefixed "page:" so it can never collide
+  // with (or be mistaken for) an actual data table's rows in that log.
+  function logPageView(tabKey) {
+    if (!session?.user?.id) return;
+    supabase
+      .from('audit_log')
+      .insert([{
+        table_name: `page:${tabKey}`,
+        action: 'PAGE_VIEW',
+        actor_id: session.user.id,
+        actor_email: session.user.email,
+        new_data: { page: PAGE_VIEW_LABELS[tabKey] || tabKey },
+      }])
+      .then(({ error }) => {
+        if (error) console.error('Error logging page view:', error.message);
+      });
   }
 
   return (
@@ -414,26 +475,27 @@ export default function Page() {
 
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
-          {currentTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} />}
-          {currentTab === 'members' && canView('members') && <MembersList />}
-          {currentTab === 'pfo' && canView('pfo') && <PfoList />}
-          {currentTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
-          {currentTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
-          {currentTab === 'clp' && canView('clp') && <ClpMaintenance />}
-          {currentTab === 'auditLogs' && canView('auditLogs') && <AuditLogs />}
-          {currentTab === 'portalUsers' && canView('portalUsers') && (
+          {effectiveTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} />}
+          {effectiveTab === 'members' && canView('members') && <MembersList />}
+          {effectiveTab === 'manageMembers' && canView('manageMembers') && <ManageMembers />}
+          {effectiveTab === 'pfo' && canView('pfo') && <PfoList />}
+          {effectiveTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
+          {effectiveTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
+          {effectiveTab === 'clp' && canView('clp') && <ClpMaintenance />}
+          {effectiveTab === 'auditLogs' && canView('auditLogs') && <AuditLogs />}
+          {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}
-          {currentTab === 'rolesAccess' && canView('rolesAccess') && (
+          {effectiveTab === 'rolesAccess' && canView('rolesAccess') && (
             <RolesAccess onAccessChanged={() => loadAccess(session.user.id)} />
           )}
-          {currentTab === 'areas' && canView('areas') && <Areas />}
-          {currentTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
-          {currentTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
-          {currentTab === 'predictor' && <PredictorScreen />}
-          {currentTab === 'profile' && <ProfileScreen />}
-          {currentTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
-          {NAV_ITEMS.some((item) => item.key === currentTab) && !canView(currentTab) && (
+          {effectiveTab === 'areas' && canView('areas') && <Areas />}
+          {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
+          {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
+          {effectiveTab === 'predictor' && <PredictorScreen />}
+          {effectiveTab === 'profile' && <ProfileScreen />}
+          {effectiveTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
+          {NAV_ITEMS.some((item) => item.key === effectiveTab) && !canView(effectiveTab) && (
             <View style={styles.noAccessWrap}>
               <Ionicons name="lock-closed-outline" size={28} color="#94a3b8" />
               <Text style={styles.noAccessText}>
@@ -452,7 +514,7 @@ export default function Page() {
           {canView('home') && (
             <TouchableOpacity
               style={[styles.tabBarItem, currentTab === 'home' && styles.activeTabItem]}
-              onPress={() => setCurrentTab('home')}
+              onPress={() => handleSelectTab('home')}
             >
               <Text style={[styles.tabBarItemText, currentTab === 'home' && styles.activeTabBarText]}>Home</Text>
             </TouchableOpacity>
@@ -461,7 +523,7 @@ export default function Page() {
           {canView('members') && (
             <TouchableOpacity
               style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]}
-              onPress={() => setCurrentTab('members')}
+              onPress={() => handleSelectTab('members')}
             >
               <Text style={[styles.tabBarItemText, currentTab === 'members' && styles.activeTabBarText]}>Directory</Text>
             </TouchableOpacity>
@@ -470,7 +532,7 @@ export default function Page() {
           {canView('pfo') && (
             <TouchableOpacity
               style={[styles.tabBarItem, currentTab === 'pfo' && styles.activeTabItem]}
-              onPress={() => setCurrentTab('pfo')}
+              onPress={() => handleSelectTab('pfo')}
             >
               <Text style={[styles.tabBarItemText, currentTab === 'pfo' && styles.activeTabBarText]}>PFO</Text>
             </TouchableOpacity>
@@ -480,7 +542,7 @@ export default function Page() {
           {canView('clp') && (
             <TouchableOpacity
               style={[styles.tabBarItem, currentTab === 'clp' && styles.activeTabItem]}
-              onPress={() => setCurrentTab('clp')}
+              onPress={() => handleSelectTab('clp')}
             >
               <Text style={[styles.tabBarItemText, currentTab === 'clp' && styles.activeTabBarText]}>CLP</Text>
             </TouchableOpacity>

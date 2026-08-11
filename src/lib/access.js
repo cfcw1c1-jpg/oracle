@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabase';
 export const ALL_PAGE_KEYS = [
   'home',
   'members',
+  'manageMembers',
   'pfo',
   'pfoReports',
   'pfoStats',

@@ -48,7 +48,17 @@ const ACTION_STYLES = {
   INSERT: { color: '#15803d', bg: '#dcfce7' },
   UPDATE: { color: '#1d4ed8', bg: '#dbeafe' },
   DELETE: { color: '#b91c1c', bg: '#fee2e2' },
+  PAGE_VIEW: { color: '#7c3aed', bg: '#ede9fe' },
 };
+
+// table_name for a PAGE_VIEW row is "page:<tabKey>" (see src/app/index.js's
+// logPageView) so it can never collide with a real data table's rows here.
+function getTableLabel(log) {
+  if (log.table_name?.startsWith('page:')) {
+    return log.new_data?.page || log.table_name.slice(5);
+  }
+  return TABLE_LABELS[log.table_name] || log.table_name;
+}
 
 function formatTimestamp(iso) {
   if (!iso) return '';
@@ -70,6 +80,9 @@ function computeDiff(log) {
   const oldData = log.old_data || null;
   const newData = log.new_data || null;
 
+  if (log.action === 'PAGE_VIEW') {
+    return [{ key: 'page', from: null, to: getTableLabel(log) }];
+  }
   if (log.action === 'INSERT') {
     return Object.entries(newData || {})
       .filter(([, v]) => v !== null && v !== '' && v !== undefined)
@@ -160,7 +173,7 @@ export default function SystemAuditLog() {
   function handleExport() {
     const rows = filteredLogs.map((l) => ({
       time: formatTimestamp(l.changed_at),
-      table: TABLE_LABELS[l.table_name] || l.table_name,
+      table: getTableLabel(l),
       action: l.action,
       actor: l.actor_email || 'System',
       recordId: l.record_id || '',
@@ -233,7 +246,7 @@ export default function SystemAuditLog() {
             </View>
 
             <View style={styles.actionChipsRow}>
-              {['All', 'INSERT', 'UPDATE', 'DELETE'].map((a) => {
+              {['All', 'INSERT', 'UPDATE', 'DELETE', 'PAGE_VIEW'].map((a) => {
                 const isActive = actionFilter === a;
                 const style = ACTION_STYLES[a];
                 return (
@@ -281,7 +294,7 @@ export default function SystemAuditLog() {
                       onPress={() => setExpandedId(isExpanded ? null : l.id)}
                     >
                       <Text style={[styles.cellText, styles.colTime]} numberOfLines={1}>{formatTimestamp(l.changed_at)}</Text>
-                      <Text style={[styles.cellText, styles.colTable]} numberOfLines={1}>{TABLE_LABELS[l.table_name] || l.table_name}</Text>
+                      <Text style={[styles.cellText, styles.colTable]} numberOfLines={1}>{getTableLabel(l)}</Text>
                       <View style={styles.colAction}>
                         <Pill label={l.action} color={actionStyle.color} bg={actionStyle.bg} />
                       </View>
@@ -294,7 +307,9 @@ export default function SystemAuditLog() {
 
                     {isExpanded && (
                       <View style={[styles.diffPanel, index === pageItems.length - 1 && { borderBottomWidth: 0 }]}>
-                        {diff.length === 0 ? (
+                        {l.action === 'PAGE_VIEW' ? (
+                          <Text style={styles.diffEmptyText}>Opened the &quot;{getTableLabel(l)}&quot; page.</Text>
+                        ) : diff.length === 0 ? (
                           <Text style={styles.diffEmptyText}>No field-level changes recorded.</Text>
                         ) : (
                           diff.map((d) => (
