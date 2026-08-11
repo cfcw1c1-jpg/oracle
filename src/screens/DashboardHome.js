@@ -98,7 +98,7 @@ function GenderDonut({ segments, size = 132, thickness = 16 }) {
   );
 }
 
-export default function DashboardHome({ onNavigate }) {
+export default function DashboardHome({ onNavigate, roleName }) {
   const { width } = useWindowDimensions();
   const isWideScreen = width >= 900;
 
@@ -223,51 +223,54 @@ export default function DashboardHome({ onNavigate }) {
         </TouchableOpacity>
       </View>
 
-      <View style={[styles.bodyLayout, isWideScreen && styles.bodyLayoutWide]}>
-        {/* Main column */}
-        <View style={[styles.mainColumn, isWideScreen && styles.mainColumnWide]}>
-          <View style={styles.heroBanner}>
-            <View style={styles.heroTextSide}>
-              <View style={styles.dateChip}>
-                <Ionicons name="calendar-outline" size={12} color="#ffffff" style={{ marginRight: 6 }} />
-                <Text style={styles.dateChipText}>{dateTimeLabel}</Text>
+      {(() => {
+        const heroAndStats = (
+          <>
+            <View style={styles.heroBanner}>
+              <View style={styles.heroTextSide}>
+                <View style={styles.dateChip}>
+                  <Ionicons name="calendar-outline" size={12} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.dateChipText}>{dateTimeLabel}</Text>
+                </View>
+                <Text style={styles.heroTitle}>Good {getTimeOfDay(now.getHours())}!</Text>
+                <Text style={styles.heroSubtitle}>
+                  Welcome back — signed in as {email}. Have a great {weekday}!
+                </Text>
               </View>
-              <Text style={styles.heroTitle}>Good {getTimeOfDay(now.getHours())}!</Text>
-              <Text style={styles.heroSubtitle}>
-                Welcome back — signed in as {email}. Have a great {weekday}!
-              </Text>
-            </View>
-            <View style={styles.heroBrandMark}>
-              <Ionicons name="book-outline" size={32} color="#ffffff" />
-            </View>
-          </View>
-
-          <View style={styles.statTilesRow}>
-            <View style={styles.statTile}>
-              <View style={[styles.statIconChip, { backgroundColor: ACCENT_BLUE_BG }]}>
-                <Ionicons name="people-outline" size={18} color={NAVY} />
+              <View style={styles.heroBrandMark}>
+                <Ionicons name="book-outline" size={32} color="#ffffff" />
               </View>
-              <Text style={styles.statValue}>{totalMembers}</Text>
-              <Text style={styles.statLabel}>Total Active Members</Text>
             </View>
 
-            <View style={styles.statTile}>
-              <View style={[styles.statIconChip, { backgroundColor: AMBER_BG }]}>
-                <Ionicons name="school-outline" size={18} color={AMBER_TEXT} />
+            <View style={styles.statTilesRow}>
+              <View style={styles.statTile}>
+                <View style={[styles.statIconChip, { backgroundColor: ACCENT_BLUE_BG }]}>
+                  <Ionicons name="people-outline" size={18} color={NAVY} />
+                </View>
+                <Text style={styles.statValue}>{totalMembers}</Text>
+                <Text style={styles.statLabel}>Total Active Members</Text>
               </View>
-              <Text style={styles.statValue}>{clpTrainings.length}</Text>
-              <Text style={styles.statLabel}>CLP Training Batches</Text>
-            </View>
 
-            <View style={styles.statTile}>
-              <View style={[styles.statIconChip, { backgroundColor: ACCENT_BLUE_BG }]}>
-                <Ionicons name="analytics-outline" size={18} color={ACCENT_BLUE} />
+              <View style={styles.statTile}>
+                <View style={[styles.statIconChip, { backgroundColor: AMBER_BG }]}>
+                  <Ionicons name="school-outline" size={18} color={AMBER_TEXT} />
+                </View>
+                <Text style={styles.statValue}>{clpTrainings.length}</Text>
+                <Text style={styles.statLabel}>CLP Training Batches</Text>
               </View>
-              <Text style={styles.statValue}>{overallPfoAvg.toFixed(1)}%</Text>
-              <Text style={styles.statLabel}>PFO Avg. Completion</Text>
-            </View>
-          </View>
 
+              <View style={styles.statTile}>
+                <View style={[styles.statIconChip, { backgroundColor: ACCENT_BLUE_BG }]}>
+                  <Ionicons name="analytics-outline" size={18} color={ACCENT_BLUE} />
+                </View>
+                <Text style={styles.statValue}>{overallPfoAvg.toFixed(1)}%</Text>
+                <Text style={styles.statLabel}>PFO Avg. Completion</Text>
+              </View>
+            </View>
+          </>
+        );
+
+        const donutAndProgress = (
           <View style={[styles.cardRow, isWideScreen && styles.cardRowWide]}>
             <View style={[styles.card, styles.donutCard, isWideScreen && styles.cardHalfWide]}>
               <Text style={styles.cardTitle}>Member Gender Overview</Text>
@@ -305,36 +308,44 @@ export default function DashboardHome({ onNavigate }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        );
 
-        {/* Side column */}
-        <View style={[styles.sideColumn, isWideScreen && styles.sideColumnWide]}>
+        const profileCard = (
           <View style={[styles.card, styles.profileCard]}>
-            <View style={styles.profileHeaderRow}>
-              <Text style={styles.cardTitleOnDark}>My Profile</Text>
-            </View>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.profileAvatarImage} />
-            ) : (
-              <View style={styles.profileAvatar}>
-                <Text style={styles.profileAvatarText}>{initials}</Text>
+            <Text style={styles.cardTitleOnDark}>My Profile</Text>
+
+            <View style={styles.profileIdentityRow}>
+              <View style={styles.profileAvatarRing}>
+                {avatarUrl ? (
+                  <Image source={{ uri: avatarUrl }} style={styles.profileAvatarImage} />
+                ) : (
+                  <View style={styles.profileAvatar}>
+                    <Text style={styles.profileAvatarText}>{initials}</Text>
+                  </View>
+                )}
               </View>
-            )}
-            <Text style={styles.profileEmail} numberOfLines={1}>{email}</Text>
-            <Text style={styles.profileRole}>CFC ORACLE PORTAL</Text>
+              <View style={styles.profileIdentityText}>
+                <Text style={styles.profileEmailOnDark} numberOfLines={1}>{email}</Text>
+                <View style={styles.profileRolePill}>
+                  <Text style={styles.profileRoleText}>{roleName || 'Unassigned Role'}</Text>
+                </View>
+              </View>
+            </View>
 
             <View style={styles.profileFactsRow}>
               <View style={styles.profileFact}>
-                <Text style={styles.profileFactLabel}>Member Since</Text>
-                <Text style={styles.profileFactValue}>{formatShortDate(sessionUser?.created_at)}</Text>
+                <Text style={styles.profileFactLabelOnDark}>Member Since</Text>
+                <Text style={styles.profileFactValueOnDark}>{formatShortDate(sessionUser?.created_at)}</Text>
               </View>
               <View style={styles.profileFact}>
-                <Text style={styles.profileFactLabel}>Last Sign-in</Text>
-                <Text style={styles.profileFactValue}>{formatShortDate(sessionUser?.last_sign_in_at)}</Text>
+                <Text style={styles.profileFactLabelOnDark}>Last Sign-in</Text>
+                <Text style={styles.profileFactValueOnDark}>{formatShortDate(sessionUser?.last_sign_in_at)}</Text>
               </View>
             </View>
           </View>
+        );
 
+        const trainingsCard = (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{hasUpcomingTrainings ? 'Upcoming CLP Trainings' : 'Previous CLP Trainings'}</Text>
             {displayedTrainings.length === 0 && (
@@ -350,8 +361,33 @@ export default function DashboardHome({ onNavigate }) {
               </View>
             ))}
           </View>
-        </View>
-      </View>
+        );
+
+        // Side-by-side on wide screens (Profile already reads as "first
+        // thing" at the top of its own column there, so no reorder needed).
+        // Stacked on narrow screens, Profile is moved up to sit right under
+        // the hero/stats instead of trailing behind the Donut and Formation
+        // Stage Progress cards -- matches how it already reads on wide.
+        return isWideScreen ? (
+          <View style={[styles.bodyLayout, styles.bodyLayoutWide]}>
+            <View style={[styles.mainColumn, styles.mainColumnWide]}>
+              {heroAndStats}
+              {donutAndProgress}
+            </View>
+            <View style={[styles.sideColumn, styles.sideColumnWide]}>
+              {profileCard}
+              {trainingsCard}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.bodyLayout}>
+            {heroAndStats}
+            {profileCard}
+            {donutAndProgress}
+            {trainingsCard}
+          </View>
+        );
+      })()}
     </ScrollView>
   );
 }
@@ -409,7 +445,7 @@ const styles = StyleSheet.create({
   cardRowWide: { flexDirection: 'row' },
   card: {
     backgroundColor: '#ffffff', borderRadius: 16, padding: 16,
-    borderWidth: 1, borderColor: '#e2e8f0', flex: 1,
+    borderWidth: 1, borderColor: '#e2e8f0',
   },
   cardHalfWide: { flex: 1 },
   cardTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.4 },
@@ -437,23 +473,38 @@ const styles = StyleSheet.create({
   },
   viewReportBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
 
-  profileCard: { backgroundColor: NAVY, borderColor: NAVY, alignItems: 'center', paddingVertical: 20 },
-  profileHeaderRow: { width: '100%', marginBottom: 12 },
-  cardTitleOnDark: { fontSize: 13, fontWeight: '800', color: '#ffffff', textTransform: 'uppercase', letterSpacing: 0.4 },
+  // Same navy gradient as the greeting banner above, so the two feel like
+  // one consistent "brand" treatment rather than one card standing out.
+  profileCard: {
+    backgroundColor: NAVY, borderColor: NAVY,
+    ...Platform.select({
+      web: { experimental_backgroundImage: `linear-gradient(135deg, ${NAVY}, ${NAVY_DARK})` },
+      default: {},
+    }),
+  },
+  cardTitleOnDark: { fontSize: 13, fontWeight: '800', color: '#ffffff', marginBottom: 14, textTransform: 'uppercase', letterSpacing: 0.4 },
+  profileIdentityRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
+  profileAvatarRing: {
+    width: 60, height: 60, borderRadius: 30, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)', borderStyle: 'dashed',
+    justifyContent: 'center', alignItems: 'center', marginRight: 14,
+  },
   profileAvatar: {
-    width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 10,
+    width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center', alignItems: 'center',
   },
-  profileAvatarImage: {
-    width: 64, height: 64, borderRadius: 32, marginBottom: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)',
+  profileAvatarImage: { width: 52, height: 52, borderRadius: 26 },
+  profileAvatarText: { color: '#ffffff', fontSize: 18, fontWeight: '800' },
+  profileIdentityText: { flex: 1 },
+  profileEmailOnDark: { color: '#ffffff', fontSize: 14, fontWeight: '700', maxWidth: '100%' },
+  profileRolePill: {
+    alignSelf: 'flex-start', backgroundColor: ACCENT_BLUE_BG, borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 3, marginTop: 6,
   },
-  profileAvatarText: { color: '#ffffff', fontSize: 22, fontWeight: '800' },
-  profileEmail: { color: '#ffffff', fontSize: 14, fontWeight: '700', maxWidth: '100%' },
-  profileRole: { color: 'rgba(255,255,255,0.75)', fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginTop: 4 },
+  profileRoleText: { color: ACCENT_BLUE, fontSize: 10, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase' },
   profileFactsRow: { flexDirection: 'row', width: '100%', marginTop: 18, gap: 10 },
   profileFact: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10, padding: 10, alignItems: 'center' },
-  profileFactLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
-  profileFactValue: { color: '#ffffff', fontSize: 12, fontWeight: '700', marginTop: 4, textAlign: 'center' },
+  profileFactLabelOnDark: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
+  profileFactValueOnDark: { color: '#ffffff', fontSize: 12, fontWeight: '700', marginTop: 4, textAlign: 'center' },
 
   agendaRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   agendaDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: ACCENT_BLUE, marginRight: 10, marginTop: 5 },

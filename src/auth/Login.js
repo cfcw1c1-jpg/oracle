@@ -30,6 +30,7 @@ export default function Login() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const passwordInputRef = useRef(null);
@@ -104,19 +105,28 @@ export default function Login() {
             style={styles.flatInput}
           />
 
-          <TextInput
-            ref={passwordInputRef}
-            placeholder="Password"
-            placeholderTextColor="#94a3b8"
-            onChangeText={setPassword}
-            value={password}
-            secureTextEntry
-            autoCapitalize="none"
-            autoComplete="current-password"
-            returnKeyType="go"
-            onSubmitEditing={handleLogin}
-            style={styles.flatInput}
-          />
+          <View style={styles.passwordFieldWrap}>
+            <TextInput
+              ref={passwordInputRef}
+              placeholder="Password"
+              placeholderTextColor="#94a3b8"
+              onChangeText={setPassword}
+              value={password}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoComplete="current-password"
+              returnKeyType="go"
+              onSubmitEditing={handleLogin}
+              style={[styles.flatInput, styles.passwordInputField]}
+            />
+            <TouchableOpacity
+              style={styles.passwordToggleBtn}
+              onPress={() => setShowPassword((v) => !v)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#64748b" />
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.actionsRow}>
             <TouchableOpacity onPress={handleForgotPassword} disabled={resetLoading}>
@@ -180,6 +190,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff', borderRadius: 4, paddingHorizontal: 16, paddingVertical: 14,
     fontSize: 15, color: '#1e293b', marginBottom: 16, width: '100%',
   },
+  passwordFieldWrap: { position: 'relative', width: '100%', justifyContent: 'center' },
+  passwordInputField: { paddingRight: 46 },
+  passwordToggleBtn: { position: 'absolute', right: 14, top: 0, bottom: 16, justifyContent: 'center' },
 
   actionsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
   forgotText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontStyle: 'italic' },

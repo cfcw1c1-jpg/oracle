@@ -32,6 +32,8 @@ function showAlert(title, message) {
 export default function ResetPassword({ onDone }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function handleSetPassword() {
@@ -69,30 +71,48 @@ export default function ResetPassword({ onDone }) {
         <Text style={styles.title}>Set a New Password</Text>
         <Text style={styles.subtitle}>Choose a new password for your account to finish resetting it.</Text>
 
-        <TextInput
-          placeholder="New Password"
-          placeholderTextColor="#94a3b8"
-          onChangeText={setNewPassword}
-          value={newPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoComplete="new-password"
-          returnKeyType="next"
-          style={styles.flatInput}
-        />
+        <View style={styles.passwordFieldWrap}>
+          <TextInput
+            placeholder="New Password"
+            placeholderTextColor="#94a3b8"
+            onChangeText={setNewPassword}
+            value={newPassword}
+            secureTextEntry={!showNewPassword}
+            autoCapitalize="none"
+            autoComplete="new-password"
+            returnKeyType="next"
+            style={[styles.flatInput, styles.passwordInputField]}
+          />
+          <TouchableOpacity
+            style={styles.passwordToggleBtn}
+            onPress={() => setShowNewPassword((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={showNewPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#64748b" />
+          </TouchableOpacity>
+        </View>
 
-        <TextInput
-          placeholder="Confirm New Password"
-          placeholderTextColor="#94a3b8"
-          onChangeText={setConfirmPassword}
-          value={confirmPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoComplete="new-password"
-          returnKeyType="go"
-          onSubmitEditing={handleSetPassword}
-          style={styles.flatInput}
-        />
+        <View style={styles.passwordFieldWrap}>
+          <TextInput
+            placeholder="Confirm New Password"
+            placeholderTextColor="#94a3b8"
+            onChangeText={setConfirmPassword}
+            value={confirmPassword}
+            secureTextEntry={!showConfirmPassword}
+            autoCapitalize="none"
+            autoComplete="new-password"
+            returnKeyType="go"
+            onSubmitEditing={handleSetPassword}
+            style={[styles.flatInput, styles.passwordInputField]}
+          />
+          <TouchableOpacity
+            style={styles.passwordToggleBtn}
+            onPress={() => setShowConfirmPassword((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#64748b" />
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity style={styles.saveButton} onPress={handleSetPassword} disabled={saving}>
           {saving ? (
@@ -136,6 +156,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff', borderRadius: 4, paddingHorizontal: 16, paddingVertical: 14,
     fontSize: 15, color: '#1e293b', marginBottom: 16, width: '100%',
   },
+  passwordFieldWrap: { position: 'relative', width: '100%', justifyContent: 'center' },
+  passwordInputField: { paddingRight: 46 },
+  passwordToggleBtn: { position: 'absolute', right: 14, top: 0, bottom: 16, justifyContent: 'center' },
 
   saveButton: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

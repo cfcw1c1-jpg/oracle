@@ -45,6 +45,9 @@ export default function ProfileScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   useEffect(() => {
     loadUser();
@@ -214,37 +217,64 @@ export default function ProfileScreen() {
         <Text style={styles.cardTitle}>Change Password</Text>
 
         <Text style={styles.inputLabel}>Current Password</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          placeholderTextColor="#94a3b8"
-          value={currentPassword}
-          onChangeText={setCurrentPassword}
-          secureTextEntry
-          autoCapitalize="none"
-        />
+        <View style={styles.passwordFieldWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInputField]}
+            placeholder="••••••••"
+            placeholderTextColor="#94a3b8"
+            value={currentPassword}
+            onChangeText={setCurrentPassword}
+            secureTextEntry={!showCurrentPassword}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity
+            style={styles.passwordToggleBtn}
+            onPress={() => setShowCurrentPassword((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={showCurrentPassword ? 'eye-off-outline' : 'eye-outline'} size={16} color="#64748b" />
+          </TouchableOpacity>
+        </View>
 
         <Text style={styles.inputLabel}>New Password</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="At least 6 characters"
-          placeholderTextColor="#94a3b8"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry
-          autoCapitalize="none"
-        />
+        <View style={styles.passwordFieldWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInputField]}
+            placeholder="At least 6 characters"
+            placeholderTextColor="#94a3b8"
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry={!showNewPassword}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity
+            style={styles.passwordToggleBtn}
+            onPress={() => setShowNewPassword((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={showNewPassword ? 'eye-off-outline' : 'eye-outline'} size={16} color="#64748b" />
+          </TouchableOpacity>
+        </View>
 
         <Text style={styles.inputLabel}>Confirm New Password</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          placeholderTextColor="#94a3b8"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          autoCapitalize="none"
-        />
+        <View style={styles.passwordFieldWrap}>
+          <TextInput
+            style={[styles.input, styles.passwordInputField]}
+            placeholder="••••••••"
+            placeholderTextColor="#94a3b8"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry={!showConfirmPassword}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity
+            style={styles.passwordToggleBtn}
+            onPress={() => setShowConfirmPassword((v) => !v)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name={showConfirmPassword ? 'eye-off-outline' : 'eye-outline'} size={16} color="#64748b" />
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity
           style={[styles.saveButton, changingPassword && styles.saveButtonDisabled]}
@@ -306,6 +336,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#1e293b',
   },
+  passwordFieldWrap: { position: 'relative', justifyContent: 'center' },
+  passwordInputField: { paddingRight: 40 },
+  passwordToggleBtn: { position: 'absolute', right: 10, top: 0, bottom: 0, justifyContent: 'center' },
 
   saveButton: {
     flexDirection: 'row', justifyContent: 'center', alignItems: 'center',

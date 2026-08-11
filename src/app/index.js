@@ -528,7 +528,7 @@ export default function Page() {
 
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
-          {effectiveTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} />}
+          {effectiveTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} roleName={access?.roleName} />}
           {effectiveTab === 'members' && canView('members') && <MembersList />}
           {effectiveTab === 'manageMembers' && canView('manageMembers') && <ManageMembers />}
           {effectiveTab === 'pfo' && canView('pfo') && <PfoList />}
