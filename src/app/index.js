@@ -523,6 +523,14 @@ export default function Page() {
               <Text style={styles.disclaimerEmailText}>markjosephreyes1513@gmail.com</Text>
             </TouchableOpacity>
 
+            <TouchableOpacity
+              style={styles.disclaimerEmailRow}
+              onPress={() => Linking.openURL('mailto:bentiung02421@gmail.com')}
+            >
+              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+              <Text style={styles.disclaimerEmailText}>bentiung02421@gmail.com</Text>
+            </TouchableOpacity>
+
             <View style={styles.disclaimerActions}>
               <TouchableOpacity
                 style={styles.disclaimerSecondaryBtn}
