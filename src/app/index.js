@@ -32,6 +32,7 @@ import PortalUsers from '../screens/PortalUsers';
 import PredictorScreen from '../screens/PredictorScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import RolesAccess from '../screens/RolesAccess';
+import SystemAuditLog from '../screens/SystemAuditLog';
 
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
@@ -45,6 +46,7 @@ const NAV_ITEMS = [
   { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
   { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
+  { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline' },
 ];
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
@@ -427,6 +429,7 @@ export default function Page() {
           )}
           {currentTab === 'areas' && canView('areas') && <Areas />}
           {currentTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
+          {currentTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
           {currentTab === 'predictor' && <PredictorScreen />}
           {currentTab === 'profile' && <ProfileScreen />}
           {currentTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}

@@ -131,11 +131,9 @@ export default function Messages({ onConversationsChanged }) {
         .update({ last_read_at: new Date().toISOString() })
         .eq('conversation_id', conversationId)
         .eq('profile_id', currentUserId);
-      setConversations((prev) => {
-        const next = prev.map((c) => (c.conversation_id === conversationId ? { ...c, unread_count: 0 } : c));
-        onConversationsChanged?.(next);
-        return next;
-      });
+      const next = conversations.map((c) => (c.conversation_id === conversationId ? { ...c, unread_count: 0 } : c));
+      setConversations(next);
+      onConversationsChanged?.(next);
     } catch (err) {
       console.error('Error marking conversation read:', err.message);
     }
