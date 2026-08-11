@@ -58,7 +58,13 @@ export default function Login() {
 
     setResetLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      // Send the user back to wherever this app is actually running (dev
+      // or prod) rather than relying on the Supabase project's configured
+      // default Site URL, which may not match. That URL must also be
+      // listed in Supabase's Auth -> URL Configuration -> Redirect URLs,
+      // or Supabase will silently fall back to the Site URL instead.
+      const redirectTo = Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), redirectTo ? { redirectTo } : undefined);
       if (error) throw error;
       showAlert('Check Your Email', `A password reset link has been sent to ${email.trim()}.`);
     } catch (error) {

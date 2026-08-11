@@ -378,7 +378,11 @@ export default function Messages({ onConversationsChanged }) {
               <>
                 <View style={styles.threadHeader}>
                   {!isWide && (
-                    <TouchableOpacity style={styles.backBtn} onPress={() => setSelectedConversationId(null)}>
+                    <TouchableOpacity
+                      style={styles.backBtn}
+                      onPress={() => setSelectedConversationId(null)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="chevron-back" size={20} color="#334155" />
                     </TouchableOpacity>
                   )}

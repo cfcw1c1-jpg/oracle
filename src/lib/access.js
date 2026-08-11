@@ -15,6 +15,7 @@ export const ALL_PAGE_KEYS = [
   'portalUsers',
   'rolesAccess',
   'areas',
+  'dataHealth',
   'csvImport',
   'systemAudit',
 ];

@@ -4,15 +4,32 @@ import * as Sharing from 'expo-sharing';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { TRAINING_COLUMNS } from './PfoList';
+
+function showAlert(title, message) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+}
+
+function formatSnapshotDate(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
 // Groups the flat TRAINING_COLUMNS list by their "group" field so a formation
 // stage can check whether a member completed EVERY column belonging to that group.
@@ -154,10 +171,34 @@ export default function PfoStatGenerator() {
   const [areaDropdownOpen, setAreaDropdownOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
+  const [snapshots, setSnapshots] = useState([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(true);
+  const [snapshotNote, setSnapshotNote] = useState('');
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
+  const [historyExpandedId, setHistoryExpandedId] = useState(null);
+
   useEffect(() => {
     generateStats();
     loadAssignedAreas();
+    loadSnapshots();
   }, []);
+
+  async function loadSnapshots() {
+    try {
+      setSnapshotsLoading(true);
+      const { data, error } = await supabase
+        .from('formation_stats_snapshots')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      setSnapshots(data || []);
+    } catch (err) {
+      console.error('Error loading formation stats history:', err.message);
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }
 
   // Areas explicitly assigned to the signed-in account (Portal Users ->
   // Areas) -- same convention as the Directory/PFO Trainings Area filters.
@@ -280,6 +321,64 @@ export default function PfoStatGenerator() {
       };
     });
   }, [activePfoRows, activeTotalMembers]);
+
+  // Trends are only meaningful when compared against a snapshot taken
+  // under the SAME Area/Roles filters -- otherwise a delta could just
+  // reflect a narrower filter, not real progress. Snapshots already come
+  // back newest-first, so the first match is the most recent comparable one.
+  const comparableSnapshot = useMemo(() => {
+    const currentRoles = Array.from(selectedRoles).sort();
+    return snapshots.find((snap) => {
+      if (snap.area_filter !== areaFilter) return false;
+      const snapRoles = (snap.role_filter || []).slice().sort();
+      return snapRoles.length === currentRoles.length && snapRoles.every((r, i) => r === currentRoles[i]);
+    }) || null;
+  }, [snapshots, areaFilter, selectedRoles]);
+
+  function getSnapshotTrackPercent(snapshot, code) {
+    const entry = (snapshot?.track_results || []).find((t) => t.code === code);
+    return entry && entry.tracked ? entry.percent : null;
+  }
+
+  // Stores the CURRENTLY computed numbers as a point-in-time row, tagged
+  // with the filter context they were computed under -- re-deriving past
+  // values later from members/pfo_members isn't possible since those
+  // tables only ever reflect current state.
+  async function handleSaveSnapshot() {
+    setSavingSnapshot(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const trackResultsPayload = stageResults.flatMap((stage) =>
+        stage.trackResults.map((t) => ({
+          stageKey: stage.key,
+          stageLabel: stage.label,
+          code: t.code,
+          name: t.name,
+          tracked: t.tracked,
+          completedCount: t.tracked ? t.completedCount : null,
+          percent: t.tracked ? t.percent : null,
+        }))
+      );
+
+      const { error } = await supabase.from('formation_stats_snapshots').insert([{
+        created_by: user?.id || null,
+        created_by_email: user?.email || null,
+        note: snapshotNote.trim() || null,
+        area_filter: areaFilter,
+        role_filter: Array.from(selectedRoles),
+        total_members: activeTotalMembers,
+        track_results: trackResultsPayload,
+      }]);
+      if (error) throw error;
+
+      setSnapshotNote('');
+      await loadSnapshots();
+    } catch (err) {
+      showAlert('Save Failed', err.message);
+    } finally {
+      setSavingSnapshot(false);
+    }
+  }
 
   function buildTextReport() {
     const lines = [`${denominatorLabel}: ${activeTotalMembers}`, ''];
@@ -448,6 +547,12 @@ export default function PfoStatGenerator() {
         </TouchableOpacity>
       </View>
 
+      <Text style={styles.compareHint}>
+        {comparableSnapshot
+          ? `Comparing against the snapshot saved ${formatSnapshotDate(comparableSnapshot.created_at)} (same Area/Roles filters).`
+          : 'No comparable snapshot yet for these filters — save one below to start tracking trends over time.'}
+      </Text>
+
       {stageResults.map((stage) => (
         <View key={stage.key} style={styles.stageCard}>
           <View style={styles.stageHeader}>
@@ -455,25 +560,34 @@ export default function PfoStatGenerator() {
             <Text style={styles.stageTitle}>{stage.label}</Text>
           </View>
 
-          {stage.trackResults.map((track) => (
-            <View key={track.code} style={styles.trackRow}>
-              <View style={styles.trackNameCol}>
-                <Text style={styles.trackName}>{track.name}</Text>
-                <Text style={styles.trackCode}>{track.code}</Text>
-              </View>
+          {stage.trackResults.map((track) => {
+            const prevPercent = track.tracked ? getSnapshotTrackPercent(comparableSnapshot, track.code) : null;
+            const delta = prevPercent === null ? null : track.percent - prevPercent;
+            return (
+              <View key={track.code} style={styles.trackRow}>
+                <View style={styles.trackNameCol}>
+                  <Text style={styles.trackName}>{track.name}</Text>
+                  <Text style={styles.trackCode}>{track.code}</Text>
+                </View>
 
-              {track.tracked ? (
-                <View style={styles.trackStatCol}>
-                  <Text style={styles.trackFraction}>{track.completedCount} / {activeTotalMembers}</Text>
-                  <Text style={[styles.trackPercent, { color: stage.color }]}>{track.percent.toFixed(1)}%</Text>
-                </View>
-              ) : (
-                <View style={styles.notTrackedBadge}>
-                  <Text style={styles.notTrackedText}>Not Tracked</Text>
-                </View>
-              )}
-            </View>
-          ))}
+                {track.tracked ? (
+                  <View style={styles.trackStatCol}>
+                    <Text style={styles.trackFraction}>{track.completedCount} / {activeTotalMembers}</Text>
+                    <Text style={[styles.trackPercent, { color: stage.color }]}>{track.percent.toFixed(1)}%</Text>
+                    {delta !== null && (
+                      <Text style={[styles.deltaText, delta > 0.05 ? styles.deltaUp : delta < -0.05 ? styles.deltaDown : styles.deltaFlat]}>
+                        {delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '—'} {Math.abs(delta).toFixed(1)}%
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.notTrackedBadge}>
+                    <Text style={styles.notTrackedText}>Not Tracked</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
 
           <View style={[styles.insightBox, { backgroundColor: `${stage.color}1A` }]}>
             <Ionicons name="information-circle-outline" size={14} color={stage.color} style={styles.insightIcon} />
@@ -481,6 +595,73 @@ export default function PfoStatGenerator() {
           </View>
         </View>
       ))}
+
+      <View style={styles.historyCard}>
+        <Text style={styles.historyTitle}>Snapshot History</Text>
+        <Text style={styles.historySubtitle}>
+          Save the numbers above as a dated record, so future snapshots (under the same Area/Roles filters) can show progress instead of only ever a live “right now” view.
+        </Text>
+
+        <View style={styles.snapshotSaveRow}>
+          <TextInput
+            style={styles.snapshotNoteInput}
+            placeholder={'Optional note (e.g. "End of Q1")'}
+            placeholderTextColor="#94a3b8"
+            value={snapshotNote}
+            onChangeText={setSnapshotNote}
+          />
+          <TouchableOpacity style={styles.saveSnapshotBtn} onPress={handleSaveSnapshot} disabled={savingSnapshot}>
+            {savingSnapshot ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <Ionicons name="save-outline" size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.saveSnapshotBtnText}>Save Snapshot</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {snapshotsLoading ? (
+          <ActivityIndicator color="#002060" style={{ marginVertical: 16 }} />
+        ) : snapshots.length === 0 ? (
+          <Text style={styles.historyEmptyText}>No snapshots saved yet.</Text>
+        ) : (
+          snapshots.map((snap, index) => {
+            const isExpanded = historyExpandedId === snap.id;
+            return (
+              <View key={snap.id} style={[styles.snapshotRow, index === snapshots.length - 1 && { borderBottomWidth: 0 }]}>
+                <TouchableOpacity
+                  style={styles.snapshotRowHeader}
+                  onPress={() => setHistoryExpandedId(isExpanded ? null : snap.id)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.snapshotDate}>{formatSnapshotDate(snap.created_at)}</Text>
+                    <Text style={styles.snapshotMeta} numberOfLines={1}>
+                      {snap.total_members} members · Area: {snap.area_filter} · Roles: {(snap.role_filter || []).length ? snap.role_filter.join(', ') : 'All'}
+                      {snap.note ? ` · "${snap.note}"` : ''}
+                    </Text>
+                  </View>
+                  <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#64748b" />
+                </TouchableOpacity>
+
+                {isExpanded && (
+                  <View style={styles.snapshotDetail}>
+                    {(snap.track_results || []).map((t) => (
+                      <View key={t.code} style={styles.snapshotDetailRow}>
+                        <Text style={styles.snapshotDetailName} numberOfLines={1}>{t.name} ({t.code})</Text>
+                        <Text style={styles.snapshotDetailValue}>
+                          {t.tracked ? `${t.completedCount} / ${snap.total_members} · ${t.percent.toFixed(1)}%` : 'Not tracked'}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            );
+          })
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -568,4 +749,43 @@ const styles = StyleSheet.create({
   },
   insightIcon: { marginRight: 6, marginTop: 1 },
   insightText: { flex: 1, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+
+  compareHint: { fontSize: 11, color: '#94a3b8', marginBottom: 12, fontStyle: 'italic' },
+  deltaText: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  deltaUp: { color: '#15803d' },
+  deltaDown: { color: '#dc2626' },
+  deltaFlat: { color: '#94a3b8' },
+
+  historyCard: {
+    backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0',
+    padding: 14, marginTop: 4, marginBottom: 16,
+  },
+  historyTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  historySubtitle: { fontSize: 12, color: '#64748b', marginTop: 4, marginBottom: 12, lineHeight: 17 },
+
+  snapshotSaveRow: { flexDirection: 'row', gap: 10, marginBottom: 8 },
+  snapshotNoteInput: {
+    flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 9, fontSize: 13, color: '#1e293b',
+  },
+  saveSnapshotBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#002060', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 9,
+  },
+  saveSnapshotBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
+
+  historyEmptyText: { fontSize: 12, color: '#94a3b8', textAlign: 'center', paddingVertical: 16 },
+
+  snapshotRow: { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  snapshotRowHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  snapshotDate: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
+  snapshotMeta: { fontSize: 11, color: '#64748b', marginTop: 2 },
+
+  snapshotDetail: { paddingBottom: 10, paddingLeft: 4 },
+  snapshotDetailRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 4,
+  },
+  snapshotDetailName: { fontSize: 12, color: '#334155', flex: 1, paddingRight: 10 },
+  snapshotDetailValue: { fontSize: 11, color: '#64748b', fontWeight: '600' },
 });

@@ -251,7 +251,11 @@ export default function RolesAccess({ onAccessChanged }) {
                         )}
                       </View>
                       {role.name !== 'Admin' && (
-                        <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteRole(role)}>
+                        <TouchableOpacity
+                          style={styles.deleteButton}
+                          onPress={() => handleDeleteRole(role)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
                           <Ionicons name="trash-outline" size={16} color="#ef4444" />
                         </TouchableOpacity>
                       )}

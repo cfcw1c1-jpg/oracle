@@ -17,11 +17,13 @@ import {
 import { supabase } from '../../lib/supabase';
 import packageJson from '../../package.json';
 import Login from '../auth/Login';
+import ResetPassword from '../auth/ResetPassword';
 import { fetchAccessContext } from '../lib/access';
 import Areas from '../screens/Areas';
 import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
+import DataHealth from '../screens/DataHealth';
 import ImportCsv from '../screens/ImportCsv';
 import ManageMembers from '../screens/ManageMembers';
 import MembersList from '../screens/MembersList';
@@ -47,6 +49,7 @@ const NAV_ITEMS = [
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
   { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
+  { key: 'dataHealth', label: 'Data Health', icon: 'pulse-outline' },
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
   { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline' },
 ];
@@ -162,6 +165,12 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
 export default function Page() {
   const [session, setSession] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
+  // Mirrors passwordRecoveryMode for the auth-listener effect below to read
+  // -- that effect only runs once on mount, so its closure over the state
+  // variable would otherwise stay stale forever once this flips true from
+  // a completely separate effect.
+  const passwordRecoveryModeRef = useRef(false);
   const [currentTab, setCurrentTab] = useState('home');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [access, setAccess] = useState(null);
@@ -179,6 +188,38 @@ export default function Page() {
   useEffect(() => {
     currentTabRef.current = currentTab;
   }, [currentTab]);
+
+  // Password-reset emails (Login's "Forgot Password") link back here with
+  // a recovery token in the URL hash. detectSessionInUrl is off (see
+  // lib/supabase.js) to avoid touching the auth-timing behavior tuned
+  // elsewhere in this file, so that token is parsed and applied by hand
+  // instead of relying on the client library's own URL detection.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const hash = window.location.hash;
+    if (!hash || !hash.includes('type=recovery')) return;
+
+    const params = new URLSearchParams(hash.replace(/^#/, ''));
+    const accessToken = params.get('access_token');
+    const refreshToken = params.get('refresh_token');
+    if (!accessToken || !refreshToken) return;
+
+    passwordRecoveryModeRef.current = true;
+    setPasswordRecoveryMode(true);
+
+    supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }).then(({ error }) => {
+      if (error) {
+        console.error('Error establishing password recovery session:', error.message);
+        passwordRecoveryModeRef.current = false;
+        setPasswordRecoveryMode(false);
+      }
+    });
+
+    // Strip the token out of the URL right away regardless of outcome, so
+    // it's never left sitting in the address bar/browser history and a
+    // refresh doesn't try to process it a second time.
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, []);
 
   useEffect(() => {
     // Listen for auth state changes. Supabase fires a "SIGNED_IN" event both
@@ -201,7 +242,7 @@ export default function Page() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setAuthChecked(true);
-      if (event === 'SIGNED_IN' && readyForSignInEvents) {
+      if (event === 'SIGNED_IN' && readyForSignInEvents && !passwordRecoveryModeRef.current) {
         setDisclaimerVisible(true);
       }
     });
@@ -326,6 +367,14 @@ export default function Page() {
     );
   }
 
+  // Checked before the normal !session branch -- setSession() from the
+  // recovery link's token already makes `session` truthy, but the whole
+  // point of that link is letting the user pick a new password, not
+  // silently dropping them into the dashboard with their old one intact.
+  if (passwordRecoveryMode) {
+    return <ResetPassword onDone={() => setPasswordRecoveryMode(false)} />;
+  }
+
   if (!session) {
     return <Login />;
   }
@@ -391,6 +440,7 @@ export default function Page() {
             <TouchableOpacity
               style={styles.menuToggleButton}
               onPress={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Ionicons name={isMobileMenuOpen ? 'close' : 'menu'} size={24} color="#fff" />
             </TouchableOpacity>
@@ -403,6 +453,7 @@ export default function Page() {
           <TouchableOpacity
             style={styles.headerMessagesButton}
             onPress={() => handleSelectTab('messages')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="chatbubbles-outline" size={20} color="#fff" />
             {unreadMessageCount > 0 && (
@@ -415,6 +466,7 @@ export default function Page() {
           <TouchableOpacity
             style={styles.headerAvatarButton}
             onPress={() => handleSelectTab('profile')}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             {session.user?.user_metadata?.avatar_url ? (
               <Image source={{ uri: session.user.user_metadata.avatar_url }} style={styles.headerAvatarImage} />
@@ -430,6 +482,7 @@ export default function Page() {
           <TouchableOpacity
             style={styles.headerLogoutButton}
             onPress={() => supabase.auth.signOut()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="log-out-outline" size={20} color="#fff" />
           </TouchableOpacity>
@@ -490,6 +543,7 @@ export default function Page() {
             <RolesAccess onAccessChanged={() => loadAccess(session.user.id)} />
           )}
           {effectiveTab === 'areas' && canView('areas') && <Areas />}
+          {effectiveTab === 'dataHealth' && canView('dataHealth') && <DataHealth />}
           {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
           {effectiveTab === 'predictor' && <PredictorScreen />}
@@ -561,7 +615,11 @@ export default function Page() {
             <Text style={styles.toastName} numberOfLines={1}>{messageToast.name}</Text>
             <Text style={styles.toastBody} numberOfLines={2}>{messageToast.body}</Text>
           </View>
-          <TouchableOpacity style={styles.toastClose} onPress={() => setMessageToast(null)}>
+          <TouchableOpacity
+            style={styles.toastClose}
+            onPress={() => setMessageToast(null)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
         </TouchableOpacity>

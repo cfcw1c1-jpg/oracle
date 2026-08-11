@@ -453,10 +453,10 @@ export default function ManageMembers() {
                     <ActivityIndicator size="small" color="#002060" />
                   ) : (
                     <>
-                      <TouchableOpacity onPress={() => openEditModal(item)}>
+                      <TouchableOpacity onPress={() => openEditModal(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Ionicons name="create-outline" size={18} color="#2563eb" />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(item)}>
+                      <TouchableOpacity onPress={() => handleDelete(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <Ionicons name="trash-outline" size={18} color="#dc2626" />
                       </TouchableOpacity>
                     </>

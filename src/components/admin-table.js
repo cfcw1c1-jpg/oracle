@@ -79,7 +79,7 @@ export function Pill({ label, color = '#334155', bg = '#f1f5f9' }) {
 
 export function ActionLink({ label, onPress, color = TABLE_ACCENT, icon }) {
   return (
-    <TouchableOpacity style={styles.actionLink} onPress={onPress}>
+    <TouchableOpacity style={styles.actionLink} onPress={onPress} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
       {!!icon && <Ionicons name={icon} size={13} color={color} style={{ marginRight: 4 }} />}
       <Text style={[styles.actionLinkText, { color }]}>{label}</Text>
     </TouchableOpacity>
@@ -166,15 +166,30 @@ export function TablePagination({ page, pageCount, totalCount, pageSize, onChang
       <Text style={styles.paginationLabel}>{start} to {end} of {totalCount} records</Text>
       {pageCount > 1 && (
         <View style={styles.paginationControls}>
-          <TouchableOpacity disabled={page <= 1} onPress={() => onChange(page - 1)} style={styles.pageArrow}>
+          <TouchableOpacity
+            disabled={page <= 1}
+            onPress={() => onChange(page - 1)}
+            style={styles.pageArrow}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
             <Ionicons name="chevron-back" size={14} color={page <= 1 ? '#cbd5e1' : '#334155'} />
           </TouchableOpacity>
           {pages.map((p) => (
-            <TouchableOpacity key={p} onPress={() => onChange(p)} style={[styles.pageChip, p === page && styles.pageChipActive]}>
+            <TouchableOpacity
+              key={p}
+              onPress={() => onChange(p)}
+              style={[styles.pageChip, p === page && styles.pageChipActive]}
+              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+            >
               <Text style={[styles.pageChipText, p === page && styles.pageChipTextActive]}>{p}</Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity disabled={page >= pageCount} onPress={() => onChange(page + 1)} style={styles.pageArrow}>
+          <TouchableOpacity
+            disabled={page >= pageCount}
+            onPress={() => onChange(page + 1)}
+            style={styles.pageArrow}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
             <Ionicons name="chevron-forward" size={14} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
           </TouchableOpacity>
         </View>

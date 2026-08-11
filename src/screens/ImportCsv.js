@@ -221,7 +221,12 @@ export default function ImportCsv() {
                 <View style={styles.fileChip}>
                   <Ionicons name="document-text-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
                   <Text style={styles.fileChipText} numberOfLines={1}>{fileName}</Text>
-                  <TouchableOpacity onPress={reset} disabled={importing} style={{ marginLeft: 8 }}>
+                  <TouchableOpacity
+                    onPress={reset}
+                    disabled={importing}
+                    style={{ marginLeft: 8 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
                     <Ionicons name="close-circle" size={16} color="#94a3b8" />
                   </TouchableOpacity>
                 </View>

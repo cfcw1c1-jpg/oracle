@@ -441,6 +441,7 @@ export default function ClpMaintenance() {
         <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => handleDeleteParticipant(item)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="trash-outline" size={16} color="#ef4444" />
         </TouchableOpacity>
@@ -744,6 +745,7 @@ export default function ClpMaintenance() {
                         <TouchableOpacity
                           style={styles.stagedChipRemove}
                           onPress={() => removeStagedMember(member.MemberIDNo)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
                           <Ionicons name="close" size={13} color="#1e40af" />
                         </TouchableOpacity>

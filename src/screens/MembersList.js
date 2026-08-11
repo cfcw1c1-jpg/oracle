@@ -538,7 +538,7 @@ export default function MembersList() {
         {selectedIds.size > 0 && (
           <View style={styles.selectedPill}>
             <Text style={styles.selectedPillText}>{selectedIds.size} selected</Text>
-            <TouchableOpacity onPress={() => setSelectedIds(new Set())}>
+            <TouchableOpacity onPress={() => setSelectedIds(new Set())} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close-circle-outline" size={16} color="#475569" />
             </TouchableOpacity>
           </View>
@@ -556,7 +556,11 @@ export default function MembersList() {
             {/* Table Header */}
             <View style={styles.tableHeaderRow}>
               <View style={[styles.headerCell, CHECKBOX_COL]}>
-                <Pressable style={[styles.checkbox, allFilteredSelected && styles.checkboxChecked]} onPress={toggleSelectAll}>
+                <Pressable
+                  style={[styles.checkbox, allFilteredSelected && styles.checkboxChecked]}
+                  onPress={toggleSelectAll}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
                   {allFilteredSelected && <Ionicons name="checkmark" size={12} color="#ffffff" />}
                 </Pressable>
               </View>
@@ -598,6 +602,7 @@ export default function MembersList() {
                       <Pressable
                         style={[styles.checkbox, isSelected && styles.checkboxChecked]}
                         onPress={() => toggleSelectRow(item.MemberIDNo)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       >
                         {isSelected && <Ionicons name="checkmark" size={12} color="#ffffff" />}
                       </Pressable>
@@ -818,7 +823,11 @@ export default function MembersList() {
                   {TRAINING_COLUMNS.filter((t) => stagedTalkIds.has(t.id)).map((t) => (
                     <View key={t.id} style={styles.stagedChip}>
                       <Text style={styles.stagedChipText} numberOfLines={1}>{t.label}</Text>
-                      <TouchableOpacity style={styles.stagedChipRemove} onPress={() => toggleStagedTalk(t.id)}>
+                      <TouchableOpacity
+                        style={styles.stagedChipRemove}
+                        onPress={() => toggleStagedTalk(t.id)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
                         <Ionicons name="close" size={12} color="#1e40af" />
                       </TouchableOpacity>
                     </View>

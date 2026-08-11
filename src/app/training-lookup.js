@@ -198,7 +198,7 @@ export default function TrainingLookup() {
           </View>
         ) : (
           <View style={styles.resultsCard}>
-            <TouchableOpacity style={styles.backButton} onPress={resetSearch}>
+            <TouchableOpacity style={styles.backButton} onPress={resetSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="arrow-back-outline" size={16} color="#002060" />
               <Text style={styles.backButtonText}>Search another member</Text>
             </TouchableOpacity>

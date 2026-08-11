@@ -252,7 +252,10 @@ export default function ClpRegistration() {
                       <Text style={styles.memberName}>{selectedMember.Lastname}, {selectedMember.Firstname}</Text>
                       <Text style={styles.memberId}>Member ID: {selectedMember.MemberIDNo}</Text>
                     </View>
-                    <TouchableOpacity onPress={() => { setSelectedMember(null); setAlreadyRegistered(false); }}>
+                    <TouchableOpacity
+                      onPress={() => { setSelectedMember(null); setAlreadyRegistered(false); }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
                       <Ionicons name="close-circle" size={22} color="#94a3b8" />
                     </TouchableOpacity>
                   </View>

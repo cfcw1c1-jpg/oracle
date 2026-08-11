@@ -386,7 +386,7 @@ export default function Areas() {
                         <View style={styles.actionsWrap}>
                           <ActionLink label="Manage" icon="options-outline" onPress={() => openManageModal(area)} />
                           <ActionLink label="Edit" icon="create-outline" color="#334155" onPress={() => openEditAreaModal(area)} />
-                          <TouchableOpacity onPress={() => handleDeleteArea(area)}>
+                          <TouchableOpacity onPress={() => handleDeleteArea(area)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                             <Ionicons name="trash-outline" size={18} color="#ef4444" />
                           </TouchableOpacity>
                         </View>
@@ -418,7 +418,7 @@ export default function Areas() {
                   <Text style={[styles.mainText, { flex: 1, marginLeft: 10 }]}>
                     {selectedArea.members.Firstname} {selectedArea.members.Lastname}
                   </Text>
-                  <TouchableOpacity onPress={removeHead}>
+                  <TouchableOpacity onPress={removeHead} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Ionicons name="close-circle" size={18} color="#ef4444" />
                   </TouchableOpacity>
                 </TableRow>

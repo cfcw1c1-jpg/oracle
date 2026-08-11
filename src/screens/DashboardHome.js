@@ -218,7 +218,7 @@ export default function DashboardHome({ onNavigate }) {
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* Refresh */}
       <View style={styles.headerRow}>
-        <TouchableOpacity style={styles.refreshBtn} onPress={loadDashboard}>
+        <TouchableOpacity style={styles.refreshBtn} onPress={loadDashboard} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="refresh-outline" size={18} color={NAVY} />
         </TouchableOpacity>
       </View>
