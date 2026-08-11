@@ -86,11 +86,27 @@ export const FORMATION_STAGES = [
   },
 ];
 
-// A member's PastoralService code is blank/"MEMBER" for rank-and-file members;
-// any other code (UH, HH, CL, UL, etc.) marks a leadership role.
-function isNonMemberRole(code) {
-  const normalized = (code || '').trim().toUpperCase();
-  return normalized !== '' && normalized !== 'MEMBER';
+// Same short codes MembersList.js/ManageMembers.js use for PastoralService.
+// A blank value normalizes to "MEMBER", same convention used everywhere
+// else this column is read.
+const ROLE_LABELS = {
+  CL: 'Chapter Leader',
+  UL: 'Unit Leader',
+  UH: 'Unit Head',
+  HH: 'Household Head',
+  CH: 'Chapter Head',
+  FMHHL: 'Family Min Household Leader',
+  MEMBER: 'Member',
+  HHL: 'Household Leader',
+  FMHH: 'Family Min Household Head',
+};
+
+function normalizeRole(code) {
+  return (code || '').trim().toUpperCase() || 'MEMBER';
+}
+
+function getRoleLabel(code) {
+  return ROLE_LABELS[code] || code;
 }
 
 // A member with no Status yet (legacy rows) counts as Active; only an
@@ -132,10 +148,11 @@ export default function PfoStatGenerator() {
   const [exporting, setExporting] = useState(false);
   const [membersRows, setMembersRows] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
-  const [leadersOnly, setLeadersOnly] = useState(false);
+  const [selectedRoles, setSelectedRoles] = useState(new Set());
   const [assignedAreaNames, setAssignedAreaNames] = useState([]);
   const [areaFilter, setAreaFilter] = useState('All');
   const [areaDropdownOpen, setAreaDropdownOpen] = useState(false);
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
   useEffect(() => {
     generateStats();
@@ -189,6 +206,15 @@ export default function PfoStatGenerator() {
     return ['All', ...Array.from(values).sort()];
   }, [membersRows, assignedAreaNames]);
 
+  // Every distinct PastoralService code actually present in the data,
+  // offered as multi-select checkboxes -- not a hardcoded list, since
+  // PastoralService is free text (Manage Members) and can carry codes
+  // beyond ROLE_LABELS.
+  const roleOptions = useMemo(() => {
+    const values = new Set(membersRows.map((m) => normalizeRole(m.PastoralService)));
+    return Array.from(values).sort();
+  }, [membersRows]);
+
   // Prefix match (same convention used across the app) so an Area named
   // "West 1C2" also covers AreaName variants like "West 1C2B"/"West 1C2D".
   function matchesAreaFilter(areaName) {
@@ -197,28 +223,46 @@ export default function PfoStatGenerator() {
     return areaFilter === 'No Area' ? !value : value.toLowerCase().startsWith(areaFilter.toLowerCase());
   }
 
+  // No roles checked means unfiltered (every role counts) -- matches the
+  // Area filter's "All" convention.
+  function matchesRoleFilter(code) {
+    if (selectedRoles.size === 0) return true;
+    return selectedRoles.has(normalizeRole(code));
+  }
+
+  function toggleRole(code) {
+    setSelectedRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
   // Non-Active members (Inactive/Deceased/SOLD/HANDMAID) are excluded from
-  // every count below, regardless of the leaders-only toggle. The Area
-  // filter narrows the same way.
+  // every count below. The Area and Role filters narrow the same way.
   const activeMembersRows = useMemo(
-    () => membersRows.filter((m) => isActiveStatus(m.Status) && matchesAreaFilter(m.AreaName)),
-    [membersRows, areaFilter]
+    () => membersRows.filter((m) => isActiveStatus(m.Status) && matchesAreaFilter(m.AreaName) && matchesRoleFilter(m.PastoralService)),
+    [membersRows, areaFilter, selectedRoles]
   );
 
-  // Denominator: everyone active, or just active members holding a non-"Member"
-  // role (Unit Head, Household Head, Chapter Leader, etc.) when the checkbox is on.
-  const activeTotalMembers = useMemo(() => {
-    if (!leadersOnly) return activeMembersRows.length;
-    return activeMembersRows.filter((m) => isNonMemberRole(m.PastoralService)).length;
-  }, [leadersOnly, activeMembersRows]);
+  const activeTotalMembers = activeMembersRows.length;
 
   // Numerator has to be drawn from the same subset as the denominator, otherwise
-  // completions from non-Active or plain "Member" rows would inflate the percentage.
-  const activePfoRows = useMemo(() => {
-    const statusFiltered = pfoRows.filter((row) => isActiveStatus(row.members?.Status) && matchesAreaFilter(row.members?.AreaName));
-    if (!leadersOnly) return statusFiltered;
-    return statusFiltered.filter((row) => isNonMemberRole(row.members?.PastoralService));
-  }, [leadersOnly, pfoRows, areaFilter]);
+  // completions from non-Active, out-of-area, or unselected-role rows would
+  // inflate the percentage.
+  const activePfoRows = useMemo(
+    () => pfoRows.filter((row) =>
+      isActiveStatus(row.members?.Status)
+      && matchesAreaFilter(row.members?.AreaName)
+      && matchesRoleFilter(row.members?.PastoralService)
+    ),
+    [pfoRows, areaFilter, selectedRoles]
+  );
+
+  const denominatorLabel = selectedRoles.size === 0
+    ? 'Total Active Members'
+    : `Total Active Members (${Array.from(selectedRoles).map(getRoleLabel).join(', ')})`;
 
   const stageResults = useMemo(() => {
     return FORMATION_STAGES.map((stage) => {
@@ -238,7 +282,6 @@ export default function PfoStatGenerator() {
   }, [activePfoRows, activeTotalMembers]);
 
   function buildTextReport() {
-    const denominatorLabel = leadersOnly ? 'Total Members (Non-"Member" Roles Only)' : 'Total Active Members';
     const lines = [`${denominatorLabel}: ${activeTotalMembers}`, ''];
 
     stageResults.forEach((stage) => {
@@ -305,48 +348,86 @@ export default function PfoStatGenerator() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>{leadersOnly ? 'Total Members (Non-"Member" Roles Only)' : 'Total Active Members'}</Text>
+        <Text style={styles.summaryLabel}>{denominatorLabel}</Text>
         <Text style={styles.summaryValue}>{activeTotalMembers}</Text>
       </View>
 
-      <TouchableOpacity style={styles.leadersOnlyRow} onPress={() => setLeadersOnly((prev) => !prev)}>
-        <View style={[styles.checkbox, leadersOnly && styles.checkboxChecked]}>
-          {leadersOnly && <Ionicons name="checkmark" size={13} color="#ffffff" />}
+      <View style={styles.filtersRow}>
+        <View style={styles.areaDropdownWrapper}>
+          <Text style={styles.fieldLabel}>Area:</Text>
+          <TouchableOpacity
+            style={styles.dropdownHeader}
+            activeOpacity={0.8}
+            onPress={() => setAreaDropdownOpen((v) => !v)}
+          >
+            <Text style={styles.dropdownHeaderText} numberOfLines={1}>{areaFilter}</Text>
+            <Ionicons name={areaDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
+          </TouchableOpacity>
+
+          {areaDropdownOpen && (
+            <View style={styles.dropdownMenuContainer}>
+              {areaOptions.map((option) => {
+                const isSelected = option === areaFilter;
+                return (
+                  <TouchableOpacity
+                    key={option}
+                    style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
+                    onPress={() => { setAreaFilter(option); setAreaDropdownOpen(false); }}
+                  >
+                    <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
+                      {option}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
-        <Text style={styles.leadersOnlyText}>
-          Only count non-&quot;Member&quot; roles (Unit Head, Household Head, Chapter Leader, etc.)
-        </Text>
-      </TouchableOpacity>
 
-      <View style={styles.areaDropdownWrapper}>
-        <Text style={styles.fieldLabel}>Area:</Text>
-        <TouchableOpacity
-          style={styles.dropdownHeader}
-          activeOpacity={0.8}
-          onPress={() => setAreaDropdownOpen((v) => !v)}
-        >
-          <Text style={styles.dropdownHeaderText} numberOfLines={1}>{areaFilter}</Text>
-          <Ionicons name={areaDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
-        </TouchableOpacity>
+        <View style={styles.areaDropdownWrapper}>
+          <Text style={styles.fieldLabel}>Roles:</Text>
+          <TouchableOpacity
+            style={styles.dropdownHeader}
+            activeOpacity={0.8}
+            onPress={() => setRoleDropdownOpen((v) => !v)}
+          >
+            <Text style={styles.dropdownHeaderText} numberOfLines={1}>
+              {selectedRoles.size === 0 ? 'All Roles' : `${selectedRoles.size} role${selectedRoles.size === 1 ? '' : 's'} selected`}
+            </Text>
+            <Ionicons name={roleDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
+          </TouchableOpacity>
 
-        {areaDropdownOpen && (
-          <View style={styles.dropdownMenuContainer}>
-            {areaOptions.map((option) => {
-              const isSelected = option === areaFilter;
-              return (
-                <TouchableOpacity
-                  key={option}
-                  style={[styles.dropdownItem, isSelected && styles.dropdownItemActive]}
-                  onPress={() => { setAreaFilter(option); setAreaDropdownOpen(false); }}
-                >
-                  <Text style={[styles.dropdownItemText, isSelected && styles.dropdownItemTextActive]} numberOfLines={1}>
-                    {option}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
+          {roleDropdownOpen && (
+            <View style={styles.dropdownMenuContainer}>
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => setSelectedRoles(new Set())}
+              >
+                <Text style={[styles.dropdownItemText, selectedRoles.size === 0 && styles.dropdownItemTextActive]}>
+                  All Roles
+                </Text>
+              </TouchableOpacity>
+              <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled>
+                {roleOptions.map((code) => {
+                  const checked = selectedRoles.has(code);
+                  return (
+                    <TouchableOpacity key={code} style={styles.dropdownCheckItem} onPress={() => toggleRole(code)}>
+                      <Ionicons
+                        name={checked ? 'checkbox' : 'square-outline'}
+                        size={16}
+                        color={checked ? '#002060' : '#94a3b8'}
+                        style={{ marginRight: 8 }}
+                      />
+                      <Text style={[styles.dropdownItemText, checked && styles.dropdownItemTextActive]} numberOfLines={1}>
+                        {getRoleLabel(code)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={styles.actionRow}>
@@ -421,17 +502,8 @@ const styles = StyleSheet.create({
   summaryLabel: { fontSize: 11, fontWeight: '700', color: '#93c5fd', textTransform: 'uppercase' },
   summaryValue: { fontSize: 30, fontWeight: '800', color: '#ffffff', marginTop: 4 },
 
-  leadersOnlyRow: {
-    flexDirection: 'row', alignItems: 'center', marginBottom: 14,
-  },
-  checkbox: {
-    width: 20, height: 20, borderRadius: 5, borderWidth: 1.5, borderColor: '#cbd5e1',
-    backgroundColor: '#ffffff', alignItems: 'center', justifyContent: 'center', marginRight: 10,
-  },
-  checkboxChecked: { backgroundColor: '#002060', borderColor: '#002060' },
-  leadersOnlyText: { flex: 1, fontSize: 12, fontWeight: '600', color: '#334155', lineHeight: 17 },
-
-  areaDropdownWrapper: { zIndex: 10, marginBottom: 14, maxWidth: 260 },
+  filtersRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 14, zIndex: 10 },
+  areaDropdownWrapper: { zIndex: 10, flexGrow: 1, flexBasis: 200, maxWidth: 260 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -440,10 +512,17 @@ const styles = StyleSheet.create({
   },
   dropdownHeaderText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#1e293b' },
   dropdownMenuContainer: {
-    marginTop: 6, backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
-    maxHeight: 220, overflow: 'hidden',
+    position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 6,
+    backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
+    maxHeight: 260, overflow: 'hidden',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8,
+    elevation: 8,
   },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  dropdownCheckItem: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
+  },
   dropdownItemActive: { backgroundColor: '#eff6ff' },
   dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
   dropdownItemTextActive: { color: '#002060', fontWeight: '700' },
