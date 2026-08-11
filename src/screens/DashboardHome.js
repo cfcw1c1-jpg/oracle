@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Platform,
   ScrollView,
   StyleSheet,
@@ -207,6 +208,7 @@ export default function DashboardHome({ onNavigate }) {
 
   const email = sessionUser?.email || 'Portal Administrator';
   const initials = email.slice(0, 2).toUpperCase();
+  const avatarUrl = sessionUser?.user_metadata?.avatar_url;
   const weekday = now.toLocaleDateString('en-US', { weekday: 'long' });
   const dateTimeLabel = now.toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -311,9 +313,13 @@ export default function DashboardHome({ onNavigate }) {
             <View style={styles.profileHeaderRow}>
               <Text style={styles.cardTitleOnDark}>My Profile</Text>
             </View>
-            <View style={styles.profileAvatar}>
-              <Text style={styles.profileAvatarText}>{initials}</Text>
-            </View>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.profileAvatarImage} />
+            ) : (
+              <View style={styles.profileAvatar}>
+                <Text style={styles.profileAvatarText}>{initials}</Text>
+              </View>
+            )}
             <Text style={styles.profileEmail} numberOfLines={1}>{email}</Text>
             <Text style={styles.profileRole}>CFC ORACLE PORTAL</Text>
 
@@ -437,6 +443,9 @@ const styles = StyleSheet.create({
   profileAvatar: {
     width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center', alignItems: 'center', marginBottom: 10,
+  },
+  profileAvatarImage: {
+    width: 64, height: 64, borderRadius: 32, marginBottom: 10, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)',
   },
   profileAvatarText: { color: '#ffffff', fontSize: 22, fontWeight: '800' },
   profileEmail: { color: '#ffffff', fontSize: 14, fontWeight: '700', maxWidth: '100%' },

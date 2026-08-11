@@ -99,6 +99,12 @@ export default function ProfileScreen() {
       const { error: updateError } = await supabase.auth.updateUser({ data: { avatar_url: avatarUrl } });
       if (updateError) throw updateError;
 
+      // Also mirrored onto profiles.avatar_url -- auth.users.user_metadata
+      // is only readable for your own session, but other accounts need to
+      // see this picture too (Messages, Portal Users, etc.).
+      const { error: profileError } = await supabase.from('profiles').update({ avatar_url: avatarUrl }).eq('id', user.id);
+      if (profileError) throw profileError;
+
       setUser((prev) => ({ ...prev, user_metadata: { ...prev.user_metadata, avatar_url: avatarUrl } }));
       showAlert('Success', 'Profile picture updated.');
     } catch (err) {

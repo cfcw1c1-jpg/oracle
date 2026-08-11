@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   ScrollView,
@@ -40,6 +41,17 @@ function formatTimestamp(iso) {
 function getInitials(name, email) {
   const source = (name || email || '?').trim();
   return source.slice(0, 2).toUpperCase();
+}
+
+function Avatar({ avatarUrl, name, email }) {
+  if (avatarUrl) {
+    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
+  }
+  return (
+    <View style={styles.avatar}>
+      <Text style={styles.avatarText}>{getInitials(name, email)}</Text>
+    </View>
+  );
 }
 
 // Direct messaging between any two portal accounts, independent of role or
@@ -210,6 +222,18 @@ export default function Messages({ onConversationsChanged }) {
     }
   }
 
+  // On web, a multiline TextInput's Enter key inserts a newline instead of
+  // firing onSubmitEditing -- intercept it here so Enter sends the message,
+  // while Shift+Enter still inserts a literal newline as usual.
+  function handleComposeKeyPress(e) {
+    if (Platform.OS !== 'web') return;
+    const nativeEvent = e.nativeEvent || {};
+    if (nativeEvent.key === 'Enter' && !nativeEvent.shiftKey) {
+      e.preventDefault?.();
+      handleSend();
+    }
+  }
+
   useEffect(() => {
     if (userSearchQuery.trim().length >= 2) searchUsers(userSearchQuery);
     else setUserSearchResults([]);
@@ -219,7 +243,7 @@ export default function Messages({ onConversationsChanged }) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, full_name')
+        .select('id, email, full_name, avatar_url')
         .or(`email.ilike.%${query}%,full_name.ilike.%${query}%`)
         .limit(10);
       if (error) throw error;
@@ -320,9 +344,7 @@ export default function Messages({ onConversationsChanged }) {
                       style={[styles.conversationRow, isSelected && styles.conversationRowActive]}
                       onPress={() => openConversation(c.conversation_id)}
                     >
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{getInitials(c.other_full_name, c.other_email)}</Text>
-                      </View>
+                      <Avatar avatarUrl={c.other_avatar_url} name={c.other_full_name} email={c.other_email} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                           <Text style={styles.conversationName} numberOfLines={1}>{displayName}</Text>
@@ -362,9 +384,11 @@ export default function Messages({ onConversationsChanged }) {
                       <Ionicons name="chevron-back" size={20} color="#334155" />
                     </TouchableOpacity>
                   )}
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{getInitials(selectedConversation.other_full_name, selectedConversation.other_email)}</Text>
-                  </View>
+                  <Avatar
+                    avatarUrl={selectedConversation.other_avatar_url}
+                    name={selectedConversation.other_full_name}
+                    email={selectedConversation.other_email}
+                  />
                   <Text style={styles.threadHeaderName} numberOfLines={1}>
                     {selectedConversation.other_full_name || selectedConversation.other_email || 'Portal User'}
                   </Text>
@@ -399,6 +423,7 @@ export default function Messages({ onConversationsChanged }) {
                     value={composeText}
                     onChangeText={setComposeText}
                     onSubmitEditing={handleSend}
+                    onKeyPress={handleComposeKeyPress}
                     returnKeyType="send"
                     multiline
                   />
@@ -458,9 +483,7 @@ export default function Messages({ onConversationsChanged }) {
               {startingConversation && <ActivityIndicator color={NAVY} style={{ marginVertical: 12 }} />}
               {!startingConversation && userSearchResults.map((p) => (
                 <TouchableOpacity key={p.id} style={styles.userResultRow} onPress={() => handleStartConversation(p)}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{getInitials(p.full_name, p.email)}</Text>
-                  </View>
+                  <Avatar avatarUrl={p.avatar_url} name={p.full_name} email={p.email} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.userResultName} numberOfLines={1}>{p.full_name || p.email}</Text>
                     {!!p.full_name && <Text style={styles.userResultEmail} numberOfLines={1}>{p.email}</Text>}
