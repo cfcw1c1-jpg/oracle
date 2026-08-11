@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
   Image,
+  Linking,
+  Modal,
   Platform,
   SafeAreaView,
   StyleSheet,
@@ -22,6 +24,7 @@ import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP 
 import DashboardHome from '../screens/DashboardHome';
 import ImportCsv from '../screens/ImportCsv';
 import MembersList from '../screens/MembersList';
+import Messages from '../screens/Messages';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
@@ -151,17 +154,29 @@ export default function Page() {
   const [access, setAccess] = useState(null);
   const [accessLoading, setAccessLoading] = useState(true);
 
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [messageToast, setMessageToast] = useState(null);
+  const [disclaimerVisible, setDisclaimerVisible] = useState(false);
+  const currentTabRef = useRef(currentTab);
+
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    currentTabRef.current = currentTab;
+  }, [currentTab]);
 
   useEffect(() => {
     // Listen for auth state changes
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
     });
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
+      // Only a real sign-in action should trigger the disclaimer -- not a
+      // page refresh restoring an already-persisted session.
+      if (event === 'SIGNED_IN') setDisclaimerVisible(true);
     });
 
     // Handle screen resize events (critical for web testing & rotation)
@@ -206,6 +221,64 @@ export default function Page() {
     }
   }
 
+  async function loadUnreadMessageCount() {
+    try {
+      const { data, error } = await supabase.rpc('get_my_conversations');
+      if (error) throw error;
+      setUnreadMessageCount((data || []).reduce((sum, c) => sum + (c.unread_count || 0), 0));
+    } catch (err) {
+      console.error('Error loading unread message count:', err.message);
+    }
+  }
+
+  // Messaging: an app-wide subscription (independent of whether the
+  // Messages screen is mounted) drives the sidebar/header unread badge and
+  // a toast when a message arrives while the account is looking at
+  // something else. RLS on "messages" limits delivery to rows this
+  // account can actually see (its own conversations), so no manual
+  // filtering by conversation id is needed here.
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setUnreadMessageCount(0);
+      return undefined;
+    }
+
+    loadUnreadMessageCount();
+
+    const channel = supabase
+      .channel('global_messages_watch')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        async (payload) => {
+          if (payload.new.sender_id === session.user.id) return;
+          loadUnreadMessageCount();
+          if (currentTabRef.current !== 'messages') {
+            const { data: senderProfile } = await supabase
+              .from('profiles')
+              .select('full_name, email')
+              .eq('id', payload.new.sender_id)
+              .maybeSingle();
+            setMessageToast({
+              name: senderProfile?.full_name || senderProfile?.email || 'Someone',
+              body: payload.new.body,
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!messageToast) return undefined;
+    const timer = setTimeout(() => setMessageToast(null), 5000);
+    return () => clearTimeout(timer);
+  }, [messageToast]);
+
   if (!session) {
     return <Login />;
   }
@@ -248,6 +321,18 @@ export default function Page() {
         </View>
 
         <View style={styles.headerRight}>
+          <TouchableOpacity
+            style={styles.headerMessagesButton}
+            onPress={() => handleSelectTab('messages')}
+          >
+            <Ionicons name="chatbubbles-outline" size={20} color="#fff" />
+            {unreadMessageCount > 0 && (
+              <View style={styles.headerMessagesBadge}>
+                <Text style={styles.headerMessagesBadgeText}>{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.headerAvatarButton}
             onPress={() => handleSelectTab('profile')}
@@ -328,6 +413,7 @@ export default function Page() {
           {currentTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {currentTab === 'predictor' && <PredictorScreen />}
           {currentTab === 'profile' && <ProfileScreen />}
+          {currentTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
           {NAV_ITEMS.some((item) => item.key === currentTab) && !canView(currentTab) && (
             <View style={styles.noAccessWrap}>
               <Ionicons name="lock-closed-outline" size={28} color="#94a3b8" />
@@ -382,6 +468,76 @@ export default function Page() {
           )}
         </View>
       )}
+
+      {messageToast && (
+        <TouchableOpacity
+          style={styles.toast}
+          activeOpacity={0.9}
+          onPress={() => { setMessageToast(null); handleSelectTab('messages'); }}
+        >
+          <Ionicons name="chatbubble-ellipses" size={18} color="#60a5fa" style={styles.toastIcon} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.toastName} numberOfLines={1}>{messageToast.name}</Text>
+            <Text style={styles.toastBody} numberOfLines={2}>{messageToast.body}</Text>
+          </View>
+          <TouchableOpacity style={styles.toastClose} onPress={() => setMessageToast(null)}>
+            <Ionicons name="close" size={16} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      )}
+
+      <Modal visible={disclaimerVisible} transparent animationType="fade" onRequestClose={() => setDisclaimerVisible(false)}>
+        <View style={styles.disclaimerOverlay}>
+          <View style={styles.disclaimerCard}>
+            <View style={styles.disclaimerIconRing}>
+              <Ionicons name="information-circle-outline" size={26} color="#002060" />
+            </View>
+            <Text style={styles.disclaimerTitle}>Before You Continue</Text>
+
+            <Text style={styles.disclaimerText}>
+              This application is not intended to replace the official OGD portal. It is only being used as a
+              tool to generate reports.
+            </Text>
+            <Text style={styles.disclaimerText}>
+              Because of this, it should always be kept up to date whenever there are changes or movement in
+              the OGD data.
+            </Text>
+            <Text style={styles.disclaimerText}>
+              If you have any concerns, please don&apos;t hesitate to message the moderators — they&apos;ll get back to
+              you as soon as they see it.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.disclaimerEmailRow}
+              onPress={() => Linking.openURL('mailto:bryanmunoz28@yahoo.com')}
+            >
+              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+              <Text style={styles.disclaimerEmailText}>bryanmunoz28@yahoo.com</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.disclaimerEmailRow}
+              onPress={() => Linking.openURL('mailto:markjosephreyes1513@gmail.com')}
+            >
+              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+              <Text style={styles.disclaimerEmailText}>markjosephreyes1513@gmail.com</Text>
+            </TouchableOpacity>
+
+            <View style={styles.disclaimerActions}>
+              <TouchableOpacity
+                style={styles.disclaimerSecondaryBtn}
+                onPress={() => { setDisclaimerVisible(false); handleSelectTab('messages'); }}
+              >
+                <Ionicons name="chatbubbles-outline" size={14} color="#002060" style={{ marginRight: 6 }} />
+                <Text style={styles.disclaimerSecondaryBtnText}>Message a Moderator</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.disclaimerPrimaryBtn} onPress={() => setDisclaimerVisible(false)}>
+                <Text style={styles.disclaimerPrimaryBtnText}>I Understand</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -397,6 +553,54 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: 2 },
   headerSubtitle: { fontSize: 11, color: '#93c5fd', marginLeft: 10, letterSpacing: 1, fontWeight: '500', marginTop: 4 },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
+  headerMessagesButton: { marginRight: 14, padding: 4, position: 'relative' },
+  headerMessagesBadge: {
+    position: 'absolute', top: -2, right: -4, backgroundColor: '#ef4444', borderRadius: 9,
+    minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+    borderWidth: 1.5, borderColor: '#002060',
+  },
+  headerMessagesBadgeText: { color: '#ffffff', fontSize: 9, fontWeight: '800' },
+
+  toast: {
+    position: 'absolute', top: 70, right: 16, maxWidth: 340, backgroundColor: '#0f172a', borderRadius: 12,
+    paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'flex-start', zIndex: 200,
+    ...Platform.select({
+      web: { boxShadow: '0 8px 24px rgba(2,6,23,0.35)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 10 },
+    }),
+  },
+  toastIcon: { marginRight: 10, marginTop: 2 },
+  toastName: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
+  toastBody: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 },
+  toastClose: { marginLeft: 10, padding: 2 },
+
+  disclaimerOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  disclaimerCard: {
+    backgroundColor: '#ffffff', borderRadius: 18, padding: 22, width: '100%', maxWidth: 440,
+    ...Platform.select({
+      web: { boxShadow: '0 12px 32px rgba(2,6,23,0.3)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 12 },
+    }),
+  },
+  disclaimerIconRing: {
+    width: 48, height: 48, borderRadius: 24, backgroundColor: '#eff6ff',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+  },
+  disclaimerTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 12 },
+  disclaimerText: { fontSize: 13, color: '#334155', lineHeight: 19, marginBottom: 10 },
+  disclaimerEmailRow: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#f8fafc',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, marginTop: 4, marginBottom: 4,
+  },
+  disclaimerEmailText: { fontSize: 12, fontWeight: '700', color: '#334155' },
+  disclaimerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 16 },
+  disclaimerSecondaryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#eff6ff',
+    borderWidth: 1, borderColor: '#bfdbfe', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11, flex: 1,
+  },
+  disclaimerSecondaryBtnText: { fontSize: 13, fontWeight: '700', color: '#002060' },
+  disclaimerPrimaryBtn: { backgroundColor: '#002060', borderRadius: 10, paddingHorizontal: 18, paddingVertical: 11, flex: 1, alignItems: 'center' },
+  disclaimerPrimaryBtnText: { fontSize: 13, fontWeight: '700', color: '#ffffff' },
   headerAvatarButton: { marginRight: 12 },
   headerAvatarImage: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
   headerAvatarFallback: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#1e3a8a', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' },
