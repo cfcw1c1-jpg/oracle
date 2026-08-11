@@ -97,28 +97,33 @@ function getDescendantIds(areas, rootId) {
   return ids;
 }
 
-// The "# Members" column counts rows from the members table itself —
-// members."AreaName" LIKE '{area.name}%' — rather than the admin-curated
-// area_members roster, so it reflects the actual Directory data (and
-// matches sub-variants like "West 1A"/"West 1 - Unit 3" under an Area
-// named "West 1").
-function countMembersByAreaPrefix(memberAreaNames, areaName) {
+// Both the "# Members" badge and the "Members Under This Area" list in the
+// manage modal are derived the same way — from the members table itself,
+// members."AreaName" LIKE '{area.name}%' — rather than a separately curated
+// roster, so the two always agree and both reflect the actual Directory
+// data (and match sub-variants like "West 1A"/"West 1 - Unit 3" under an
+// Area named "West 1").
+function matchesAreaPrefix(memberAreaName, areaName) {
   const prefix = (areaName || '').trim().toLowerCase();
-  if (!prefix) return 0;
-  let count = 0;
-  for (const name of memberAreaNames) {
-    if (name && name.trim().toLowerCase().startsWith(prefix)) count += 1;
-  }
-  return count;
+  if (!prefix) return false;
+  return (memberAreaName || '').trim().toLowerCase().startsWith(prefix);
+}
+
+function countMembersByAreaPrefix(allMembers, areaName) {
+  return allMembers.filter((m) => isActiveStatus(m.Status) && matchesAreaPrefix(m.AreaName, areaName)).length;
+}
+
+function getMembersByAreaPrefix(allMembers, areaName) {
+  return allMembers
+    .filter((m) => isActiveStatus(m.Status) && matchesAreaPrefix(m.AreaName, areaName))
+    .sort((a, b) => (a.Lastname || '').localeCompare(b.Lastname || ''));
 }
 
 export default function Areas() {
   const [loading, setLoading] = useState(true);
   const [areas, setAreas] = useState([]);
-  const [memberAreaNames, setMemberAreaNames] = useState([]);
+  const [allMembers, setAllMembers] = useState([]);
   const [selectedAreaId, setSelectedAreaId] = useState(null);
-  const [areaMembers, setAreaMembers] = useState([]);
-  const [loadingAreaMembers, setLoadingAreaMembers] = useState(false);
 
   const [manageModalVisible, setManageModalVisible] = useState(false);
 
@@ -133,32 +138,19 @@ export default function Areas() {
   const [headSearchResults, setHeadSearchResults] = useState([]);
   const headSearchInputRef = useRef(null);
 
-  const [memberSearchQuery, setMemberSearchQuery] = useState('');
-  const [memberSearchResults, setMemberSearchResults] = useState([]);
-  const memberSearchInputRef = useRef(null);
-
   useEffect(() => {
     loadAreas();
   }, []);
 
   useEffect(() => {
-    if (selectedAreaId) loadAreaMembers(selectedAreaId);
-    else setAreaMembers([]);
     setHeadSearchQuery('');
     setHeadSearchResults([]);
-    setMemberSearchQuery('');
-    setMemberSearchResults([]);
   }, [selectedAreaId]);
 
   useEffect(() => {
     if (headSearchQuery.trim().length >= 2) searchMembers(headSearchQuery, setHeadSearchResults);
     else setHeadSearchResults([]);
   }, [headSearchQuery]);
-
-  useEffect(() => {
-    if (memberSearchQuery.trim().length >= 2) searchMembers(memberSearchQuery, setMemberSearchResults);
-    else setMemberSearchResults([]);
-  }, [memberSearchQuery]);
 
   async function loadAreas() {
     try {
@@ -168,37 +160,16 @@ export default function Areas() {
           .from('areas')
           .select('id, name, type, parent_id, head_member_id, members ( Firstname, Lastname )')
           .order('name'),
-        supabase.from('members').select('AreaName, Status'),
+        supabase.from('members').select('MemberIDNo, Firstname, Lastname, AreaName, Status'),
       ]);
       if (areasRes.error) throw areasRes.error;
       if (membersRes.error) throw membersRes.error;
       setAreas(areasRes.data || []);
-      setMemberAreaNames(
-        (membersRes.data || [])
-          .filter((m) => isActiveStatus(m.Status))
-          .map((m) => m.AreaName)
-          .filter(Boolean)
-      );
+      setAllMembers(membersRes.data || []);
     } catch (err) {
       showAlert('Error Loading Areas', err.message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function loadAreaMembers(areaId) {
-    try {
-      setLoadingAreaMembers(true);
-      const { data, error } = await supabase
-        .from('area_members')
-        .select('id, member_id, members ( Firstname, Lastname )')
-        .eq('area_id', areaId);
-      if (error) throw error;
-      setAreaMembers(data || []);
-    } catch (err) {
-      showAlert('Error Loading Area Members', err.message);
-    } finally {
-      setLoadingAreaMembers(false);
     }
   }
 
@@ -317,37 +288,10 @@ export default function Areas() {
     }
   }
 
-  async function addAreaMember(member) {
-    if (!selectedAreaId) return;
-    try {
-      const { error } = await supabase
-        .from('area_members')
-        .insert([{ area_id: selectedAreaId, member_id: member.MemberIDNo }]);
-      if (error) throw error;
-      setMemberSearchQuery('');
-      setMemberSearchResults([]);
-      await loadAreaMembers(selectedAreaId);
-    } catch (err) {
-      showAlert('Error Adding Member', err.message);
-    }
-  }
-
-  function removeAreaMember(row) {
-    confirmAction('Remove Member', 'Remove this member from the area?', async () => {
-      try {
-        const { error } = await supabase.from('area_members').delete().eq('id', row.id);
-        if (error) throw error;
-        await loadAreaMembers(selectedAreaId);
-      } catch (err) {
-        showAlert('Error Removing Member', err.message);
-      }
-    });
-  }
-
   const tree = buildAreaTree(areas);
   const selectedArea = areas.find((a) => a.id === selectedAreaId) || null;
   const stagedHeadIds = new Set(selectedArea?.head_member_id ? [selectedArea.head_member_id] : []);
-  const stagedMemberIds = new Set(areaMembers.map((m) => m.member_id));
+  const derivedAreaMembers = selectedArea ? getMembersByAreaPrefix(allMembers, selectedArea.name) : [];
 
   function handleExportAreas() {
     const rows = tree.map((area) => ({
@@ -355,7 +299,7 @@ export default function Areas() {
       type: area.type,
       parent: areas.find((a) => a.id === area.parent_id)?.name || '',
       head: area.members ? `${area.members.Firstname} ${area.members.Lastname}` : '',
-      members: countMembersByAreaPrefix(memberAreaNames, area.name),
+      members: countMembersByAreaPrefix(allMembers, area.name),
     }));
     exportCsv('areas', [
       { key: 'name', label: 'Area' },
@@ -406,7 +350,7 @@ export default function Areas() {
               {tree.map((area) => {
                 const headName = area.members ? `${area.members.Firstname} ${area.members.Lastname}` : null;
                 const typeStyle = AREA_TYPE_STYLES[area.type];
-                const memberCount = countMembersByAreaPrefix(memberAreaNames, area.name);
+                const memberCount = countMembersByAreaPrefix(allMembers, area.name);
 
                 return (
                   <TouchableOpacity
@@ -489,42 +433,25 @@ export default function Areas() {
 
               <View style={styles.divider} />
 
-              <Text style={styles.subSectionLabel}>Members Under This Area ({areaMembers.length})</Text>
-              <View style={styles.searchBox}>
-                <Ionicons name="search-outline" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
-                <TextInput
-                  ref={memberSearchInputRef}
-                  style={styles.searchInput}
-                  placeholder="Search member to add..."
-                  placeholderTextColor="#94a3b8"
-                  value={memberSearchQuery}
-                  onChangeText={setMemberSearchQuery}
-                />
-              </View>
-              {memberSearchResults.filter((m) => !stagedMemberIds.has(m.MemberIDNo)).map((m) => (
-                <TouchableOpacity key={m.MemberIDNo} style={styles.optionRow} onPress={() => addAreaMember(m)}>
-                  <Ionicons name="person-add-outline" size={16} color={ACCENT_BLUE} style={{ marginRight: 10 }} />
-                  <Text style={styles.optionRowText}>{m.Firstname} {m.Lastname}</Text>
-                </TouchableOpacity>
-              ))}
+              <Text style={styles.subSectionLabel}>Members Under This Area ({derivedAreaMembers.length})</Text>
+              <Text style={styles.hintText}>
+                Matched automatically from the Directory by Area name — same list the “{derivedAreaMembers.length} member{derivedAreaMembers.length === 1 ? '' : 's'}” badge counts. To move a member in or out, edit their Area from Manage Members.
+              </Text>
 
-              {loadingAreaMembers ? (
-                <ActivityIndicator color={NAVY} style={{ marginTop: 12 }} />
-              ) : (
-                areaMembers.map((row, index) => (
-                  <TableRow key={row.id} style={styles.compactRow} last={index === areaMembers.length - 1}>
-                    <IconBadge name="person-outline" size={28} />
-                    <Text style={[styles.mainText, { flex: 1, marginLeft: 10 }]}>
-                      {row.members?.Firstname} {row.members?.Lastname}
-                    </Text>
-                    <TouchableOpacity onPress={() => removeAreaMember(row)}>
-                      <Ionicons name="close-circle" size={18} color="#ef4444" />
-                    </TouchableOpacity>
-                  </TableRow>
-                ))
+              {derivedAreaMembers.slice(0, 50).map((m, index) => (
+                <TableRow key={m.MemberIDNo} style={styles.compactRow} last={index === Math.min(derivedAreaMembers.length, 50) - 1}>
+                  <IconBadge name="person-outline" size={28} />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={styles.mainText}>{m.Lastname}, {m.Firstname}</Text>
+                    <Text style={styles.subText}>{m.AreaName}</Text>
+                  </View>
+                </TableRow>
+              ))}
+              {derivedAreaMembers.length > 50 && (
+                <Text style={styles.hintText}>+{derivedAreaMembers.length - 50} more — see Manage Members for the full list.</Text>
               )}
-              {!loadingAreaMembers && areaMembers.length === 0 && (
-                <Text style={styles.hintText}>No members assigned under this area yet.</Text>
+              {derivedAreaMembers.length === 0 && (
+                <Text style={styles.hintText}>No members in the Directory match this Area yet.</Text>
               )}
             </ScrollView>
 

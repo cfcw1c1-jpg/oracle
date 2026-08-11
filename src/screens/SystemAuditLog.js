@@ -129,7 +129,14 @@ export default function SystemAuditLog() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'audit_log' },
         (payload) => {
-          setLogs((prev) => [payload.new, ...prev].slice(0, 500));
+          // The initial load and this subscription both start around mount
+          // time, and opening this very page logs a PAGE_VIEW row right
+          // then -- that insert can land in both the initial select() and
+          // this realtime event, so guard against adding the same row twice
+          // (which would otherwise produce a duplicate React key below).
+          setLogs((prev) => (
+            prev.some((l) => l.id === payload.new.id) ? prev : [payload.new, ...prev].slice(0, 500)
+          ));
         }
       )
       .subscribe();

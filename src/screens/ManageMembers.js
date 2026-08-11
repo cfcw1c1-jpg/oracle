@@ -234,7 +234,8 @@ export default function ManageMembers() {
       const first = (m.Firstname || '').toLowerCase();
       const last = (m.Lastname || '').toLowerCase();
       const id = (m.MemberIDNo || '').toString().toLowerCase();
-      return first.includes(q) || last.includes(q) || id.includes(q);
+      const area = (m.AreaName || '').toLowerCase();
+      return first.includes(q) || last.includes(q) || id.includes(q) || area.includes(q);
     });
   }, [members, searchQuery]);
 
@@ -384,7 +385,7 @@ export default function ManageMembers() {
           <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search name or ID..."
+            placeholder="Search name, ID, or Area..."
             placeholderTextColor="#94a3b8"
             value={searchQuery}
             onChangeText={setSearchQuery}
