@@ -119,6 +119,15 @@ function getMembersByAreaPrefix(allMembers, areaName) {
     .sort((a, b) => (a.Lastname || '').localeCompare(b.Lastname || ''));
 }
 
+// For a Chapter-type area, the natural head candidates are its own members
+// already tagged "CH" (Chapter Head) in the Directory's Pastoral Service
+// field -- Sector/Cluster have no equivalent role code, so head assignment
+// for those stays a plain member search.
+function getChapterHeadCandidates(allMembers, areaName) {
+  return getMembersByAreaPrefix(allMembers, areaName)
+    .filter((m) => (m.PastoralService || '').trim().toUpperCase() === 'CH');
+}
+
 export default function Areas() {
   const [loading, setLoading] = useState(true);
   const [areas, setAreas] = useState([]);
@@ -160,7 +169,7 @@ export default function Areas() {
           .from('areas')
           .select('id, name, type, parent_id, head_member_id, members ( Firstname, Lastname )')
           .order('name'),
-        supabase.from('members').select('MemberIDNo, Firstname, Lastname, AreaName, Status'),
+        supabase.from('members').select('MemberIDNo, Firstname, Lastname, AreaName, Status, PastoralService'),
       ]);
       if (areasRes.error) throw areasRes.error;
       if (membersRes.error) throw membersRes.error;
@@ -292,6 +301,9 @@ export default function Areas() {
   const selectedArea = areas.find((a) => a.id === selectedAreaId) || null;
   const stagedHeadIds = new Set(selectedArea?.head_member_id ? [selectedArea.head_member_id] : []);
   const derivedAreaMembers = selectedArea ? getMembersByAreaPrefix(allMembers, selectedArea.name) : [];
+  const chapterHeadCandidates = selectedArea?.type === 'Chapter'
+    ? getChapterHeadCandidates(allMembers, selectedArea.name).filter((m) => !stagedHeadIds.has(m.MemberIDNo))
+    : [];
 
   function handleExportAreas() {
     const rows = tree.map((area) => ({
@@ -413,12 +425,33 @@ export default function Areas() {
               ) : (
                 <Text style={styles.hintText}>No head assigned yet.</Text>
               )}
+
+              {selectedArea?.type === 'Chapter' && (
+                <>
+                  <Text style={styles.hintText}>
+                    Tagged &quot;Chapter Head&quot; under this Area:
+                  </Text>
+                  {chapterHeadCandidates.length === 0 ? (
+                    <Text style={styles.hintText}>
+                      None yet — set a member&apos;s Pastoral Service to &quot;CH&quot; from Manage Members, or search below.
+                    </Text>
+                  ) : (
+                    chapterHeadCandidates.map((m) => (
+                      <TouchableOpacity key={m.MemberIDNo} style={styles.optionRow} onPress={() => assignHead(m)}>
+                        <Ionicons name="ribbon-outline" size={16} color={ACCENT_BLUE} style={{ marginRight: 10 }} />
+                        <Text style={styles.optionRowText}>{m.Lastname}, {m.Firstname}</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </>
+              )}
+
               <View style={styles.searchBox}>
                 <Ionicons name="search-outline" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
                 <TextInput
                   ref={headSearchInputRef}
                   style={styles.searchInput}
-                  placeholder="Search member to assign as head..."
+                  placeholder={selectedArea?.type === 'Chapter' ? 'Search any other member...' : 'Search member to assign as head...'}
                   placeholderTextColor="#94a3b8"
                   value={headSearchQuery}
                   onChangeText={setHeadSearchQuery}

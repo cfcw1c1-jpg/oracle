@@ -43,3 +43,7 @@ example
 /android
 .vercel
 .env*
+
+# Supabase CLI local cache (project link, downloaded service versions) --
+# machine-specific state, not part of the function code.
+supabase/.temp/

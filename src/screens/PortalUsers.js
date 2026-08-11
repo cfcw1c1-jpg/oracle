@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   useWindowDimensions,
   View,
@@ -46,6 +47,26 @@ function showAlert(title, message) {
   } else {
     Alert.alert(title, message);
   }
+}
+
+// A random 14-char password with at least one of each character class, for
+// the "Generate" button on the Add User form -- Supabase Auth's own minimum
+// is 6 characters, but a generated one may as well be strong by default.
+function generatePassword() {
+  const lowers = 'abcdefghijkmnopqrstuvwxyz';
+  const uppers = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const symbols = '!@#$%&*';
+  const all = lowers + uppers + digits + symbols;
+  const pick = (pool) => pool[Math.floor(Math.random() * pool.length)];
+  const chars = [pick(lowers), pick(uppers), pick(digits), pick(symbols)];
+  while (chars.length < 14) chars.push(pick(all));
+  // Shuffle so the guaranteed classes aren't always in the same position.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
 }
 
 // An area can't be re-parented onto itself or its own descendants, but for
@@ -88,6 +109,14 @@ export default function PortalUsers({ onAccessChanged }) {
   const [areasModalVisible, setAreasModalVisible] = useState(false);
   const [targetProfile, setTargetProfile] = useState(null);
   const [saving, setSaving] = useState(false);
+
+  const [addUserModalVisible, setAddUserModalVisible] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserFullName, setNewUserFullName] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserShowPassword, setNewUserShowPassword] = useState(false);
+  const [newUserRoleId, setNewUserRoleId] = useState(null);
+  const [creatingUser, setCreatingUser] = useState(false);
 
   useEffect(() => {
     loadAll();
@@ -146,6 +175,67 @@ export default function PortalUsers({ onAccessChanged }) {
       showAlert('Error Assigning Role', err.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openAddUserModal() {
+    setNewUserEmail('');
+    setNewUserFullName('');
+    setNewUserPassword(generatePassword());
+    setNewUserShowPassword(true);
+    setNewUserRoleId(null);
+    setAddUserModalVisible(true);
+  }
+
+  function closeAddUserModal() {
+    if (creatingUser) return;
+    setAddUserModalVisible(false);
+  }
+
+  // The actual account creation runs server-side (see
+  // supabase/functions/create-portal-user) since it needs the service_role
+  // key to call the Auth admin API -- something that must never live in
+  // this client bundle. This client only ever calls the Edge Function with
+  // the signed-in admin's own JWT, which the function re-verifies itself.
+  async function handleCreateUser() {
+    const email = newUserEmail.trim();
+    const password = newUserPassword;
+    if (!email) {
+      showAlert('Missing Email', 'Enter an email address for the new account.');
+      return;
+    }
+    if (password.length < 6) {
+      showAlert('Weak Password', 'Password must be at least 6 characters.');
+      return;
+    }
+
+    setCreatingUser(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('create-portal-user', {
+        body: { email, password, full_name: newUserFullName.trim() },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      if (newUserRoleId) {
+        const { error: roleError } = await supabase
+          .from('profiles')
+          .update({ role_id: newUserRoleId })
+          .eq('id', data.id);
+        if (roleError) throw roleError;
+      }
+
+      setAddUserModalVisible(false);
+      await loadAll();
+      onAccessChanged?.();
+      showAlert(
+        'Account Created',
+        `${email} can now sign in with the password you set. Share it with them directly -- it won't be shown again here. Assign Areas from the table if needed.`
+      );
+    } catch (err) {
+      showAlert('Error Creating Account', err.message);
+    } finally {
+      setCreatingUser(false);
     }
   }
 
@@ -209,7 +299,15 @@ export default function PortalUsers({ onAccessChanged }) {
         <TableCard
           style={styles.fillCard}
           title={`${profiles.length} Account${profiles.length === 1 ? '' : 's'}`}
-          right={<ExportButton onPress={handleExport} />}
+          right={
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <ExportButton onPress={handleExport} />
+              <TouchableOpacity style={styles.addUserBtn} onPress={openAddUserModal}>
+                <Ionicons name="person-add-outline" size={14} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.addUserBtnText}>Add User</Text>
+              </TouchableOpacity>
+            </View>
+          }
         >
           {!isNarrow && (
             <TableHeaderRow
@@ -361,6 +459,102 @@ export default function PortalUsers({ onAccessChanged }) {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={addUserModalVisible} transparent animationType="fade" onRequestClose={closeAddUserModal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Add User</Text>
+            <Text style={styles.hintText}>
+              Creates a real sign-in account directly -- share the password with them yourself, it is not emailed.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 420, marginTop: 8 }}>
+              <Text style={styles.fieldLabel}>Email *</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="name@example.com"
+                placeholderTextColor="#94a3b8"
+                value={newUserEmail}
+                onChangeText={setNewUserEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                editable={!creatingUser}
+              />
+
+              <Text style={styles.fieldLabel}>Full Name</Text>
+              <TextInput
+                style={styles.textInput}
+                placeholder="Optional"
+                placeholderTextColor="#94a3b8"
+                value={newUserFullName}
+                onChangeText={setNewUserFullName}
+                editable={!creatingUser}
+              />
+
+              <Text style={styles.fieldLabel}>Password *</Text>
+              <View style={styles.passwordRow}>
+                <TextInput
+                  style={[styles.textInput, styles.passwordInput]}
+                  value={newUserPassword}
+                  onChangeText={setNewUserPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry={!newUserShowPassword}
+                  editable={!creatingUser}
+                />
+                <TouchableOpacity
+                  style={styles.passwordIconBtn}
+                  onPress={() => setNewUserShowPassword((v) => !v)}
+                  disabled={creatingUser}
+                >
+                  <Ionicons name={newUserShowPassword ? 'eye-off-outline' : 'eye-outline'} size={16} color="#64748b" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.passwordIconBtn}
+                  onPress={() => { setNewUserPassword(generatePassword()); setNewUserShowPassword(true); }}
+                  disabled={creatingUser}
+                >
+                  <Ionicons name="refresh-outline" size={16} color="#64748b" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.optionRowSubtext}>At least 6 characters. A strong one is pre-filled -- tap refresh for another.</Text>
+
+              <Text style={styles.fieldLabel}>Role (optional)</Text>
+              <View style={{ borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, maxHeight: 160 }}>
+                <ScrollView>
+                  <TouchableOpacity
+                    style={[styles.optionRow, newUserRoleId === null && styles.optionRowActive]}
+                    onPress={() => setNewUserRoleId(null)}
+                    disabled={creatingUser}
+                  >
+                    <Text style={styles.optionRowText}>Unassigned (no page access)</Text>
+                  </TouchableOpacity>
+                  {roles.map((role) => (
+                    <TouchableOpacity
+                      key={role.id}
+                      style={[styles.optionRow, newUserRoleId === role.id && styles.optionRowActive]}
+                      onPress={() => setNewUserRoleId(role.id)}
+                      disabled={creatingUser}
+                    >
+                      <Text style={styles.optionRowText}>{role.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalButtonRow}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={closeAddUserModal} disabled={creatingUser}>
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleCreateUser} disabled={creatingUser}>
+                {creatingUser ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.modalSaveBtnText}>Create</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -399,9 +593,31 @@ const styles = StyleSheet.create({
   hintText: { fontSize: 11, color: '#94a3b8', marginTop: 8, lineHeight: 16 },
   modalCancelBtn: { marginTop: 16, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: '#f1f5f9', alignSelf: 'flex-end' },
   modalCancelBtnText: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  modalButtonRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 16 },
+  modalSaveBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: NAVY, minWidth: 80, alignItems: 'center' },
+  modalSaveBtnText: { fontSize: 13, fontWeight: '700', color: '#ffffff' },
 
   optionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8 },
+  optionRowActive: { backgroundColor: '#eff6ff' },
   optionRowText: { fontSize: 13, color: '#1e293b', fontWeight: '600' },
   optionRowSubtext: { fontSize: 11, color: '#64748b', marginTop: 2 },
   checkboxRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
+
+  addUserBtn: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10,
+    borderRadius: 8, backgroundColor: NAVY,
+  },
+  addUserBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
+
+  fieldLabel: { fontSize: 11, fontWeight: '700', color: '#64748b', marginTop: 14, marginBottom: 6, textTransform: 'uppercase' },
+  textInput: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12,
+    paddingVertical: 10, fontSize: 13, color: '#1e293b',
+  },
+  passwordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  passwordInput: { flex: 1 },
+  passwordIconBtn: {
+    width: 36, height: 36, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0',
+    alignItems: 'center', justifyContent: 'center',
+  },
 });
