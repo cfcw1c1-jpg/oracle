@@ -9,6 +9,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
@@ -360,8 +361,9 @@ const TrainingCell = memo(function TrainingCell({ memberId, colId, value, onTogg
 });
 
 // The fixed left panel's row: just Name/ID. Memoized for the same reason as
-// RightRow below.
-const LeftRow = memo(function LeftRow({ row, index }) {
+// RightRow below. ID Number is dropped on narrow screens to save the
+// horizontal space it costs on an already horizontally-scrolling matrix.
+const LeftRow = memo(function LeftRow({ row, index, showIdColumn }) {
   const fullName = row.members ? `${row.members.Lastname}, ${row.members.Firstname}` : `ID: ${row.MemberIDNo}`;
   const isAlternate = index % 2 === 1;
 
@@ -370,9 +372,11 @@ const LeftRow = memo(function LeftRow({ row, index }) {
       <View style={[styles.cell, styles.nameColumnWidth]}>
         <Text style={styles.nameText} numberOfLines={1}>{fullName}</Text>
       </View>
-      <View style={[styles.cell, styles.idColumnWidth]}>
-        <Text style={styles.idText}>{row.MemberIDNo}</Text>
-      </View>
+      {showIdColumn && (
+        <View style={[styles.cell, styles.idColumnWidth]}>
+          <Text style={styles.idText}>{row.MemberIDNo}</Text>
+        </View>
+      )}
     </View>
   );
 });
@@ -400,6 +404,9 @@ const RightRow = memo(function RightRow({ row, index, onToggleCheckbox }) {
 });
 
 export default function PfoList() {
+  const { width } = useWindowDimensions();
+  const isNarrow = width < 768;
+
   const [matrixData, setMatrixData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -537,8 +544,8 @@ export default function PfoList() {
   }, []);
 
   const renderLeftRow = useCallback(({ item, index }) => (
-    <LeftRow row={item} index={index} />
-  ), []);
+    <LeftRow row={item} index={index} showIdColumn={!isNarrow} />
+  ), [isNarrow]);
 
   const renderRightRow = useCallback(({ item, index }) => (
     <RightRow row={item} index={index} onToggleCheckbox={handleToggleCheckbox} />
@@ -585,15 +592,17 @@ export default function PfoList() {
           {/* Fixed left panel: Name/ID never scroll away, so the member a
               row belongs to is always visible while scrolling through the
               training columns on the right. */}
-          <View style={styles.leftPanel}>
+          <View style={[styles.leftPanel, isNarrow && { width: NAME_COLUMN_WIDTH }]}>
             <View style={styles.leftGroupHeaderSpacer} />
             <View style={styles.leftColumnHeaderRow}>
               <View style={[styles.cellHeader, styles.nameColumnWidth]}>
                 <Text style={styles.headerText}>Member Name</Text>
               </View>
-              <View style={[styles.cellHeader, styles.idColumnWidth]}>
-                <Text style={styles.headerText}>ID Number</Text>
-              </View>
+              {!isNarrow && (
+                <View style={[styles.cellHeader, styles.idColumnWidth]}>
+                  <Text style={styles.headerText}>ID Number</Text>
+                </View>
+              )}
             </View>
 
             <FlatList

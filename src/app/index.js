@@ -562,48 +562,6 @@ export default function Page() {
         </View>
       </View>
 
-      {/* MOBILE BOTTOM NAV BAR FALLBACK */}
-      {!isLargeScreen && (
-        <View style={styles.bottomTabBar}>
-          {canView('home') && (
-            <TouchableOpacity
-              style={[styles.tabBarItem, currentTab === 'home' && styles.activeTabItem]}
-              onPress={() => handleSelectTab('home')}
-            >
-              <Text style={[styles.tabBarItemText, currentTab === 'home' && styles.activeTabBarText]}>Home</Text>
-            </TouchableOpacity>
-          )}
-
-          {canView('members') && (
-            <TouchableOpacity
-              style={[styles.tabBarItem, currentTab === 'members' && styles.activeTabItem]}
-              onPress={() => handleSelectTab('members')}
-            >
-              <Text style={[styles.tabBarItemText, currentTab === 'members' && styles.activeTabBarText]}>Directory</Text>
-            </TouchableOpacity>
-          )}
-
-          {canView('pfo') && (
-            <TouchableOpacity
-              style={[styles.tabBarItem, currentTab === 'pfo' && styles.activeTabItem]}
-              onPress={() => handleSelectTab('pfo')}
-            >
-              <Text style={[styles.tabBarItemText, currentTab === 'pfo' && styles.activeTabBarText]}>PFO</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Replaced PFO Reports tag with CLP on the bottom mobile bar shortcut row since spacing is finite on small mobile frames */}
-          {canView('clp') && (
-            <TouchableOpacity
-              style={[styles.tabBarItem, currentTab === 'clp' && styles.activeTabItem]}
-              onPress={() => handleSelectTab('clp')}
-            >
-              <Text style={[styles.tabBarItemText, currentTab === 'clp' && styles.activeTabBarText]}>CLP</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-
       {messageToast && (
         <TouchableOpacity
           style={styles.toast}
@@ -830,11 +788,4 @@ const styles = StyleSheet.create({
   mainContentPane: { flex: 1, backgroundColor: '#f8fafc' },
   noAccessWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   noAccessText: { marginTop: 12, fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 320 },
-
-  // Compact Bottom Navbar layout fallback
-  bottomTabBar: { flexDirection: 'row', height: 56, backgroundColor: '#ffffff', borderTopWidth: 1, borderColor: '#e2e8f0', paddingBottom: Platform.OS === 'ios' ? 16 : 0 },
-  tabBarItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  activeTabItem: { backgroundColor: '#f8fafc' },
-  tabBarItemText: { fontSize: 12, color: '#64748b', fontWeight: '500' },
-  activeTabBarText: { color: '#002060', fontWeight: '700' }
 });
