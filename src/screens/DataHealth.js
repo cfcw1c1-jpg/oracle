@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { EmptyRow, ExportButton, exportCsv, Pill, TableCard, TableRow } from '../components/admin-table';
+
+const NARROW_BREAKPOINT = 720;
 
 const NAVY = '#002060';
 
@@ -85,6 +87,9 @@ function SummaryStat({ label, value, color }) {
 }
 
 export default function DataHealth() {
+  const { width } = useWindowDimensions();
+  const isNarrow = width < NARROW_BREAKPOINT;
+
   const [loading, setLoading] = useState(true);
   const [areas, setAreas] = useState([]);
   const [members, setMembers] = useState([]);
@@ -196,15 +201,15 @@ export default function DataHealth() {
           <EmptyRow label="Every active member's Area matches the Areas hierarchy." />
         ) : (
           unmatchedMembers.map((m, index) => (
-            <TableRow key={m.MemberIDNo} last={index === unmatchedMembers.length - 1}>
-              <View style={{ flex: 1.6 }}>
+            <TableRow key={m.MemberIDNo} last={index === unmatchedMembers.length - 1} style={isNarrow ? styles.narrowRow : undefined}>
+              <View style={isNarrow ? undefined : { flex: 1.6 }}>
                 <Text style={styles.mainText} numberOfLines={1}>{m.Lastname}, {m.Firstname}</Text>
                 <Text style={styles.subText}>ID: {m.MemberIDNo}</Text>
               </View>
-              <View style={{ flex: 1.1 }}>
+              <View style={isNarrow ? { marginTop: 8, alignItems: 'flex-start' } : { flex: 1.1 }}>
                 <Pill label={m.AreaName} color="#b91c1c" bg="#fee2e2" />
               </View>
-              <View style={styles.fixCol}>
+              <View style={[styles.fixCol, isNarrow && styles.fixColNarrow]}>
                 {m.suggestion ? (
                   <>
                     <Text style={styles.suggestText} numberOfLines={1}>→ {m.suggestion.name}?</Text>
@@ -240,8 +245,8 @@ export default function DataHealth() {
           <>
             {noAreaMembers.slice(0, 100).map((m, index) => (
               <TableRow key={m.MemberIDNo} last={index === Math.min(noAreaMembers.length, 100) - 1}>
-                <Text style={styles.mainText} numberOfLines={1}>{m.Lastname}, {m.Firstname}</Text>
-                <Text style={styles.subText}>ID: {m.MemberIDNo}</Text>
+                <Text style={[styles.mainText, { flex: 1, marginRight: 8 }]} numberOfLines={1}>{m.Lastname}, {m.Firstname}</Text>
+                <Text style={[styles.subText, { flexShrink: 0 }]}>ID: {m.MemberIDNo}</Text>
               </TableRow>
             ))}
             {noAreaMembers.length > 100 && (
@@ -294,7 +299,9 @@ const styles = StyleSheet.create({
   subText: { fontSize: 11, color: '#64748b', marginTop: 2 },
   moreHint: { fontSize: 12, color: '#94a3b8', padding: 14, textAlign: 'center' },
 
+  narrowRow: { flexDirection: 'column', alignItems: 'stretch' },
   fixCol: { flex: 1.3, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
+  fixColNarrow: { justifyContent: 'flex-start', marginTop: 10 },
   suggestText: { fontSize: 12, fontWeight: '600', color: '#15803d', flexShrink: 1 },
   fixBtn: { backgroundColor: NAVY, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, minWidth: 56, alignItems: 'center' },
   fixBtnText: { fontSize: 11, fontWeight: '700', color: '#ffffff' },

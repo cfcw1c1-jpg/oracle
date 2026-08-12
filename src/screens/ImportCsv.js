@@ -198,7 +198,7 @@ export default function ImportCsv() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Ionicons name="cloud-upload-outline" size={22} color="#0f172a" style={styles.titleIcon} />
@@ -317,12 +317,13 @@ export default function ImportCsv() {
           </TableCard>
         )}
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
+  scrollContent: { paddingBottom: 30 },
 
   header: { padding: 16, paddingBottom: 8 },
   titleRow: { flexDirection: 'row', alignItems: 'center' },

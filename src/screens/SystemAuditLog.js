@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
@@ -25,6 +26,7 @@ import {
 
 const NAVY = '#002060';
 const PAGE_SIZE = 20;
+const NARROW_BREAKPOINT = 720;
 
 // Every table this log actually covers -- kept in sync with the trigger
 // list in scripts/sql/add-system-audit-log.sql. "messages"/"conversations"
@@ -112,6 +114,9 @@ function showAlert(title, message) {
 }
 
 export default function SystemAuditLog() {
+  const { width } = useWindowDimensions();
+  const isNarrow = width < NARROW_BREAKPOINT;
+
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tableFilter, setTableFilter] = useState('All');
@@ -272,7 +277,7 @@ export default function SystemAuditLog() {
             </View>
           </View>
 
-          {!loading && (
+          {!loading && !isNarrow && (
             <TableHeaderRow
               columns={[
                 { key: 'time', label: 'Time', style: styles.colTime },
@@ -299,17 +304,32 @@ export default function SystemAuditLog() {
                     <TableRow
                       last={index === pageItems.length - 1 && !isExpanded}
                       onPress={() => setExpandedId(isExpanded ? null : l.id)}
+                      style={isNarrow ? styles.narrowRow : undefined}
                     >
-                      <Text style={[styles.cellText, styles.colTime]} numberOfLines={1}>{formatTimestamp(l.changed_at)}</Text>
-                      <Text style={[styles.cellText, styles.colTable]} numberOfLines={1}>{getTableLabel(l)}</Text>
-                      <View style={styles.colAction}>
-                        <Pill label={l.action} color={actionStyle.color} bg={actionStyle.bg} />
-                      </View>
-                      <Text style={[styles.cellText, styles.colActor]} numberOfLines={1}>{l.actor_email || 'System'}</Text>
-                      <View style={[styles.colRecord, { flexDirection: 'row', alignItems: 'center' }]}>
-                        <Text style={styles.cellTextMono} numberOfLines={1}>{l.record_id || '—'}</Text>
-                        <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#94a3b8" style={{ marginLeft: 6 }} />
-                      </View>
+                      {isNarrow ? (
+                        <>
+                          <View style={styles.narrowTopRow}>
+                            <Pill label={l.action} color={actionStyle.color} bg={actionStyle.bg} />
+                            <Text style={styles.cellText} numberOfLines={1}>{formatTimestamp(l.changed_at)}</Text>
+                            <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#94a3b8" />
+                          </View>
+                          <Text style={[styles.cellText, { marginTop: 6 }]} numberOfLines={1}>{getTableLabel(l)} · {l.actor_email || 'System'}</Text>
+                          <Text style={styles.cellTextMono} numberOfLines={1}>{l.record_id || '—'}</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={[styles.cellText, styles.colTime]} numberOfLines={1}>{formatTimestamp(l.changed_at)}</Text>
+                          <Text style={[styles.cellText, styles.colTable]} numberOfLines={1}>{getTableLabel(l)}</Text>
+                          <View style={styles.colAction}>
+                            <Pill label={l.action} color={actionStyle.color} bg={actionStyle.bg} />
+                          </View>
+                          <Text style={[styles.cellText, styles.colActor]} numberOfLines={1}>{l.actor_email || 'System'}</Text>
+                          <View style={[styles.colRecord, { flexDirection: 'row', alignItems: 'center' }]}>
+                            <Text style={styles.cellTextMono} numberOfLines={1}>{l.record_id || '—'}</Text>
+                            <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#94a3b8" style={{ marginLeft: 6 }} />
+                          </View>
+                        </>
+                      )}
                     </TableRow>
 
                     {isExpanded && (
@@ -383,7 +403,7 @@ const styles = StyleSheet.create({
   tableFilterItemText: { fontSize: 12, color: '#334155', fontWeight: '500' },
   tableFilterItemTextActive: { color: '#002060', fontWeight: '700' },
 
-  actionChipsRow: { flexDirection: 'row', gap: 6 },
+  actionChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   actionChip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
   actionChipText: { fontSize: 11, fontWeight: '700', color: '#64748b' },
 
@@ -393,6 +413,9 @@ const styles = StyleSheet.create({
   colActor: { flex: 1.6, minWidth: 160 },
   colRecord: { flex: 1.3, minWidth: 130 },
 
+  narrowRow: { flexDirection: 'column', alignItems: 'stretch' },
+  narrowTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+
   cellText: { fontSize: 12, color: '#334155', fontWeight: '600' },
   cellTextMono: {
     fontSize: 11, color: '#64748b',
@@ -401,9 +424,9 @@ const styles = StyleSheet.create({
 
   diffPanel: { backgroundColor: '#f8fafc', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f4f6f9' },
   diffEmptyText: { fontSize: 12, color: '#94a3b8' },
-  diffRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  diffRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, flexWrap: 'wrap' },
   diffKey: {
-    width: 160, fontSize: 11, fontWeight: '700', color: '#0f172a',
+    minWidth: 120, flexBasis: 120, flexShrink: 0, fontSize: 11, fontWeight: '700', color: '#0f172a',
     fontFamily: Platform.select({ ios: 'Courier', android: 'monospace', web: 'ui-monospace, monospace', default: 'monospace' }),
   },
   diffFrom: { flex: 1, fontSize: 12, color: '#b91c1c' },

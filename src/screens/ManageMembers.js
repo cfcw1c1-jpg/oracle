@@ -11,6 +11,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
@@ -19,6 +20,7 @@ import { ExportButton, exportCsv, TableCard, TablePagination, usePagination } fr
 const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
+const NARROW_BREAKPOINT = 720;
 
 const GENDER_OPTIONS = ['Male', 'Female'];
 const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
@@ -180,6 +182,9 @@ function SelectField({ label, value, options, onChange, getLabel = (v) => v, pla
 }
 
 export default function ManageMembers() {
+  const { width } = useWindowDimensions();
+  const isNarrow = width < NARROW_BREAKPOINT;
+
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -403,20 +408,65 @@ export default function ManageMembers() {
       </View>
 
       <TableCard style={{ flex: 1 }}>
-        <View style={styles.tableHeaderRow}>
-          <Text style={[styles.headerText, styles.nameCol]}>NAME</Text>
-          <Text style={[styles.headerText, styles.householdCol]}>HOUSEHOLD HEAD</Text>
-          <Text style={[styles.headerText, styles.genderCol]}>GENDER</Text>
-          <Text style={[styles.headerText, styles.statusCol]}>STATUS</Text>
-          <Text style={[styles.headerText, styles.roleCol]}>ROLE & AREA</Text>
-          <Text style={[styles.headerText, styles.actionsCol]}>ACTIONS</Text>
-        </View>
+        {!isNarrow && (
+          <View style={styles.tableHeaderRow}>
+            <Text style={[styles.headerText, styles.nameCol]}>NAME</Text>
+            <Text style={[styles.headerText, styles.householdCol]}>HOUSEHOLD HEAD</Text>
+            <Text style={[styles.headerText, styles.genderCol]}>GENDER</Text>
+            <Text style={[styles.headerText, styles.statusCol]}>STATUS</Text>
+            <Text style={[styles.headerText, styles.roleCol]}>ROLE & AREA</Text>
+            <Text style={[styles.headerText, styles.actionsCol]}>ACTIONS</Text>
+          </View>
+        )}
 
         <FlatList
           data={pageItems}
           keyExtractor={(item) => item.MemberIDNo?.toString()}
           renderItem={({ item }) => {
             const isDeleting = deletingId === item.MemberIDNo;
+
+            const actions = isDeleting ? (
+              <ActivityIndicator size="small" color="#002060" />
+            ) : (
+              <>
+                <TouchableOpacity onPress={() => openEditModal(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="create-outline" size={18} color="#2563eb" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDelete(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="trash-outline" size={18} color="#dc2626" />
+                </TouchableOpacity>
+              </>
+            );
+
+            if (isNarrow) {
+              return (
+                <View style={[styles.tableRow, styles.narrowRow]}>
+                  <View style={styles.narrowTopRow}>
+                    <View style={[styles.nameCell, { flex: 1 }]}>
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{getInitials(item.Firstname, item.Lastname)}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.nameText} numberOfLines={1}>{item.Lastname}, {item.Firstname}</Text>
+                        <Text style={styles.idText}>ID: {item.MemberIDNo}</Text>
+                      </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 14 }}>{actions}</View>
+                  </View>
+
+                  <Text style={styles.householdText}>{item.NameOfHouseholdHead || 'N/A'} · {item.Gender || 'Gender N/A'}</Text>
+
+                  <View style={styles.narrowBadgeRow}>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColors(item.Status).bg, borderColor: getStatusColors(item.Status).border }]}>
+                      <Text style={[styles.statusBadgeText, { color: getStatusColors(item.Status).text }]}>{item.Status || 'Active'}</Text>
+                    </View>
+                    <View style={styles.roleBadge}><Text style={styles.roleBadgeText}>{item.PastoralService || 'MEMBER'}</Text></View>
+                    <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
+                  </View>
+                </View>
+              );
+            }
+
             return (
               <View style={styles.tableRow}>
                 <View style={[styles.cell, styles.nameCol, styles.nameCell]}>
@@ -449,18 +499,7 @@ export default function ManageMembers() {
                 </View>
 
                 <View style={[styles.cell, styles.actionsCol, { flexDirection: 'row', gap: 10 }]}>
-                  {isDeleting ? (
-                    <ActivityIndicator size="small" color="#002060" />
-                  ) : (
-                    <>
-                      <TouchableOpacity onPress={() => openEditModal(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Ionicons name="create-outline" size={18} color="#2563eb" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                        <Ionicons name="trash-outline" size={18} color="#dc2626" />
-                      </TouchableOpacity>
-                    </>
-                  )}
+                  {actions}
                 </View>
               </View>
             );
@@ -644,6 +683,10 @@ const styles = StyleSheet.create({
   tableRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   cell: { paddingHorizontal: 4, justifyContent: 'center' },
   nameCell: { flexDirection: 'row', alignItems: 'center' },
+
+  narrowRow: { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
+  narrowTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  narrowBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
 
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eff6ff', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   avatarText: { fontSize: 12, fontWeight: '800', color: '#002060' },
