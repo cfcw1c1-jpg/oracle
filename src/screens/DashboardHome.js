@@ -26,6 +26,11 @@ const FEMALE_PINK = '#db2777';
 const AMBER_BG = '#fef3c7';
 const AMBER_TEXT = '#b45309';
 
+// "AM" is Evangelizo's code for the English-language (USCCB/Confraternity of
+// Christian Doctrine) daily readings feed -- see feed.evangelizo.org/v2/reader.php.
+const EVANGELIZO_BASE = 'https://feed.evangelizo.org/v2/reader.php';
+const EVANGELIZO_LANG = 'AM';
+
 function getTimeOfDay(hour) {
   if (hour < 12) return 'Morning';
   if (hour < 18) return 'Afternoon';
@@ -48,6 +53,51 @@ function formatShortDate(dateStr) {
   const date = new Date(dateStr);
   if (Number.isNaN(date.getTime())) return dateStr;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatEvangelizoDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+// The reader.php feed returns raw HTML fragments (entities + <br/> for line
+// breaks), not JSON, so every field needs the same clean-up before display.
+function cleanEvangelizoText(raw) {
+  return (raw || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
+
+// The Gospel body ends with a "Copyright © ..." attribution line followed by
+// a promotional "subscribe" line -- keep the attribution, drop the promo.
+function parseGospelReading(raw) {
+  const lines = cleanEvangelizoText(raw).split('\n').map((l) => l.trim());
+  const bodyLines = [];
+  let attribution = '';
+  for (const line of lines) {
+    if (/^copyright/i.test(line)) {
+      attribution = line;
+      break;
+    }
+    if (line) bodyLines.push(line);
+  }
+  return { body: bodyLines.join(' '), attribution };
+}
+
+async function fetchEvangelizoField(dateStr, type, content) {
+  const params = new URLSearchParams({ date: dateStr, type, lang: EVANGELIZO_LANG });
+  if (content) params.set('content', content);
+  const res = await fetch(`${EVANGELIZO_BASE}?${params.toString()}`);
+  if (!res.ok) throw new Error(`Evangelizo request failed (${res.status})`);
+  return res.text();
 }
 
 // A donut ring built with react-native-svg: one stacked arc per segment, each
@@ -108,6 +158,9 @@ export default function DashboardHome({ onNavigate, roleName }) {
   const [memberGenders, setMemberGenders] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
   const [clpTrainings, setClpTrainings] = useState([]);
+  const [gospel, setGospel] = useState({
+    loading: true, error: null, liturgicalDay: '', citation: '', text: '', attribution: '',
+  });
 
   useEffect(() => {
     loadDashboard();
@@ -115,6 +168,42 @@ export default function DashboardHome({ onNavigate, roleName }) {
     // Keep the header clock chip feeling alive without hammering re-renders.
     const clockTimer = setInterval(() => setNow(new Date()), 60 * 1000);
     return () => clearInterval(clockTimer);
+  }, []);
+
+  useEffect(() => {
+    // Fetched separately from loadDashboard() -- this hits an external feed
+    // (evangelizo.org) and its failure or slowness should never block the
+    // Supabase-backed dashboard data above.
+    let cancelled = false;
+
+    async function loadGospel() {
+      try {
+        const dateStr = formatEvangelizoDate(new Date());
+        const [liturgicRaw, citationRaw, gospelRaw] = await Promise.all([
+          fetchEvangelizoField(dateStr, 'liturgic_t'),
+          fetchEvangelizoField(dateStr, 'reading_st', 'GSP'),
+          fetchEvangelizoField(dateStr, 'reading', 'GSP'),
+        ]);
+        if (cancelled) return;
+
+        const { body, attribution } = parseGospelReading(gospelRaw);
+        setGospel({
+          loading: false,
+          error: null,
+          liturgicalDay: cleanEvangelizoText(liturgicRaw).trim(),
+          citation: cleanEvangelizoText(citationRaw).replace(/\s+/g, ' ').trim(),
+          text: body,
+          attribution,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Error loading Gospel of the Day:', err.message);
+        setGospel((prev) => ({ ...prev, loading: false, error: "Unable to load today's Gospel reading." }));
+      }
+    }
+
+    loadGospel();
+    return () => { cancelled = true; };
   }, []);
 
   async function loadDashboard() {
@@ -345,6 +434,24 @@ export default function DashboardHome({ onNavigate, roleName }) {
           </View>
         );
 
+        const gospelCard = (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Gospel of the Day</Text>
+            {gospel.loading ? (
+              <ActivityIndicator size="small" color={NAVY} style={styles.gospelSpinner} />
+            ) : gospel.error ? (
+              <Text style={styles.searchEmptyText}>{gospel.error}</Text>
+            ) : (
+              <>
+                {!!gospel.liturgicalDay && <Text style={styles.gospelLiturgicalDay}>{gospel.liturgicalDay}</Text>}
+                {!!gospel.citation && <Text style={styles.gospelCitation}>{gospel.citation}</Text>}
+                <Text style={styles.gospelText}>{gospel.text}</Text>
+                {!!gospel.attribution && <Text style={styles.gospelAttribution}>{gospel.attribution}</Text>}
+              </>
+            )}
+          </View>
+        );
+
         const trainingsCard = (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{hasUpcomingTrainings ? 'Upcoming CLP Trainings' : 'Previous CLP Trainings'}</Text>
@@ -376,6 +483,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
             </View>
             <View style={[styles.sideColumn, styles.sideColumnWide]}>
               {profileCard}
+              {gospelCard}
               {trainingsCard}
             </View>
           </View>
@@ -383,6 +491,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
           <View style={styles.bodyLayout}>
             {heroAndStats}
             {profileCard}
+            {gospelCard}
             {donutAndProgress}
             {trainingsCard}
           </View>
@@ -506,6 +615,12 @@ const styles = StyleSheet.create({
   profileFact: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10, padding: 10, alignItems: 'center' },
   profileFactLabelOnDark: { color: 'rgba(255,255,255,0.7)', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' },
   profileFactValueOnDark: { color: '#ffffff', fontSize: 12, fontWeight: '700', marginTop: 4, textAlign: 'center' },
+
+  gospelSpinner: { marginVertical: 12 },
+  gospelLiturgicalDay: { fontSize: 11, color: '#64748b', fontWeight: '600', marginBottom: 4 },
+  gospelCitation: { fontSize: 13, color: ACCENT_BLUE, fontWeight: '800', marginBottom: 10 },
+  gospelText: { fontSize: 13, color: '#334155', lineHeight: 20 },
+  gospelAttribution: { fontSize: 10, color: '#94a3b8', marginTop: 12, fontStyle: 'italic' },
 
   agendaRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   agendaDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: ACCENT_BLUE, marginRight: 10, marginTop: 5 },
