@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { TableCard } from '../components/admin-table';
+import Areas from './Areas';
 import DataHealth from './DataHealth';
+import RolesAccess from './RolesAccess';
 
 const NAVY = '#002060';
 
@@ -86,9 +88,11 @@ function RetentionField({ label, description, days, onChangeDays, keepForever, o
 const TABS = [
   { key: 'retention', label: 'Log Retention', icon: 'time-outline' },
   { key: 'dataHealth', label: 'Data Health', icon: 'pulse-outline' },
+  { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
+  { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
 ];
 
-export default function Settings() {
+export default function Settings({ onAccessChanged }) {
   const [tab, setTab] = useState('retention');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -216,6 +220,10 @@ export default function Settings() {
 
       {tab === 'dataHealth' ? (
         <DataHealth />
+      ) : tab === 'rolesAccess' ? (
+        <RolesAccess onAccessChanged={onAccessChanged} />
+      ) : tab === 'areas' ? (
+        <Areas />
       ) : (
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <TableCard title="Log Retention" subtitle="How long system logs are kept before being automatically deleted.">

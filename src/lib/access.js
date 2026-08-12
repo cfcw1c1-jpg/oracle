@@ -13,8 +13,6 @@ export const ALL_PAGE_KEYS = [
   'clp',
   'auditLogs',
   'portalUsers',
-  'rolesAccess',
-  'areas',
   'csvImport',
   'systemAudit',
   'settings',

@@ -20,7 +20,6 @@ import packageJson from '../../package.json';
 import Login from '../auth/Login';
 import ResetPassword from '../auth/ResetPassword';
 import { fetchAccessContext } from '../lib/access';
-import Areas from '../screens/Areas';
 import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
@@ -34,7 +33,6 @@ import PfoStatGenerator from '../screens/PfoStatGenerator';
 import PortalUsers from '../screens/PortalUsers';
 import PredictorScreen from '../screens/PredictorScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import RolesAccess from '../screens/RolesAccess';
 import Settings from '../screens/Settings';
 import SystemAuditLog from '../screens/SystemAuditLog';
 
@@ -50,8 +48,6 @@ const NAV_ITEMS = [
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
-  { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
-  { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
   { key: 'auditLogs', label: 'Training Lookup Logs', icon: 'terminal-outline', group: 'Logs' },
@@ -573,13 +569,11 @@ export default function Page() {
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}
-          {effectiveTab === 'rolesAccess' && canView('rolesAccess') && (
-            <RolesAccess onAccessChanged={() => loadAccess(session.user.id)} />
-          )}
-          {effectiveTab === 'areas' && canView('areas') && <Areas />}
           {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
-          {effectiveTab === 'settings' && canView('settings') && <Settings />}
+          {effectiveTab === 'settings' && canView('settings') && (
+            <Settings onAccessChanged={() => loadAccess(session.user.id)} />
+          )}
           {effectiveTab === 'predictor' && <PredictorScreen />}
           {effectiveTab === 'profile' && <ProfileScreen />}
           {effectiveTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
