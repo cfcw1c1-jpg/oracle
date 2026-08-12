@@ -15,9 +15,9 @@ export const ALL_PAGE_KEYS = [
   'portalUsers',
   'rolesAccess',
   'areas',
-  'dataHealth',
   'csvImport',
   'systemAudit',
+  'settings',
 ];
 
 // Loads the signed-in user's profile, role name, and the set of page keys

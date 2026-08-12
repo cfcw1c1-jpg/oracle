@@ -9,6 +9,7 @@ import {
   Modal,
   Platform,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -23,7 +24,6 @@ import Areas from '../screens/Areas';
 import AuditLogs from '../screens/AuditLogs';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
-import DataHealth from '../screens/DataHealth';
 import ImportCsv from '../screens/ImportCsv';
 import ManageMembers from '../screens/ManageMembers';
 import MembersList from '../screens/MembersList';
@@ -35,8 +35,12 @@ import PortalUsers from '../screens/PortalUsers';
 import PredictorScreen from '../screens/PredictorScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import RolesAccess from '../screens/RolesAccess';
+import Settings from '../screens/Settings';
 import SystemAuditLog from '../screens/SystemAuditLog';
 
+// An item with a `group` renders under its own labeled section in the
+// sidebar (see SidebarPanel), separate from the main flat list -- used
+// here to set the two log-viewing pages apart under "Logs".
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
   { key: 'members', label: 'Directory', icon: 'people-outline' },
@@ -45,13 +49,13 @@ const NAV_ITEMS = [
   { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
-  { key: 'auditLogs', label: 'Audit Logs', icon: 'terminal-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
   { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
-  { key: 'dataHealth', label: 'Data Health', icon: 'pulse-outline' },
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
-  { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline' },
+  { key: 'settings', label: 'Settings', icon: 'settings-outline' },
+  { key: 'auditLogs', label: 'Training Lookup Logs', icon: 'terminal-outline', group: 'Logs' },
+  { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline', group: 'Logs' },
 ];
 
 // Human-readable labels for the System Audit Log's PAGE_VIEW rows -- every
@@ -71,6 +75,34 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
   const avatarUrl = session?.user?.user_metadata?.avatar_url;
   const email = session?.user?.email;
   const portalLabel = roleName ? `${roleName} Portal` : 'Members Portal';
+
+  const ungroupedItems = navItems.filter((item) => !item.group);
+  const groups = [];
+  navItems.forEach((item) => {
+    if (!item.group) return;
+    let group = groups.find((g) => g.name === item.group);
+    if (!group) {
+      group = { name: item.group, items: [] };
+      groups.push(group);
+    }
+    group.items.push(item);
+  });
+
+  function renderNavItem(item) {
+    const isActive = currentTab === item.key;
+    return (
+      <TouchableOpacity
+        key={item.key}
+        style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, isActive && styles.activeSidebarButton]}
+        onPress={() => onSelectTab(item.key)}
+      >
+        <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : 'rgba(226,232,255,0.65)'} style={!collapsed && styles.sidebarIcon} />
+        {!collapsed && (
+          <Text style={[styles.sidebarButtonText, isActive && styles.activeSidebarText]} numberOfLines={1}>{item.label}</Text>
+        )}
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <LinearGradient colors={SIDEBAR_GRADIENT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.sidebarGradient}>
@@ -116,25 +148,27 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
 
         <View style={styles.glassDivider} />
 
-        {!collapsed && <Text style={styles.menuLabel}>MENU</Text>}
+        {/* The nav list is the one section that scrolls -- brand/account
+            above and collapse/logout/version below stay fixed, so a long
+            page list (many roles combined, or Admin with everything
+            granted) never pushes Log Out off-screen with no way to reach
+            it on a short mobile viewport. */}
+        <ScrollView style={styles.navScroll} showsVerticalScrollIndicator={false}>
+          {!collapsed && <Text style={styles.menuLabel}>MENU</Text>}
+          <View style={styles.navLinksContainer}>
+            {ungroupedItems.map(renderNavItem)}
+          </View>
 
-        <View style={styles.navLinksContainer}>
-          {navItems.map((item) => {
-            const isActive = currentTab === item.key;
-            return (
-              <TouchableOpacity
-                key={item.key}
-                style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, isActive && styles.activeSidebarButton]}
-                onPress={() => onSelectTab(item.key)}
-              >
-                <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : 'rgba(226,232,255,0.65)'} style={!collapsed && styles.sidebarIcon} />
-                {!collapsed && (
-                  <Text style={[styles.sidebarButtonText, isActive && styles.activeSidebarText]} numberOfLines={1}>{item.label}</Text>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+          {groups.map((group) => (
+            <View key={group.name}>
+              <View style={styles.glassDivider} />
+              {!collapsed && <Text style={styles.menuLabel}>{group.name.toUpperCase()}</Text>}
+              <View style={styles.navLinksContainer}>
+                {group.items.map(renderNavItem)}
+              </View>
+            </View>
+          ))}
+        </ScrollView>
 
         {showCollapseToggle && (
           <TouchableOpacity
@@ -543,9 +577,9 @@ export default function Page() {
             <RolesAccess onAccessChanged={() => loadAccess(session.user.id)} />
           )}
           {effectiveTab === 'areas' && canView('areas') && <Areas />}
-          {effectiveTab === 'dataHealth' && canView('dataHealth') && <DataHealth />}
           {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
+          {effectiveTab === 'settings' && canView('settings') && <Settings />}
           {effectiveTab === 'predictor' && <PredictorScreen />}
           {effectiveTab === 'profile' && <ProfileScreen />}
           {effectiveTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
@@ -591,42 +625,70 @@ export default function Page() {
             </View>
             <Text style={styles.disclaimerTitle}>Before You Continue</Text>
 
-            <Text style={styles.disclaimerText}>
-              This application is not intended to replace the official OGD portal. It is only being used as a
-              tool to generate reports.
-            </Text>
-            <Text style={styles.disclaimerText}>
-              Because of this, it should always be kept up to date whenever there are changes or movement in
-              the OGD data.
-            </Text>
-            <Text style={styles.disclaimerText}>
-              If you have any concerns, please don&apos;t hesitate to message the moderators — they&apos;ll get back to
-              you as soon as they see it.
-            </Text>
+            <ScrollView style={styles.disclaimerScroll} showsVerticalScrollIndicator={false}>
+              <Text style={styles.disclaimerText}>
+                This application is not intended to replace the official OGD portal. It is only being used as a
+                tool to generate reports.
+              </Text>
+              <Text style={styles.disclaimerText}>
+                Because of this, it should always be kept up to date whenever there are changes or movement in
+                the OGD data.
+              </Text>
+              <Text style={styles.disclaimerText}>
+                If you have any concerns, please don&apos;t hesitate to message the moderators — they&apos;ll get back to
+                you as soon as they see it.
+              </Text>
 
-            <TouchableOpacity
-              style={styles.disclaimerEmailRow}
-              onPress={() => Linking.openURL('mailto:bryanmunoz28@yahoo.com')}
-            >
-              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
-              <Text style={styles.disclaimerEmailText}>bryanmunoz28@yahoo.com</Text>
-            </TouchableOpacity>
+              <Text style={styles.disclaimerSectionTitle}>Data Privacy Notice</Text>
+              <Text style={styles.disclaimerText}>
+                As a portal account, you can access CFC member records — including names, Area/Chapter
+                assignments, and Pastoral Formation (PFO) / Christian Life Program (CLP) records — scoped to
+                whatever your assigned role and Area allow. Every view, add, edit, and delete you make is
+                logged (System Audit Log) for accountability.
+              </Text>
+              <Text style={styles.disclaimerText}>
+                Handle this data the same way you&apos;d want your own handled: only for legitimate formation
+                and reporting purposes, never shared outside authorized channels. Data is stored with
+                Supabase, our cloud database provider.
+              </Text>
+              <Text style={styles.disclaimerText}>
+                Under the Data Privacy Act of 2012 (RA 10173), members whose data you can see have the right
+                to access, correct, or request deletion of their own information — direct such requests to
+                the moderators below.
+              </Text>
 
-            <TouchableOpacity
-              style={styles.disclaimerEmailRow}
-              onPress={() => Linking.openURL('mailto:markjosephreyes1513@gmail.com')}
-            >
-              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
-              <Text style={styles.disclaimerEmailText}>markjosephreyes1513@gmail.com</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.disclaimerEmailRow}
+                onPress={() => Linking.openURL('mailto:jamesryanpatiag@gmail.com')}
+              >
+                <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+                <Text style={styles.disclaimerEmailText}>jamesryanpatiag@gmail.com</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.disclaimerEmailRow}
-              onPress={() => Linking.openURL('mailto:bentiung02421@gmail.com')}
-            >
-              <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
-              <Text style={styles.disclaimerEmailText}>bentiung02421@gmail.com</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.disclaimerEmailRow}
+                onPress={() => Linking.openURL('mailto:markjosephreyes1513@gmail.com')}
+              >
+                <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+                <Text style={styles.disclaimerEmailText}>markjosephreyes1513@gmail.com</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.disclaimerEmailRow}
+                onPress={() => Linking.openURL('mailto:bryanmunoz28@yahoo.com')}
+              >
+                <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+                <Text style={styles.disclaimerEmailText}>bryanmunoz28@yahoo.com</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.disclaimerEmailRow}
+                onPress={() => Linking.openURL('mailto:bentiung02421@gmail.com')}
+              >
+                <Ionicons name="mail-outline" size={14} color="#334155" style={{ marginRight: 6 }} />
+                <Text style={styles.disclaimerEmailText}>bentiung02421@gmail.com</Text>
+              </TouchableOpacity>
+            </ScrollView>
 
             <View style={styles.disclaimerActions}>
               <TouchableOpacity
@@ -681,7 +743,7 @@ const styles = StyleSheet.create({
 
   disclaimerOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.55)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   disclaimerCard: {
-    backgroundColor: '#ffffff', borderRadius: 18, padding: 22, width: '100%', maxWidth: 440,
+    backgroundColor: '#ffffff', borderRadius: 18, padding: 22, width: '100%', maxWidth: 600, maxHeight: '88%',
     ...Platform.select({
       web: { boxShadow: '0 12px 32px rgba(2,6,23,0.3)' },
       default: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 12 },
@@ -692,6 +754,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginBottom: 12,
   },
   disclaimerTitle: { fontSize: 17, fontWeight: '800', color: '#0f172a', marginBottom: 12 },
+  // flexShrink lets this scrollable section give up space to the title and
+  // the action buttons below it when the card hits its own maxHeight,
+  // instead of a fixed pixel value that's cramped on a big screen or
+  // overflowing on a small one.
+  disclaimerScroll: { flexShrink: 1 },
+  disclaimerSectionTitle: { fontSize: 13, fontWeight: '800', color: '#0f172a', marginTop: 6, marginBottom: 8 },
   disclaimerText: { fontSize: 13, color: '#334155', lineHeight: 19, marginBottom: 10 },
   disclaimerEmailRow: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#f8fafc',
@@ -768,7 +836,8 @@ const styles = StyleSheet.create({
   },
   collapseToggleCollapsed: { width: 44, paddingVertical: 10, paddingHorizontal: 0, alignSelf: 'center' },
   collapseToggleText: { marginLeft: 8, fontSize: 13, fontWeight: '700', color: 'rgba(226,232,255,0.85)' },
-  navLinksContainer: { flex: 1 },
+  navScroll: { flex: 1 },
+  navLinksContainer: {},
   sidebarButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, marginBottom: 6 },
   sidebarButtonCollapsed: { justifyContent: 'center', paddingHorizontal: 0 },
   activeSidebarButton: { backgroundColor: 'rgba(255,255,255,0.16)' },

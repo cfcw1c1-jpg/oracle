@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -14,6 +14,7 @@ import {
   View
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import PrivacyConsentGate from '../components/privacy-consent-gate';
 import { SERVICE_SUB_TYPES } from '../screens/ClpMaintenance';
 
 // Public, unauthenticated page: a member self-registers into ONE specific
@@ -28,6 +29,12 @@ import { SERVICE_SUB_TYPES } from '../screens/ClpMaintenance';
 // Batch creation stays admin-only; see
 // scripts/sql/enable-public-clp-registration-insert.sql and
 // scripts/sql/add-clp-trainings-public-token.sql.
+//
+// Finding yourself in Step 1 requires an exact Member ID *and* exact Last
+// Name match (see scripts/sql/lock-down-public-lookup-access.sql), the
+// same as training-lookup.js -- an open-ended name search here would let
+// anyone holding the (publicly embedded) anon key browse the whole
+// membership roster, not just enroll themselves in this one batch.
 export default function ClpRegistration() {
   const { token } = useLocalSearchParams();
 
@@ -35,11 +42,11 @@ export default function ClpRegistration() {
   const [loadingTraining, setLoadingTraining] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+  const [memberIdInput, setMemberIdInput] = useState('');
+  const [lastnameInput, setLastnameInput] = useState('');
+  const [finding, setFinding] = useState(false);
+  const [notFound, setNotFound] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
-  const debounceRef = useRef(null);
 
   const [isServiceTeam, setIsServiceTeam] = useState(false);
   const [selectedSubType, setSelectedSubType] = useState(SERVICE_SUB_TYPES[0]);
@@ -79,63 +86,43 @@ export default function ClpRegistration() {
       setLoadingTraining(false);
       setLoadError(true);
     }
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
   }, [token]);
 
-  async function searchMembers(q) {
-    try {
-      setSearching(true);
-      const pattern = `%${q}%`;
-      const [{ data: byFirst, error: firstError }, { data: byLast, error: lastError }] = await Promise.all([
-        supabase.from('members').select('MemberIDNo, Firstname, Lastname').ilike('Firstname', pattern).limit(10),
-        supabase.from('members').select('MemberIDNo, Firstname, Lastname').ilike('Lastname', pattern).limit(10),
-      ]);
-      if (firstError) throw firstError;
-      if (lastError) throw lastError;
+  async function handleFindMember() {
+    const memberId = memberIdInput.trim();
+    const lastname = lastnameInput.trim();
+    if (!memberId || !lastname) return;
 
-      const merged = [...(byFirst || []), ...(byLast || [])];
-      const deduped = [...new Map(merged.map((m) => [m.MemberIDNo, m])).values()];
-      deduped.sort((a, b) => (a.Lastname || '').localeCompare(b.Lastname || ''));
-      setResults(deduped.slice(0, 10));
-    } catch (err) {
-      console.error('Member search failed:', err.message);
-      setResults([]);
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  function handleQueryChange(text) {
-    setQuery(text);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const trimmed = text.trim();
-    if (!trimmed) {
-      setResults([]);
-      return;
-    }
-    debounceRef.current = setTimeout(() => searchMembers(trimmed), 350);
-  }
-
-  async function selectMember(member) {
-    setSelectedMember(member);
-    setQuery('');
-    setResults([]);
+    setFinding(true);
+    setNotFound(false);
     setSubmitError('');
-    setAlreadyRegistered(false);
-
     try {
-      const { data, error } = await supabase
-        .from('clp_training_participants')
-        .select('id')
-        .eq('clp_training_id', training.id)
-        .eq('MemberIDNo', member.MemberIDNo)
-        .maybeSingle();
+      const { data, error } = await supabase.rpc('find_member_by_id_and_lastname', {
+        p_member_id: memberId,
+        p_lastname: lastname,
+      });
       if (error) throw error;
-      if (data) setAlreadyRegistered(true);
+
+      const member = data?.[0];
+      if (!member) {
+        setNotFound(true);
+        return;
+      }
+
+      setSelectedMember(member);
+      setAlreadyRegistered(false);
+
+      const { data: alreadyIn, error: checkError } = await supabase.rpc('check_clp_registration', {
+        p_training_id: training.id,
+        p_member_id: member.MemberIDNo,
+      });
+      if (checkError) throw checkError;
+      if (alreadyIn) setAlreadyRegistered(true);
     } catch (err) {
-      console.error('Failed to check existing registration:', err.message);
+      console.error('Failed to find member:', err.message);
+      setNotFound(true);
+    } finally {
+      setFinding(false);
     }
   }
 
@@ -161,8 +148,9 @@ export default function ClpRegistration() {
   }
 
   function registerAnother() {
-    setQuery('');
-    setResults([]);
+    setMemberIdInput('');
+    setLastnameInput('');
+    setNotFound(false);
     setSelectedMember(null);
     setIsServiceTeam(false);
     setSelectedSubType(SERVICE_SUB_TYPES[0]);
@@ -172,6 +160,7 @@ export default function ClpRegistration() {
   }
 
   return (
+    <PrivacyConsentGate purpose="register for this CLP training batch">
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Image source={require('../../assets/images/oracle-logo.png')} style={styles.headerLogo} resizeMode="contain" />
@@ -203,43 +192,49 @@ export default function ClpRegistration() {
 
               {/* STEP 1: FIND YOURSELF */}
               <Text style={styles.stepLabel}>Step 1 of 2</Text>
-              <Text style={styles.stepTitle}>Find your name in the member directory</Text>
+              <Text style={styles.stepTitle}>Enter your Member ID and Last Name</Text>
 
               {!selectedMember ? (
                 <>
+                  <Text style={styles.inputLabel}>Member ID</Text>
                   <View style={styles.searchInputWrap}>
-                    <Ionicons name="search-outline" size={18} color="#64748b" style={{ marginRight: 8 }} />
+                    <Ionicons name="finger-print-outline" size={18} color="#64748b" style={{ marginRight: 8 }} />
                     <TextInput
-                      value={query}
-                      onChangeText={handleQueryChange}
-                      placeholder="e.g. Dela Cruz, Juan"
+                      value={memberIdInput}
+                      onChangeText={setMemberIdInput}
+                      placeholder="e.g. PM-00123"
                       placeholderTextColor="#94a3b8"
                       style={styles.searchInput}
+                      autoCapitalize="characters"
                       autoFocus={Platform.OS === 'web'}
+                      returnKeyType="next"
                     />
-                    {searching && <ActivityIndicator size="small" color="#002060" />}
                   </View>
 
-                  {results.length > 0 && (
-                    <View style={styles.resultsList}>
-                      {results.map((m) => (
-                        <TouchableOpacity key={m.MemberIDNo} style={styles.resultItem} onPress={() => selectMember(m)}>
-                          <View style={styles.resultAvatar}>
-                            <Text style={styles.resultAvatarText}>
-                              {(m.Firstname?.[0] || '') + (m.Lastname?.[0] || '')}
-                            </Text>
-                          </View>
-                          <View>
-                            <Text style={styles.resultName}>{m.Lastname}, {m.Firstname}</Text>
-                            <Text style={styles.resultId}>ID: {m.MemberIDNo}</Text>
-                          </View>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
+                  <Text style={styles.inputLabel}>Last Name</Text>
+                  <View style={styles.searchInputWrap}>
+                    <Ionicons name="person-outline" size={18} color="#64748b" style={{ marginRight: 8 }} />
+                    <TextInput
+                      value={lastnameInput}
+                      onChangeText={setLastnameInput}
+                      placeholder="e.g. Dela Cruz"
+                      placeholderTextColor="#94a3b8"
+                      style={styles.searchInput}
+                      returnKeyType="go"
+                      onSubmitEditing={handleFindMember}
+                    />
+                  </View>
 
-                  {!searching && query.trim().length > 0 && results.length === 0 && (
-                    <Text style={styles.noResultsText}>No matching members found.</Text>
+                  <TouchableOpacity
+                    style={[styles.submitBtn, (!memberIdInput.trim() || !lastnameInput.trim() || finding) && styles.btnDisabled]}
+                    onPress={handleFindMember}
+                    disabled={!memberIdInput.trim() || !lastnameInput.trim() || finding}
+                  >
+                    {finding ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.submitBtnText}>Find My Record</Text>}
+                  </TouchableOpacity>
+
+                  {notFound && (
+                    <Text style={styles.noResultsText}>No record matches that Member ID and Last Name. Please check both and try again.</Text>
                   )}
                 </>
               ) : (
@@ -347,6 +342,7 @@ export default function ClpRegistration() {
         </View>
       </ScrollView>
     </SafeAreaView>
+    </PrivacyConsentGate>
   );
 }
 
@@ -382,19 +378,10 @@ const styles = StyleSheet.create({
   searchInputWrap: {
     flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0',
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: Platform.OS === 'ios' ? 12 : 4, backgroundColor: '#f8fafc',
+    marginBottom: 14,
   },
   searchInput: { flex: 1, fontSize: 14, color: '#0f172a', paddingVertical: 8 },
   noResultsText: { marginTop: 14, fontSize: 13, color: '#64748b', textAlign: 'center' },
-
-  resultsList: { marginTop: 14, borderTopWidth: 1, borderColor: '#f1f5f9', paddingTop: 6 },
-  resultItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8 },
-  resultAvatar: {
-    width: 34, height: 34, borderRadius: 17, backgroundColor: '#002060',
-    alignItems: 'center', justifyContent: 'center', marginRight: 12,
-  },
-  resultAvatarText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  resultName: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-  resultId: { fontSize: 11, color: '#64748b', marginTop: 1 },
 
   selectedMemberBanner: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1,
