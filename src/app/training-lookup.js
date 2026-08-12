@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -153,6 +154,7 @@ export default function TrainingLookup() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <Image source={require('../../assets/images/oracle-logo.png')} style={styles.headerLogo} resizeMode="contain" />
         <Text style={styles.headerTitle}>ORACLE</Text>
         <Text style={styles.headerSubtitle}>TRAINING RECORDS LOOKUP</Text>
       </View>
@@ -294,6 +296,7 @@ export default function TrainingLookup() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   header: { backgroundColor: '#002060', paddingVertical: 20, paddingHorizontal: 20, alignItems: 'center' },
+  headerLogo: { width: 46, height: 40, marginBottom: 8 },
   headerTitle: { fontSize: 22, fontWeight: '800', color: '#fff', letterSpacing: 2 },
   headerSubtitle: { fontSize: 11, color: '#93c5fd', letterSpacing: 1, fontWeight: '500', marginTop: 4 },
 

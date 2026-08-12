@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   StyleSheet,
   Text,
@@ -80,7 +81,7 @@ export default function Login() {
       <View style={[styles.splitPanel, isWide ? styles.splitPanelWide : styles.splitPanelNarrow]}>
         <View style={[styles.brandColumn, isWide && styles.brandColumnWide]}>
           <View style={styles.brandMarkRing}>
-            <Ionicons name="book-outline" size={32} color="#ffffff" />
+            <Image source={require('../../assets/images/oracle-logo.png')} style={styles.brandMarkLogo} resizeMode="contain" />
           </View>
           <Text style={styles.brandTitle}>ORACLE</Text>
           <Text style={styles.brandSubtitle}>MEMBERS PORTAL</Text>
@@ -176,6 +177,7 @@ const styles = StyleSheet.create({
     width: 84, height: 84, borderRadius: 42, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
     borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center', marginBottom: 16,
   },
+  brandMarkLogo: { width: 48, height: 42 },
   brandTitle: { fontSize: 34, fontWeight: '800', color: '#ffffff', letterSpacing: 3 },
   brandSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.75)', letterSpacing: 2, marginTop: 6, fontWeight: '600' },
 

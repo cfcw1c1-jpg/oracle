@@ -2,7 +2,7 @@
   "expo": {
     "name": "oracle-app",
     "slug": "oracle-app",
-    "version": "1.0.79",
+    "version": "1.0.80",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "oracleapp",
@@ -21,16 +21,16 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/oracle-logo.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#002060",
+          "image": "./assets/images/oracle-logo.png",
+          "imageWidth": 140
         }
       ],
       "expo-sharing",

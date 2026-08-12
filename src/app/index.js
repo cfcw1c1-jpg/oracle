@@ -83,7 +83,7 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
 
         <View style={[styles.brandRow, collapsed && styles.brandRowCollapsed]}>
           <View style={styles.brandMark}>
-            <Text style={styles.brandMarkText}>O</Text>
+            <Image source={require('../../assets/images/oracle-logo.png')} style={styles.brandMarkLogo} resizeMode="contain" />
           </View>
           {!collapsed && (
             <View>
@@ -742,7 +742,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginRight: 10,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
   },
-  brandMarkText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  brandMarkLogo: { width: 21, height: 18 },
   brandTitle: { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 1.5 },
   brandSubtitle: { color: 'rgba(226,232,255,0.65)', fontSize: 10, fontWeight: '500', letterSpacing: 0.5, marginTop: 2 },
 

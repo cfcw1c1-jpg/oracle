@@ -238,7 +238,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
                 </Text>
               </View>
               <View style={styles.heroBrandMark}>
-                <Ionicons name="book-outline" size={32} color="#ffffff" />
+                <Image source={require('../../assets/images/oracle-logo.png')} style={styles.heroBrandMarkLogo} resizeMode="contain" />
               </View>
             </View>
 
@@ -431,6 +431,7 @@ const styles = StyleSheet.create({
     width: 84, height: 84, borderRadius: 42, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
     borderStyle: 'dashed', justifyContent: 'center', alignItems: 'center',
   },
+  heroBrandMarkLogo: { width: 48, height: 42 },
 
   statTilesRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   statTile: {
