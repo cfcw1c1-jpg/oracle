@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { supabase } from '../../lib/supabase';
-import { computeTrackStat, FORMATION_STAGES } from './PfoStatGenerator';
+import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole } from './PfoStatGenerator';
 
 // Palette reused from the rest of the app (app/index.js header, MembersList.js
 // gender chips, ClpMaintenance.js badges) so this screen matches the others.
@@ -25,6 +25,23 @@ const MALE_BLUE = '#0284c7';
 const FEMALE_PINK = '#db2777';
 const AMBER_BG = '#fef3c7';
 const AMBER_TEXT = '#b45309';
+
+// Fixed hue order for the pastoral-service donut so a code's color never
+// shifts as other segments come and go. "MEMBER" (the no-role default) is
+// always last and neutral, same treatment "Unspecified" gets in the gender
+// donut below.
+const PASTORAL_ROLE_ORDER = ['CL', 'UL', 'UH', 'HH', 'CH', 'FMHHL', 'HHL', 'FMHH'];
+const PASTORAL_COLORS = {
+  CL: '#2a78d6',
+  UL: '#eb6834',
+  UH: '#1baf7a',
+  HH: '#eda100',
+  CH: '#e87ba4',
+  FMHHL: '#008300',
+  HHL: '#4a3aa7',
+  FMHH: '#e34948',
+  MEMBER: '#94a3b8',
+};
 
 // "AM" is Evangelizo's code for the English-language (USCCB/Confraternity of
 // Christian Doctrine) daily readings feed -- see feed.evangelizo.org/v2/reader.php.
@@ -102,7 +119,8 @@ async function fetchEvangelizoField(dateStr, type, content) {
 
 // A donut ring built with react-native-svg: one stacked arc per segment, each
 // rotated to start where the previous one ended, sweeping clockwise from 12 o'clock.
-function GenderDonut({ segments, size = 132, thickness = 16 }) {
+// Shared by the gender and pastoral-service breakdown cards below.
+function DonutChart({ segments, size = 132, thickness = 16 }) {
   const total = segments.reduce((sum, s) => sum + s.count, 0);
   const dominant = segments.reduce((a, b) => (b.count > a.count ? b : a), segments[0]);
   const dominantPct = total > 0 ? Math.round((dominant.count / total) * 100) : 0;
@@ -212,7 +230,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
 
       const [{ data: sessionData }, membersRes, pfoRes, clpRes] = await Promise.all([
         supabase.auth.getSession(),
-        supabase.from('members').select('Gender, Status'),
+        supabase.from('members').select('Gender, Status, PastoralService'),
         supabase.from('pfo_members').select('*, members (Status)'),
         supabase.from('clp_trainings').select('*').order('start_date', { ascending: false }),
       ]);
@@ -257,6 +275,24 @@ export default function DashboardHome({ onNavigate, roleName }) {
     if (other > 0) segments.push({ label: 'Unspecified', count: other, color: '#e2e8f0' });
     return segments;
   }, [activeMembers, totalMembers]);
+
+  // Any code outside the known leadership set (including blank/legacy rows)
+  // normalizes to "MEMBER" -- matches the convention PfoStatGenerator.js and
+  // MembersList.js already use for this column.
+  const pastoralSegments = useMemo(() => {
+    const counts = { MEMBER: 0 };
+    PASTORAL_ROLE_ORDER.forEach((code) => { counts[code] = 0; });
+
+    activeMembers.forEach((m) => {
+      const role = normalizeRole(m.PastoralService);
+      counts[role in counts ? role : 'MEMBER'] += 1;
+    });
+
+    return [...PASTORAL_ROLE_ORDER, 'MEMBER']
+      .map((code) => ({ label: getRoleLabel(code), count: counts[code], color: PASTORAL_COLORS[code] }))
+      .filter((segment) => segment.count > 0)
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [activeMembers]);
 
   const stageProgress = useMemo(() => {
     return FORMATION_STAGES.map((stage) => {
@@ -364,7 +400,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
             <View style={[styles.card, styles.donutCard, isWideScreen && styles.cardHalfWide]}>
               <Text style={styles.cardTitle}>Member Gender Overview</Text>
               <View style={styles.donutSection}>
-                <GenderDonut segments={genderSegments} />
+                <DonutChart segments={genderSegments} />
                 <View style={styles.donutBreakdown}>
                   {genderSegments.map((segment) => (
                     <View key={segment.label} style={styles.donutBreakdownRow}>
@@ -395,6 +431,24 @@ export default function DashboardHome({ onNavigate, roleName }) {
                 <Text style={styles.viewReportBtnText}>View Full Report</Text>
                 <Ionicons name="chevron-forward" size={14} color="#ffffff" />
               </TouchableOpacity>
+            </View>
+          </View>
+        );
+
+        const pastoralCard = (
+          <View style={[styles.card, styles.donutCard]}>
+            <Text style={styles.cardTitle}>Pastoral Service Breakdown</Text>
+            <View style={styles.donutSection}>
+              <DonutChart segments={pastoralSegments} />
+              <View style={styles.donutBreakdown}>
+                {pastoralSegments.map((segment) => (
+                  <View key={segment.label} style={styles.donutBreakdownRow}>
+                    <View style={[styles.donutDot, { backgroundColor: segment.color }]} />
+                    <Text style={styles.donutBreakdownLabel}>{segment.label}</Text>
+                    <Text style={styles.donutBreakdownCount}>{segment.count}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
           </View>
         );
@@ -480,6 +534,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
             <View style={[styles.mainColumn, styles.mainColumnWide]}>
               {heroAndStats}
               {donutAndProgress}
+              {pastoralCard}
             </View>
             <View style={[styles.sideColumn, styles.sideColumnWide]}>
               {profileCard}
@@ -493,6 +548,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
             {profileCard}
             {gospelCard}
             {donutAndProgress}
+            {pastoralCard}
             {trainingsCard}
           </View>
         );

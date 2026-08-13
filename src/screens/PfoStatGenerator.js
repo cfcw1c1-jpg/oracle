@@ -106,7 +106,7 @@ export const FORMATION_STAGES = [
 // Same short codes MembersList.js/ManageMembers.js use for PastoralService.
 // A blank value normalizes to "MEMBER", same convention used everywhere
 // else this column is read.
-const ROLE_LABELS = {
+export const ROLE_LABELS = {
   CL: 'Chapter Leader',
   UL: 'Unit Leader',
   UH: 'Unit Head',
@@ -118,11 +118,11 @@ const ROLE_LABELS = {
   FMHH: 'Family Min Household Head',
 };
 
-function normalizeRole(code) {
+export function normalizeRole(code) {
   return (code || '').trim().toUpperCase() || 'MEMBER';
 }
 
-function getRoleLabel(code) {
+export function getRoleLabel(code) {
   return ROLE_LABELS[code] || code;
 }
 
