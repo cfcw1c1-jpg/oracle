@@ -16,7 +16,7 @@ import { supabase } from '../../lib/supabase';
 import { EmptyRow, ExportButton, exportCsv, InitialsBadge, TablePagination, usePagination } from '../components/admin-table';
 
 const NAVY = '#002060';
-const PAGE_SIZE = 10; // Groups per page, not individual requests -- a busy member's requests all land on the same page together.
+const PAGE_SIZE = 10; // Groups per page, not individual requests -- a busy requestor's requests all land on the same page together.
 const NARROW_BREAKPOINT = 760;
 
 const STATUS_STYLES = {
@@ -38,8 +38,11 @@ function formatValue(v) {
   return String(v);
 }
 
-function getInitials(name) {
-  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+// Requesters have no display name on file, just an email -- initials come
+// from the local-part instead (e.g. "jane.doe@..." -> "JD").
+function getInitialsFromEmail(email) {
+  if (!email) return '?';
+  const parts = email.split('@')[0].split(/[._-]+/).filter(Boolean);
   if (parts.length === 0) return '?';
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 }
@@ -71,11 +74,12 @@ function StatusDot({ status }) {
 // reviewed; rejecting only marks it reviewed, changing nothing.
 //
 // Same table language as MyChangeRequests.js (avatar + name, dot status,
-// CHANGES/STATUS/SUBMITTED columns), with one addition: multiple pending
-// requests for the same member_id are grouped under one member header row,
-// so a reviewer sees everything waiting on that person together and can
-// either work through them one at a time below, or approve the whole
-// group in one "Approve All".
+// CHANGES/STATUS/SUBMITTED columns), with one addition: all pending
+// requests submitted by the same account are grouped under one requestor
+// header row (even when they touch different members), so a reviewer sees
+// everything a given person has queued up together and can either work
+// through them one at a time below, or approve the whole group in one
+// "Approve All".
 export default function MemberChangeQueue({ onOpenConversation }) {
   const { width } = useWindowDimensions();
   const isNarrow = width < NARROW_BREAKPOINT;
@@ -132,14 +136,18 @@ export default function MemberChangeQueue({ onOpenConversation }) {
     [requests, statusFilter]
   );
 
-  // Groups keep the same-member requests together and adjacent, ordered by
-  // that group's most recent request -- same "newest activity first" feel
-  // the flat list had, just at the member level instead of the row level.
+  // Groups keep the same-requestor requests together and adjacent, ordered
+  // by that group's most recent request -- same "newest activity first"
+  // feel the flat list had, just at the requestor level instead of the row
+  // level. Requests with no requester account on file (deleted account) get
+  // their own singleton group each, keyed by request id, rather than being
+  // merged into one anonymous bucket.
   const groupedRequests = useMemo(() => {
     const map = new Map();
     filteredRequests.forEach((r) => {
-      if (!map.has(r.member_id)) map.set(r.member_id, []);
-      map.get(r.member_id).push(r);
+      const key = r.requested_by || `__no_requester_${r.id}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
     });
     return Array.from(map.values()).sort(
       (a, b) => new Date(b[0].created_at).getTime() - new Date(a[0].created_at).getTime()
@@ -227,12 +235,12 @@ export default function MemberChangeQueue({ onOpenConversation }) {
   }
 
   // Applies each pending request's changes in submission order (oldest
-  // first), so if two requests for this member touched the same field, the
-  // more recently submitted value is the one left standing -- then marks
-  // the whole batch approved in one update.
-  async function handleApproveAll(memberId, pendingList) {
+  // first), so if two requests for the same member touched the same field,
+  // the more recently submitted value is the one left standing -- then
+  // marks the whole batch approved in one update.
+  async function handleApproveAll(groupKey, pendingList) {
     try {
-      setProcessingGroupId(memberId);
+      setProcessingGroupId(groupKey);
       const { data: { user } } = await supabase.auth.getUser();
       const ordered = [...pendingList].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
@@ -349,11 +357,11 @@ export default function MemberChangeQueue({ onOpenConversation }) {
 
           {!loading && !isNarrow && (
             <View style={styles.headerRow}>
-              <Text style={[styles.headerCell, styles.colName]}>MEMBER</Text>
+              <Text style={[styles.headerCell, styles.colName]}>REQUESTOR</Text>
               <Text style={[styles.headerCell, styles.colChanges]}>CHANGES</Text>
               <Text style={[styles.headerCell, styles.colStatus]}>STATUS</Text>
               <Text style={[styles.headerCell, styles.colDate]}>SUBMITTED</Text>
-              <Text style={[styles.headerCell, styles.colRequester]}>REQUESTED BY</Text>
+              <Text style={[styles.headerCell, styles.colRequester]}>MEMBER</Text>
               <Text style={[styles.headerCell, styles.colAction]}>ACTIONS</Text>
               <View style={styles.colExpand} />
             </View>
@@ -367,34 +375,35 @@ export default function MemberChangeQueue({ onOpenConversation }) {
             <ScrollView style={styles.rowsScroll}>
               {pageGroups.map((group) => {
                 const first = group[0];
-                const memberId = first.member_id;
-                const memberName = `${first.members?.Lastname || ''}, ${first.members?.Firstname || ''}`.trim();
+                const groupKey = first.requested_by || `__no_requester_${first.id}`;
+                const requesterEmail = first.requested_by_email;
+                const memberCount = new Set(group.map((r) => r.member_id)).size;
                 const pendingInGroup = group.filter((r) => r.status === 'pending');
                 const onGoingInGroup = group.filter((r) => r.status === 'on_going');
-                // Still-open requests for this member -- on_going ones stay
+                // Still-open requests for this requestor -- on_going ones stay
                 // eligible for Approve All too, since claiming a request
                 // (via Message) is meant to inform the decision, not block it.
                 const actionableInGroup = [...pendingInGroup, ...onGoingInGroup];
                 const groupBadgeStatus = pendingInGroup.length > 0 ? 'pending' : (onGoingInGroup.length > 0 ? 'on_going' : null);
-                const isGroupProcessing = processingGroupId === memberId;
-                const isGroupExpanded = expandedGroupId === memberId;
+                const isGroupProcessing = processingGroupId === groupKey;
+                const isGroupExpanded = expandedGroupId === groupKey;
 
                 return (
-                  <View key={memberId} style={styles.memberGroup}>
+                  <View key={groupKey} style={styles.memberGroup}>
                     <TouchableOpacity
                       activeOpacity={0.7}
-                      onPress={() => setExpandedGroupId(isGroupExpanded ? null : memberId)}
+                      onPress={() => setExpandedGroupId(isGroupExpanded ? null : groupKey)}
                       style={[styles.row, styles.groupHeaderRow, isNarrow && styles.rowNarrow]}
                     >
                       <View style={[styles.nameCell, styles.colName]}>
-                        <InitialsBadge text={getInitials(memberName)} size={38} color="#2563eb" bg="#dbeafe" />
+                        <InitialsBadge text={getInitialsFromEmail(requesterEmail)} size={38} color="#2563eb" bg="#dbeafe" />
                         <View style={{ flex: 1, marginLeft: 10 }}>
                           <View style={styles.nameWithStatusRow}>
-                            <Text style={styles.nameText} numberOfLines={1}>{memberName || 'Unknown Member'}</Text>
+                            <Text style={styles.nameText} numberOfLines={1}>{requesterEmail || 'Unknown Requester'}</Text>
                             {!!groupBadgeStatus && <StatusDot status={groupBadgeStatus} />}
                           </View>
                           <Text style={styles.idText} numberOfLines={1}>
-                            ID: {memberId} · {group.length} request{group.length === 1 ? '' : 's'}
+                            {memberCount} member{memberCount === 1 ? '' : 's'} · {group.length} request{group.length === 1 ? '' : 's'}
                           </Text>
                         </View>
                       </View>
@@ -402,7 +411,7 @@ export default function MemberChangeQueue({ onOpenConversation }) {
                         {actionableInGroup.length > 1 && (
                           <TouchableOpacity
                             style={styles.approveAllBtn}
-                            onPress={() => handleApproveAll(memberId, actionableInGroup)}
+                            onPress={() => handleApproveAll(groupKey, actionableInGroup)}
                             disabled={isGroupProcessing || !!processingId}
                           >
                             {isGroupProcessing ? (
@@ -426,6 +435,7 @@ export default function MemberChangeQueue({ onOpenConversation }) {
                       const isExpanded = expandedId === r.id;
                       const changeEntries = Object.entries(r.changes || {});
                       const changeKeys = changeEntries.map(([k]) => k);
+                      const rowMemberName = `${r.members?.Lastname || ''}, ${r.members?.Firstname || ''}`.trim();
 
                       return (
                         <View key={r.id}>
@@ -450,11 +460,9 @@ export default function MemberChangeQueue({ onOpenConversation }) {
                               <Text style={styles.plainCellText} numberOfLines={1}>{formatTimestamp(r.created_at)}</Text>
                             </View>
 
-                            {!isNarrow && (
-                              <View style={styles.colRequester}>
-                                <Text style={styles.plainCellText} numberOfLines={1}>{r.requested_by_email || 'Unknown'}</Text>
-                              </View>
-                            )}
+                            <View style={isNarrow ? styles.narrowMetaBlock : styles.colRequester}>
+                              <Text style={styles.plainCellText} numberOfLines={1}>{rowMemberName || 'Unknown Member'} · ID: {r.member_id}</Text>
+                            </View>
 
                             <View style={[styles.colAction, isNarrow && { width: '100%', alignItems: 'flex-start', marginTop: 4 }]}>
                               {isActionable ? (
@@ -503,9 +511,6 @@ export default function MemberChangeQueue({ onOpenConversation }) {
 
                           {isExpanded && (
                             <View style={styles.diffPanel}>
-                              {isNarrow && (
-                                <Text style={styles.narrowRequesterText}>Requested by: {r.requested_by_email || 'Unknown'}</Text>
-                              )}
                               {r.status === 'on_going' && r.assigned_to_email && (
                                 <Text style={styles.assignedMetaText}>Being handled by: {r.assigned_to_email}</Text>
                               )}
@@ -664,7 +669,6 @@ const styles = StyleSheet.create({
   },
   diffFrom: { flex: 1, fontSize: 12, color: '#b91c1c' },
   diffTo: { flex: 1, fontSize: 12, color: '#15803d', fontWeight: '600' },
-  narrowRequesterText: { fontSize: 12, color: '#64748b', marginBottom: 8, fontWeight: '600' },
   assignedMetaText: { fontSize: 12, color: '#2563eb', marginBottom: 8, fontWeight: '600' },
   rejectionReasonText: { fontSize: 12, color: '#b91c1c', marginTop: 10, fontStyle: 'italic' },
 

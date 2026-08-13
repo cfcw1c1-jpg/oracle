@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Alert, Platform, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Image, Platform, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // Shared visual language for every list/table under Administration (Portal
 // Users, Roles & Page Access, Areas): a rounded white card, colored icon
@@ -61,7 +61,19 @@ export function IconBadge({ name, color = TABLE_ACCENT, bg = TABLE_ACCENT_BG, si
   );
 }
 
-export function InitialsBadge({ text, color = TABLE_ACCENT, bg = TABLE_ACCENT_BG, size = 34 }) {
+// Renders the account's uploaded profile picture when there is one (see
+// ProfileScreen.js's avatar upload, mirrored onto profiles.avatar_url), and
+// falls back to the plain initials badge otherwise -- same fallback rule as
+// Messages.js's Avatar component.
+export function InitialsBadge({ text, imageUri, color = TABLE_ACCENT, bg = TABLE_ACCENT_BG, size = 34 }) {
+  if (imageUri) {
+    return (
+      <Image
+        source={{ uri: imageUri }}
+        style={{ width: size, height: size, borderRadius: size * 0.3, backgroundColor: bg }}
+      />
+    );
+  }
   return (
     <View style={[styles.iconBadge, { backgroundColor: bg, width: size, height: size, borderRadius: size * 0.3 }]}>
       <Text style={{ color, fontWeight: '800', fontSize: size * 0.36 }}>{text}</Text>

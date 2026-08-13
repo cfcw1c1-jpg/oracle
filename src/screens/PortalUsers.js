@@ -126,7 +126,7 @@ export default function PortalUsers({ onAccessChanged }) {
     try {
       setLoading(true);
       const [profilesRes, rolesRes, areasRes, userAreasRes] = await Promise.all([
-        supabase.from('profiles').select('id, email, full_name, role_id, roles ( name )').order('email'),
+        supabase.from('profiles').select('id, email, full_name, avatar_url, role_id, roles ( name )').order('email'),
         supabase.from('roles').select('*').order('name'),
         supabase.from('areas').select('id, name, type, parent_id').order('name'),
         supabase.from('user_areas').select('profile_id, area_id, areas ( name, type )'),
@@ -368,7 +368,7 @@ export default function PortalUsers({ onAccessChanged }) {
                 return (
                   <TableRow key={item.id} last={isLast} style={styles.narrowRow}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-                      <InitialsBadge text={initials} />
+                      <InitialsBadge text={initials} imageUri={item.avatar_url} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
                         {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
@@ -384,7 +384,7 @@ export default function PortalUsers({ onAccessChanged }) {
               return (
                 <TableRow key={item.id} last={isLast}>
                   <View style={[styles.colAccount, { flexDirection: 'row', alignItems: 'center' }]}>
-                    <InitialsBadge text={initials} />
+                    <InitialsBadge text={initials} imageUri={item.avatar_url} />
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
                       {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
