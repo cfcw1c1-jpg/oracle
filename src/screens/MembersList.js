@@ -225,7 +225,14 @@ function SelectField({ label, value, options, onChange, getLabel = (v) => v, pla
   );
 }
 
-export default function MembersList() {
+// Admins/Moderators keep writing to `members` directly from this screen, as
+// before. Any other role's edits here are queued in member_change_requests
+// for one of them to review on the Change Requests page instead -- see
+// scripts/sql/add-member-change-requests.sql.
+const APPROVER_ROLES = new Set(['Admin', 'Moderator']);
+
+export default function MembersList({ roleName }) {
+  const canApproveChanges = APPROVER_ROLES.has(roleName);
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -248,6 +255,7 @@ export default function MembersList() {
   // --- Edit Member Modal state ---
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editForm, setEditForm] = useState(null);
+  const [editOriginal, setEditOriginal] = useState(null); // Snapshot at open time, diffed against on save
   const [savingEdit, setSavingEdit] = useState(false);
 
   // FlatList renders each row in its own cell wrapper, so a zIndex set on our
@@ -284,6 +292,31 @@ export default function MembersList() {
       Alert.alert(title, message);
     }
   };
+
+  // The single write path every edit on this screen goes through. Approvers
+  // apply the change immediately, same as before this feature existed. Any
+  // other role gets the change queued instead -- local `members` state is
+  // deliberately left untouched in that branch, since nothing has actually
+  // happened to the record yet.
+  async function applyOrQueueChange(memberId, changes, previousValues) {
+    if (canApproveChanges) {
+      const { error } = await supabase.from('members').update(changes).eq('MemberIDNo', memberId);
+      if (error) throw error;
+      setMembers((prev) => prev.map((m) => (m.MemberIDNo === memberId ? { ...m, ...changes } : m)));
+      return false;
+    }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from('member_change_requests').insert([{
+      member_id: memberId,
+      requested_by: user?.id || null,
+      requested_by_email: user?.email || null,
+      changes,
+      previous_values: previousValues,
+    }]);
+    if (error) throw error;
+    return true;
+  }
 
   // Areas explicitly assigned to the signed-in account (Portal Users ->
   // Areas). When any are assigned, the Area filter is narrowed to just
@@ -328,17 +361,8 @@ export default function MembersList() {
 
     try {
       setUpdatingId(memberId);
-      const { error } = await supabase
-        .from('members')
-        .update({ Gender: targetGender })
-        .eq('MemberIDNo', memberId);
-
-      if (error) throw error;
-
-      // Update Local State Matrix Layout
-      setMembers((prevMembers) =>
-        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, Gender: targetGender } : m))
-      );
+      const queued = await applyOrQueueChange(memberId, { Gender: targetGender }, { Gender: currentGender });
+      if (queued) showAlert('Submitted for Approval', 'This Gender change has been sent to an Admin/Moderator for review.');
     } catch (error) {
       const msg = `Failed updating gender status profile: ${error.message}`;
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
@@ -354,16 +378,8 @@ export default function MembersList() {
 
     try {
       setChangingRoleId(memberId);
-      const { error } = await supabase
-        .from('members')
-        .update({ PastoralService: targetRoleCode })
-        .eq('MemberIDNo', memberId);
-
-      if (error) throw error;
-
-      setMembers((prevMembers) =>
-        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, PastoralService: targetRoleCode } : m))
-      );
+      const queued = await applyOrQueueChange(memberId, { PastoralService: targetRoleCode }, { PastoralService: currentRole });
+      if (queued) showAlert('Submitted for Approval', 'This Role change has been sent to an Admin/Moderator for review.');
     } catch (error) {
       showAlert('Database Exception', `Failed updating role: ${error.message}`);
     } finally {
@@ -378,16 +394,8 @@ export default function MembersList() {
 
     try {
       setChangingStatusId(memberId);
-      const { error } = await supabase
-        .from('members')
-        .update({ Status: targetStatus })
-        .eq('MemberIDNo', memberId);
-
-      if (error) throw error;
-
-      setMembers((prevMembers) =>
-        prevMembers.map((m) => (m.MemberIDNo === memberId ? { ...m, Status: targetStatus } : m))
-      );
+      const queued = await applyOrQueueChange(memberId, { Status: targetStatus }, { Status: currentStatus });
+      if (queued) showAlert('Submitted for Approval', 'This Status change has been sent to an Admin/Moderator for review.');
     } catch (error) {
       showAlert('Database Exception', `Failed updating status: ${error.message}`);
     } finally {
@@ -399,6 +407,7 @@ export default function MembersList() {
 
   function openEditModal(member) {
     setEditForm(formFromMember(member));
+    setEditOriginal(member);
     setEditModalVisible(true);
   }
 
@@ -442,11 +451,30 @@ export default function MembersList() {
         YearRegistered: yearRegistered,
       };
 
-      const { error } = await supabase.from('members').update(payload).eq('MemberIDNo', editForm.MemberIDNo);
-      if (error) throw error;
+      // Only the fields that actually changed go into the request -- both so
+      // an approver reviews a clean diff instead of every field re-stated,
+      // and so a save with no real changes is just a no-op close.
+      const changes = {};
+      const previousValues = {};
+      Object.keys(payload).forEach((key) => {
+        const oldVal = editOriginal ? (editOriginal[key] ?? null) : null;
+        const newVal = payload[key];
+        if ((oldVal === '' ? null : oldVal) !== (newVal === '' ? null : newVal)) {
+          changes[key] = newVal;
+          previousValues[key] = oldVal;
+        }
+      });
 
-      setMembers((prev) => prev.map((m) => (m.MemberIDNo === editForm.MemberIDNo ? { ...m, ...payload } : m)));
+      if (Object.keys(changes).length === 0) {
+        setEditModalVisible(false);
+        return;
+      }
+
+      const queued = await applyOrQueueChange(editForm.MemberIDNo, changes, previousValues);
       setEditModalVisible(false);
+      if (queued) {
+        showAlert('Submitted for Approval', `${Object.keys(changes).length} field(s) sent to an Admin/Moderator for review.`);
+      }
     } catch (err) {
       showAlert('Save Failed', err.message);
     } finally {

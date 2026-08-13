@@ -24,6 +24,17 @@ function showAlert(title, message) {
   }
 }
 
+function confirmAction(title, message, onConfirm) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+}
+
 function formatSnapshotDate(iso) {
   if (!iso) return '';
   const date = new Date(iso);
@@ -176,12 +187,20 @@ export default function PfoStatGenerator() {
   const [snapshotNote, setSnapshotNote] = useState('');
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [historyExpandedId, setHistoryExpandedId] = useState(null);
+  const [deletingSnapshotId, setDeletingSnapshotId] = useState(null);
 
   useEffect(() => {
     generateStats();
     loadAssignedAreas();
-    loadSnapshots();
   }, []);
+
+  // Re-runs whenever the Area filter changes (including the initial mount)
+  // so the history below only ever shows snapshots for the Area currently
+  // selected above, instead of the 30 most recent snapshots across every
+  // Area mixed together.
+  useEffect(() => {
+    loadSnapshots();
+  }, [areaFilter]);
 
   async function loadSnapshots() {
     try {
@@ -189,6 +208,7 @@ export default function PfoStatGenerator() {
       const { data, error } = await supabase
         .from('formation_stats_snapshots')
         .select('*')
+        .eq('area_filter', areaFilter)
         .order('created_at', { ascending: false })
         .limit(30);
       if (error) throw error;
@@ -378,6 +398,26 @@ export default function PfoStatGenerator() {
     } finally {
       setSavingSnapshot(false);
     }
+  }
+
+  function handleDeleteSnapshot(snap) {
+    confirmAction(
+      'Delete Snapshot',
+      `Remove the snapshot saved ${formatSnapshotDate(snap.created_at)}${snap.note ? ` ("${snap.note}")` : ''}? This cannot be undone.`,
+      async () => {
+        setDeletingSnapshotId(snap.id);
+        try {
+          const { error } = await supabase.from('formation_stats_snapshots').delete().eq('id', snap.id);
+          if (error) throw error;
+          setSnapshots((prev) => prev.filter((s) => s.id !== snap.id));
+          if (historyExpandedId === snap.id) setHistoryExpandedId(null);
+        } catch (err) {
+          showAlert('Delete Failed', err.message);
+        } finally {
+          setDeletingSnapshotId(null);
+        }
+      }
+    );
   }
 
   function buildTextReport() {
@@ -597,9 +637,9 @@ export default function PfoStatGenerator() {
       ))}
 
       <View style={styles.historyCard}>
-        <Text style={styles.historyTitle}>Snapshot History</Text>
+        <Text style={styles.historyTitle}>Snapshot History — Area: {areaFilter}</Text>
         <Text style={styles.historySubtitle}>
-          Save the numbers above as a dated record, so future snapshots (under the same Area/Roles filters) can show progress instead of only ever a live “right now” view.
+          Save the numbers above as a dated record. History only shows snapshots saved under the Area selected above -- switch Area to see that Area's own history.
         </Text>
 
         <View style={styles.snapshotSaveRow}>
@@ -625,25 +665,39 @@ export default function PfoStatGenerator() {
         {snapshotsLoading ? (
           <ActivityIndicator color="#002060" style={{ marginVertical: 16 }} />
         ) : snapshots.length === 0 ? (
-          <Text style={styles.historyEmptyText}>No snapshots saved yet.</Text>
+          <Text style={styles.historyEmptyText}>No snapshots saved yet for the &quot;{areaFilter}&quot; area.</Text>
         ) : (
           snapshots.map((snap, index) => {
             const isExpanded = historyExpandedId === snap.id;
             return (
               <View key={snap.id} style={[styles.snapshotRow, index === snapshots.length - 1 && { borderBottomWidth: 0 }]}>
-                <TouchableOpacity
-                  style={styles.snapshotRowHeader}
-                  onPress={() => setHistoryExpandedId(isExpanded ? null : snap.id)}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.snapshotDate}>{formatSnapshotDate(snap.created_at)}</Text>
-                    <Text style={styles.snapshotMeta} numberOfLines={1}>
-                      {snap.total_members} members · Area: {snap.area_filter} · Roles: {(snap.role_filter || []).length ? snap.role_filter.join(', ') : 'All'}
-                      {snap.note ? ` · "${snap.note}"` : ''}
-                    </Text>
-                  </View>
-                  <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#64748b" />
-                </TouchableOpacity>
+                <View style={styles.snapshotRowHeader}>
+                  <TouchableOpacity
+                    style={styles.snapshotRowToggle}
+                    onPress={() => setHistoryExpandedId(isExpanded ? null : snap.id)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.snapshotDate}>{formatSnapshotDate(snap.created_at)}</Text>
+                      <Text style={styles.snapshotMeta} numberOfLines={1}>
+                        {snap.total_members} members · Area: {snap.area_filter} · Roles: {(snap.role_filter || []).length ? snap.role_filter.join(', ') : 'All'}
+                        {snap.note ? ` · "${snap.note}"` : ''}
+                      </Text>
+                    </View>
+                    <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#64748b" style={{ marginLeft: 8 }} />
+                  </TouchableOpacity>
+
+                  {deletingSnapshotId === snap.id ? (
+                    <ActivityIndicator size="small" color="#dc2626" style={styles.deleteSnapshotBtn} />
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.deleteSnapshotBtn}
+                      onPress={() => handleDeleteSnapshot(snap)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#dc2626" />
+                    </TouchableOpacity>
+                  )}
+                </View>
 
                 {isExpanded && (
                   <View style={styles.snapshotDetail}>
@@ -778,6 +832,8 @@ const styles = StyleSheet.create({
 
   snapshotRow: { borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   snapshotRowHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  snapshotRowToggle: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  deleteSnapshotBtn: { marginLeft: 10, padding: 2 },
   snapshotDate: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
   snapshotMeta: { fontSize: 11, color: '#64748b', marginTop: 2 },
 

@@ -244,21 +244,33 @@ export default function PortalUsers({ onAccessChanged }) {
     setAreasModalVisible(true);
   }
 
+  // Checking a parent Area already grants visibility into everything nested
+  // under it (visible_area_ids() walks the tree recursively server-side) --
+  // cascade the checkbox the same way, so checking "West 1" also shows its
+  // Clusters/Chapters as checked instead of looking only half-applied.
+  // Unchecking cascades the same way in reverse.
+  function getDescendantAreaIds(areaId) {
+    const children = areas.filter((a) => a.parent_id === areaId);
+    return children.flatMap((c) => [c.id, ...getDescendantAreaIds(c.id)]);
+  }
+
   async function toggleProfileArea(areaId) {
     if (!targetProfile) return;
     const assigned = new Set((userAreasByProfile[targetProfile.id] || []).map((a) => a.areaId));
+    const idsToChange = [areaId, ...getDescendantAreaIds(areaId)];
     try {
       if (assigned.has(areaId)) {
         const { error } = await supabase
           .from('user_areas')
           .delete()
           .eq('profile_id', targetProfile.id)
-          .eq('area_id', areaId);
+          .in('area_id', idsToChange);
         if (error) throw error;
       } else {
+        const idsToInsert = idsToChange.filter((id) => !assigned.has(id));
         const { error } = await supabase
           .from('user_areas')
-          .insert([{ profile_id: targetProfile.id, area_id: areaId }]);
+          .insert(idsToInsert.map((area_id) => ({ profile_id: targetProfile.id, area_id })));
         if (error) throw error;
       }
       await loadAll();

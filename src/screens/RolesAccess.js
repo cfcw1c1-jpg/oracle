@@ -347,7 +347,11 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 4 },
 
   splitPanel: { flex: 1, flexDirection: 'column', gap: 16, paddingHorizontal: 16, paddingBottom: 16 },
-  splitPanelWide: { flexDirection: 'row', alignItems: 'flex-start' },
+  // No alignItems override here -- the default 'stretch' is what lets both
+  // columns' fillCard/listScroll flex:1 actually cap to the row's height
+  // instead of growing to fit every page in the list, which is what made
+  // the Page Access list uncappable/unscrollable before.
+  splitPanelWide: { flexDirection: 'row' },
   splitColumn: { flex: 1 },
   fillCard: { flex: 1 },
 

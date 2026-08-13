@@ -25,8 +25,11 @@ import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP 
 import DashboardHome from '../screens/DashboardHome';
 import ImportCsv from '../screens/ImportCsv';
 import ManageMembers from '../screens/ManageMembers';
+import MemberChangeHistory from '../screens/MemberChangeHistory';
+import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
+import MyChangeRequests from '../screens/MyChangeRequests';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
@@ -42,6 +45,7 @@ import SystemAuditLog from '../screens/SystemAuditLog';
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
   { key: 'members', label: 'Directory', icon: 'people-outline' },
+  { key: 'myChangeRequests', label: 'My Change Requests', icon: 'hourglass-outline' },
   { key: 'manageMembers', label: 'Manage Members', icon: 'list-outline' },
   { key: 'pfo', label: 'PFO Trainings', icon: 'bar-chart-outline' },
   { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
@@ -52,6 +56,8 @@ const NAV_ITEMS = [
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
   { key: 'auditLogs', label: 'Training Lookup Logs', icon: 'terminal-outline', group: 'Logs' },
   { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline', group: 'Logs' },
+  { key: 'memberChangeQueue', label: 'Change Requests', icon: 'checkmark-done-outline', group: 'Moderation' },
+  { key: 'memberChangeHistory', label: 'Member Change History', icon: 'time-outline', group: 'Moderation' },
 ];
 
 // Human-readable labels for the System Audit Log's PAGE_VIEW rows -- every
@@ -208,6 +214,11 @@ export default function Page() {
 
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [messageToast, setMessageToast] = useState(null);
+  // Set by MemberChangeQueue's "Message" button so Messages knows which
+  // conversation to jump straight into once it mounts on the tab switch
+  // below -- cleared once Messages has consumed it, so returning to the
+  // Messages tab normally afterward doesn't keep re-opening it.
+  const [pendingConversationId, setPendingConversationId] = useState(null);
   const [disclaimerVisible, setDisclaimerVisible] = useState(false);
   const currentTabRef = useRef(currentTab);
 
@@ -441,6 +452,11 @@ export default function Page() {
     setIsMobileMenuOpen(false);
   }
 
+  function openConversationInMessages(conversationId) {
+    setPendingConversationId(conversationId);
+    handleSelectTab('messages');
+  }
+
   // Page views have no underlying table row to trigger off of, so they're
   // logged directly from here into the same audit_log the System Audit Log
   // screen reads -- table_name is prefixed "page:" so it can never collide
@@ -559,7 +575,8 @@ export default function Page() {
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
           {effectiveTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} roleName={access?.roleName} />}
-          {effectiveTab === 'members' && canView('members') && <MembersList />}
+          {effectiveTab === 'members' && canView('members') && <MembersList roleName={access?.roleName} />}
+          {effectiveTab === 'myChangeRequests' && canView('myChangeRequests') && <MyChangeRequests />}
           {effectiveTab === 'manageMembers' && canView('manageMembers') && <ManageMembers />}
           {effectiveTab === 'pfo' && canView('pfo') && <PfoList />}
           {effectiveTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
@@ -571,12 +588,22 @@ export default function Page() {
           )}
           {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
           {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
+          {effectiveTab === 'memberChangeQueue' && canView('memberChangeQueue') && (
+            <MemberChangeQueue onOpenConversation={openConversationInMessages} />
+          )}
+          {effectiveTab === 'memberChangeHistory' && canView('memberChangeHistory') && <MemberChangeHistory />}
           {effectiveTab === 'settings' && canView('settings') && (
             <Settings onAccessChanged={() => loadAccess(session.user.id)} />
           )}
           {effectiveTab === 'predictor' && <PredictorScreen />}
           {effectiveTab === 'profile' && <ProfileScreen />}
-          {effectiveTab === 'messages' && <Messages onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))} />}
+          {effectiveTab === 'messages' && (
+            <Messages
+              onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))}
+              initialConversationId={pendingConversationId}
+              onInitialConversationHandled={() => setPendingConversationId(null)}
+            />
+          )}
           {NAV_ITEMS.some((item) => item.key === effectiveTab) && !canView(effectiveTab) && (
             <View style={styles.noAccessWrap}>
               <Ionicons name="lock-closed-outline" size={28} color="#94a3b8" />

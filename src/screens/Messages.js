@@ -59,7 +59,7 @@ function Avatar({ avatarUrl, name, email }) {
 // (with unread counts) and message thread both stay live via Supabase
 // Realtime; RLS ensures a subscriber only ever receives rows for
 // conversations they're actually a participant of.
-export default function Messages({ onConversationsChanged }) {
+export default function Messages({ onConversationsChanged, initialConversationId, onInitialConversationHandled }) {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
 
@@ -145,6 +145,19 @@ export default function Messages({ onConversationsChanged }) {
     loadMessages(conversationId);
     markAsRead(conversationId);
   }
+
+  // Set by the Change Requests queue's "Message" button (via
+  // src/app/index.js's pendingConversationId) so arriving here already
+  // jumps straight into that conversation instead of the empty "select a
+  // conversation" state. Reported back immediately so it only fires once --
+  // otherwise navigating away and back to Messages normally would keep
+  // re-opening the same stale conversation.
+  useEffect(() => {
+    if (!initialConversationId) return;
+    openConversation(initialConversationId);
+    onInitialConversationHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConversationId]);
 
   // Realtime: one subscription per open conversation, torn down and
   // recreated whenever the selection changes.
@@ -481,7 +494,7 @@ export default function Messages({ onConversationsChanged }) {
               </TouchableOpacity>
             )}
 
-            <ScrollView style={{ maxHeight: 280, marginTop: 8 }}>
+            <ScrollView style={{ maxHeight: 280, marginTop: 8 }} keyboardShouldPersistTaps="handled">
               {startingConversation && <ActivityIndicator color={NAVY} style={{ marginVertical: 12 }} />}
               {!startingConversation && userSearchResults.map((p) => (
                 <TouchableOpacity key={p.id} style={styles.userResultRow} onPress={() => handleStartConversation(p)}>
