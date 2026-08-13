@@ -30,7 +30,8 @@ const HOUSEHOLD_COL = { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 16
 const GENDER_COL = { width: 120 };
 const STATUS_COL = { width: 130 };
 const ROLE_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 180 };
-const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 130 + 180;
+const ACTIONS_COL = { width: 60 };
+const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 130 + 180 + 60;
 
 function getInitials(firstName, lastName) {
   const first = (firstName || '').trim().charAt(0);
@@ -87,6 +88,20 @@ function getStatusColors(status) {
   return STATUS_COLORS[status] || UNKNOWN_STATUS_COLORS;
 }
 
+function formFromMember(m) {
+  return {
+    MemberIDNo: m.MemberIDNo || '',
+    Lastname: m.Lastname || '',
+    Firstname: m.Firstname || '',
+    Gender: m.Gender || '',
+    Status: m.Status || 'Active',
+    AreaName: m.AreaName || '',
+    NameOfHouseholdHead: m.NameOfHouseholdHead || '',
+    PastoralService: m.PastoralService || '',
+    YearRegistered: m.YearRegistered != null ? String(m.YearRegistered) : '',
+  };
+}
+
 // A small "value: X ▾" pressable that opens a single-select list of options.
 // Used three times below (Gender / Role / Area) so it's factored out once.
 function FilterDropdown({ label, value, options, onChange, getLabel = (v) => v }) {
@@ -122,6 +137,94 @@ function FilterDropdown({ label, value, options, onChange, getLabel = (v) => v }
   );
 }
 
+// A plain text input that also offers a dropdown of existing values matching
+// what's typed so far -- picking one just fills the field, it never
+// restricts what can actually be saved. Same component ManageMembers.js
+// uses for its Area/Household Head fields.
+function AutocompleteField({ label, value, onChangeText, suggestions, placeholder }) {
+  const [focused, setFocused] = useState(false);
+
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    const pool = q
+      ? suggestions.filter((s) => s.toLowerCase().includes(q) && s.toLowerCase() !== q)
+      : suggestions;
+    return pool.slice(0, 8);
+  }, [value, suggestions]);
+
+  return (
+    // Boosting zIndex only while open/focused -- otherwise a sibling field
+    // later in the same row (Status, Pastoral Service, ...) paints over this
+    // one's dropdown regardless of the shared row-level zIndex, since paint
+    // order within a stacking context follows DOM order, not row zIndex.
+    <View style={[styles.fieldWrap, focused && { zIndex: 50 }]}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#94a3b8"
+        autoCorrect={false}
+        onFocus={() => setFocused(true)}
+        // A short delay lets the suggestion's own onPress land first --
+        // otherwise blur closes the list before the tap registers.
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+      />
+      {focused && matches.length > 0 && (
+        <View style={styles.suggestionBox}>
+          <ScrollView style={{ maxHeight: 180 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+            {matches.map((s) => (
+              <TouchableOpacity
+                key={s}
+                style={styles.suggestionItem}
+                onPress={() => { onChangeText(s); setFocused(false); }}
+              >
+                <Text style={styles.suggestionText}>{s}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function SelectField({ label, value, options, onChange, getLabel = (v) => v, placeholder = 'Select…' }) {
+  const [open, setOpen] = useState(false);
+  return (
+    // Same per-field zIndex boost as AutocompleteField -- without it, an open
+    // Status dropdown gets painted over by the Pastoral Service field next
+    // to it in the same row.
+    <View style={[styles.fieldWrap, open && { zIndex: 50 }]}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TouchableOpacity style={styles.selectButton} onPress={() => setOpen((o) => !o)}>
+        <Text style={value ? styles.selectValueText : styles.selectPlaceholderText}>
+          {value ? getLabel(value) : placeholder}
+        </Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={14} color="#64748b" />
+      </TouchableOpacity>
+      {open && (
+        <View style={styles.suggestionBox}>
+          <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled>
+            {options.map((option) => (
+              <TouchableOpacity
+                key={option}
+                style={[styles.suggestionItem, option === value && styles.suggestionItemActive]}
+                onPress={() => { onChange(option); setOpen(false); }}
+              >
+                <Text style={[styles.suggestionText, option === value && styles.suggestionTextActive]}>
+                  {getLabel(option)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function MembersList() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -141,6 +244,11 @@ export default function MembersList() {
   const [changingRoleId, setChangingRoleId] = useState(null);
   const [statusMenuOpenFor, setStatusMenuOpenFor] = useState(null);
   const [changingStatusId, setChangingStatusId] = useState(null);
+
+  // --- Edit Member Modal state ---
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editForm, setEditForm] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // FlatList renders each row in its own cell wrapper, so a zIndex set on our
   // row's own View never wins against sibling rows below it (they belong to
@@ -286,6 +394,81 @@ export default function MembersList() {
       setChangingStatusId(null);
     }
   }
+
+  // --- Edit Member Modal handlers ---
+
+  function openEditModal(member) {
+    setEditForm(formFromMember(member));
+    setEditModalVisible(true);
+  }
+
+  function closeEditModal() {
+    if (savingEdit) return;
+    setEditModalVisible(false);
+  }
+
+  function setEditField(key, value) {
+    setEditForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  const canSaveEdit = !!(editForm && editForm.Lastname.trim() && editForm.Firstname.trim() && !savingEdit);
+
+  async function handleSaveEdit() {
+    if (!editForm) return;
+    const lastname = editForm.Lastname.trim();
+    const firstname = editForm.Firstname.trim();
+    if (!lastname || !firstname) {
+      showAlert('Missing Information', 'Last Name and First Name are required.');
+      return;
+    }
+
+    const yearText = editForm.YearRegistered.trim();
+    const yearRegistered = yearText ? Number(yearText) : null;
+    if (yearText && !Number.isInteger(yearRegistered)) {
+      showAlert('Invalid Year', 'Year Registered must be a whole number, e.g. 2024.');
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const payload = {
+        Lastname: lastname,
+        Firstname: firstname,
+        Gender: editForm.Gender || null,
+        Status: editForm.Status || 'Active',
+        AreaName: editForm.AreaName.trim() || null,
+        NameOfHouseholdHead: editForm.NameOfHouseholdHead.trim() || null,
+        PastoralService: editForm.PastoralService || null,
+        YearRegistered: yearRegistered,
+      };
+
+      const { error } = await supabase.from('members').update(payload).eq('MemberIDNo', editForm.MemberIDNo);
+      if (error) throw error;
+
+      setMembers((prev) => prev.map((m) => (m.MemberIDNo === editForm.MemberIDNo ? { ...m, ...payload } : m)));
+      setEditModalVisible(false);
+    } catch (err) {
+      showAlert('Save Failed', err.message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  // Existing Area/Household Head values across the directory, offered as
+  // autocomplete suggestions in the edit form (same convention as
+  // ManageMembers.js) -- the fields themselves stay free text.
+  const { areaSuggestions, householdSuggestions } = useMemo(() => {
+    const areas = new Set();
+    const heads = new Set();
+    members.forEach((m) => {
+      if (m.AreaName?.trim()) areas.add(m.AreaName.trim());
+      if (m.NameOfHouseholdHead?.trim()) heads.add(m.NameOfHouseholdHead.trim());
+    });
+    return {
+      areaSuggestions: Array.from(areas).sort(),
+      householdSuggestions: Array.from(heads).sort(),
+    };
+  }, [members]);
 
   const roleOptions = useMemo(() => {
     const values = new Set(members.map((m) => (m.PastoralService || 'MEMBER').trim()));
@@ -580,6 +763,9 @@ export default function MembersList() {
               <View style={[styles.headerCell, ROLE_COL, { justifyContent: 'center' }]}>
                 <Text style={styles.headerText}>ROLE & AREA</Text>
               </View>
+              <View style={[styles.headerCell, ACTIONS_COL, { justifyContent: 'center' }]}>
+                <Text style={styles.headerText}>EDIT</Text>
+              </View>
             </View>
 
             <FlatList
@@ -728,6 +914,12 @@ export default function MembersList() {
                       </View>
 
                       <View style={styles.areaBadge}><Text style={styles.areaBadgeText}>{item.AreaName || 'No Area'}</Text></View>
+                    </View>
+
+                    <View style={[styles.cell, ACTIONS_COL, { alignItems: 'center' }]}>
+                      <TouchableOpacity onPress={() => openEditModal(item)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="create-outline" size={18} color="#2563eb" />
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
@@ -892,6 +1084,124 @@ export default function MembersList() {
           </ScrollView>
         </View>
       </Modal>
+
+      <Modal visible={editModalVisible} animationType="slide" transparent onRequestClose={closeEditModal}>
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
+            <View style={[styles.modalContent, styles.editModalContent]}>
+              <Text style={styles.modalTitle}>Edit Member</Text>
+
+              {editForm && (
+                <>
+                  <View style={[styles.row, { zIndex: 40 }]}>
+                    <View style={styles.fieldWrap}>
+                      <Text style={styles.fieldLabel}>Member ID</Text>
+                      <TextInput style={[styles.input, styles.inputDisabled]} value={editForm.MemberIDNo} editable={false} />
+                    </View>
+                    <View style={styles.fieldWrap}>
+                      <Text style={styles.fieldLabel}>Last Name *</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={editForm.Lastname}
+                        onChangeText={(v) => setEditField('Lastname', v)}
+                        placeholder="Dela Cruz"
+                        placeholderTextColor="#94a3b8"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    <View style={styles.fieldWrap}>
+                      <Text style={styles.fieldLabel}>First Name *</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={editForm.Firstname}
+                        onChangeText={(v) => setEditField('Firstname', v)}
+                        placeholder="Juan"
+                        placeholderTextColor="#94a3b8"
+                        autoCorrect={false}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={[styles.row, { zIndex: 30 }]}>
+                    <View style={styles.fieldWrap}>
+                      <Text style={styles.fieldLabel}>Gender</Text>
+                      <View style={styles.genderToggleRow}>
+                        {['Male', 'Female'].map((g) => {
+                          const active = editForm.Gender === g;
+                          return (
+                            <TouchableOpacity
+                              key={g}
+                              style={[styles.genderToggle, active && styles.genderToggleActive]}
+                              onPress={() => setEditField('Gender', active ? '' : g)}
+                            >
+                              <Text style={[styles.genderToggleText, active && styles.genderToggleTextActive]}>{g}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    <SelectField label="Status" value={editForm.Status} options={STATUS_OPTIONS} onChange={(v) => setEditField('Status', v)} />
+
+                    <SelectField
+                      label="Pastoral Service"
+                      value={editForm.PastoralService}
+                      options={ROLE_OPTION_CODES}
+                      onChange={(v) => setEditField('PastoralService', v)}
+                      getLabel={getRoleLabel}
+                      placeholder="Select role…"
+                    />
+                  </View>
+
+                  <View style={[styles.row, { zIndex: 20 }]}>
+                    <AutocompleteField
+                      label="Area"
+                      value={editForm.AreaName}
+                      onChangeText={(v) => setEditField('AreaName', v)}
+                      suggestions={areaSuggestions}
+                      placeholder="e.g. West 1C2"
+                    />
+
+                    <AutocompleteField
+                      label="Household Head"
+                      value={editForm.NameOfHouseholdHead}
+                      onChangeText={(v) => setEditField('NameOfHouseholdHead', v)}
+                      suggestions={householdSuggestions}
+                      placeholder="Name of household head"
+                    />
+
+                    <View style={styles.fieldWrap}>
+                      <Text style={styles.fieldLabel}>Year Registered</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={editForm.YearRegistered}
+                        onChangeText={(v) => setEditField('YearRegistered', v.replace(/[^0-9]/g, ''))}
+                        placeholder="e.g. 2024"
+                        placeholderTextColor="#94a3b8"
+                        keyboardType="number-pad"
+                        maxLength={4}
+                      />
+                    </View>
+                  </View>
+                </>
+              )}
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={closeEditModal} disabled={savingEdit}>
+                  <Text style={styles.btnTextCancel}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnConfirm, !canSaveEdit && styles.btnDisabled]}
+                  onPress={handleSaveEdit}
+                  disabled={!canSaveEdit}
+                >
+                  {savingEdit ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.btnTextConfirm}>Save Changes</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1048,6 +1358,37 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a', marginBottom: 16 },
   inputLabel: { fontSize: 11, fontWeight: '700', color: '#475569', textTransform: 'uppercase', marginBottom: 6 },
+
+  editModalContent: { maxWidth: 640, gap: 14 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  fieldWrap: { flexGrow: 1, flexBasis: 220, position: 'relative' },
+  fieldLabel: { fontSize: 11, fontWeight: '700', color: '#475569', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#1e293b', backgroundColor: '#ffffff' },
+  inputDisabled: { backgroundColor: '#f1f5f9', color: '#94a3b8' },
+
+  selectButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#ffffff',
+  },
+  selectValueText: { fontSize: 14, color: '#1e293b', fontWeight: '600' },
+  selectPlaceholderText: { fontSize: 14, color: '#94a3b8' },
+
+  suggestionBox: {
+    position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4,
+    backgroundColor: '#ffffff', borderRadius: 8, borderWidth: 1, borderColor: '#cbd5e1',
+    shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 8,
+    elevation: 8, zIndex: 40, overflow: 'hidden',
+  },
+  suggestionItem: { paddingHorizontal: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  suggestionItemActive: { backgroundColor: '#eff6ff' },
+  suggestionText: { fontSize: 13, color: '#334155', fontWeight: '500' },
+  suggestionTextActive: { color: '#002060', fontWeight: '700' },
+
+  genderToggleRow: { flexDirection: 'row', gap: 8 },
+  genderToggle: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#ffffff' },
+  genderToggleActive: { backgroundColor: '#002060', borderColor: '#002060' },
+  genderToggleText: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  genderToggleTextActive: { color: '#ffffff' },
 
   stagedContainer: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: '#f8fafc',

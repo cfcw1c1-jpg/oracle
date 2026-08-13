@@ -13,6 +13,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
 
 // Complete master tracking matrix columns list synced with full definitions data
@@ -188,7 +189,7 @@ const getCleanTrackCode = (rawId) => {
 };
 
 export default function PfoTrainingReports() {
-  const [selectedTrainings, setSelectedTrainings] = useState([TRAINING_COLUMNS[0]]);
+  const [selectedTrainings, setSelectedTrainings] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [reportData, setReportData] = useState([]);
@@ -232,6 +233,21 @@ export default function PfoTrainingReports() {
     }
   };
 
+  // Operates on whatever the search box currently narrows the list down to
+  // (all tracks when the search is empty) -- same convention as the
+  // Directory's "select all" checkbox, which only ever acts on the filtered
+  // rows visible at the time.
+  const handleToggleSelectAll = () => {
+    if (allFilteredSelected) {
+      const filteredIds = new Set(filteredTrainingColumns.map((t) => t.id));
+      setSelectedTrainings(selectedTrainings.filter((t) => !filteredIds.has(t.id)));
+    } else {
+      const selectedIds = new Set(selectedTrainings.map((t) => t.id));
+      const toAdd = filteredTrainingColumns.filter((t) => !selectedIds.has(t.id));
+      setSelectedTrainings([...selectedTrainings, ...toAdd]);
+    }
+  };
+
   async function generateReport() {
     if (selectedTrainings.length === 0) {
       setReportData([]);
@@ -248,13 +264,14 @@ export default function PfoTrainingReports() {
       if (error) throw error;
 
       const processedData = (data || []).map(item => {
-        const hasAllAttended = selectedTrainings.every(t => {
+        const attendedCount = selectedTrainings.filter(t => {
           const val = item[t.id];
           return val === 'Y' || val === 'y';
-        });
+        }).length;
         return {
           ...item,
-          attendedAll: hasAllAttended
+          attendedCount,
+          attendedAll: attendedCount === selectedTrainings.length
         };
       });
 
@@ -283,6 +300,9 @@ export default function PfoTrainingReports() {
     });
   }, [searchQuery]);
 
+  const allFilteredSelected = filteredTrainingColumns.length > 0
+    && filteredTrainingColumns.every((item) => selectedTrainings.some((t) => t.id === item.id));
+
   const areaOptions = useMemo(() => {
     if (assignedAreaNames.length > 0) {
       return ['All', ...Array.from(new Set(assignedAreaNames)).sort()];
@@ -301,20 +321,27 @@ export default function PfoTrainingReports() {
     });
   }, [reportData, areaFilter]);
 
-  // Builds the exact same matrix content used by both the TXT and PDF exports,
-  // so the two formats never drift out of sync with each other.
-  function buildReportContent() {
-    const matrixRegistry = filteredReportData;
-
-    const now = new Date();
+  // Shared by every export format so filenames never drift out of sync.
+  function makeFileTimestamp(now) {
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
     const seconds = String(now.getSeconds()).padStart(2, '0');
+    return `${year}${month}${day}_${hours}${minutes}${seconds}`;
+  }
 
-    const fileTimestamp = `${year}${month}${day}_${hours}${minutes}${seconds}`;
+  // Builds the exact same matrix content used by both the TXT and PDF exports,
+  // so the two formats never drift out of sync with each other.
+  function buildReportContent() {
+    const matrixRegistry = filteredReportData;
+
+    const now = new Date();
+    const fileTimestamp = makeFileTimestamp(now);
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
     const displayTimestamp = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
     let textContent = `=======================================================================\n`;
@@ -417,6 +444,76 @@ export default function PfoTrainingReports() {
     }
   }
 
+  // One column per selected track (Y/N) instead of the TXT export's combined
+  // "Attended: ... | Not Attended: ..." string -- easier to filter/pivot in Excel.
+  function buildReportRows() {
+    const header = ['#', 'Member Name', 'Member ID', 'Area', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
+
+    const rows = filteredReportData.map((item, index) => {
+      const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
+      const trackCells = selectedTrainings.map((t) => {
+        const val = item[t.id];
+        return val === 'Y' || val === 'y' ? 'Y' : 'N';
+      });
+      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', ...trackCells, item.attendedAll ? 'Attended' : 'Missing'];
+    });
+
+    return [header, ...rows];
+  }
+
+  async function handleExportXlsx() {
+    if (selectedTrainings.length === 0) {
+      Alert.alert('No Filters Selected', 'Please select at least one training column filter target before running extraction.');
+      return;
+    }
+    if (filteredReportData.length === 0) {
+      Alert.alert('Empty Dataset', 'There are no member records available to process.');
+      return;
+    }
+    try {
+      setLoading(true);
+
+      const safeFileName = `cfc-pfo-report-${makeFileTimestamp(new Date())}.xlsx`;
+      const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+      const worksheet = XLSX.utils.aoa_to_sheet(buildReportRows());
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'PFO Report');
+      const base64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+
+      if (Platform.OS === 'web') {
+        const byteChars = atob(base64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const byteArray = new Uint8Array(byteNumbers);
+
+        const element = document.createElement('a');
+        const file = new Blob([byteArray], { type: mimeType });
+        element.href = URL.createObjectURL(file);
+        element.download = safeFileName;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+        return;
+      }
+
+      const file = new File(Paths.document, safeFileName);
+      file.create({ overwrite: true });
+      file.write(base64, { encoding: 'base64' });
+
+      await Sharing.shareAsync(file.uri, {
+        mimeType,
+        dialogTitle: `Export Matrix Registry`
+      });
+
+    } catch (err) {
+      Alert.alert('Export Failed', 'An error occurred while compiling your matrix spreadsheet file.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const renderReportItem = ({ item, index }) => {
     const fullName = item.members 
       ? `${item.members.Lastname}, ${item.members.Firstname}` 
@@ -438,8 +535,17 @@ export default function PfoTrainingReports() {
     );
   };
 
-  const passedCount = useMemo(() => {
-    return filteredReportData.filter(item => item.attendedAll).length;
+  // Passed = attended every selected track. Failed = attended none of them.
+  // Mixed = attended some but not all -- a partial record that's neither a
+  // clean pass nor a clean fail, worth calling out on its own.
+  const { passedCount, failedCount, mixedCount } = useMemo(() => {
+    let passed = 0, failed = 0, mixed = 0;
+    filteredReportData.forEach((item) => {
+      if (item.attendedCount === 0) failed++;
+      else if (item.attendedAll) passed++;
+      else mixed++;
+    });
+    return { passedCount: passed, failedCount: failed, mixedCount: mixed };
   }, [filteredReportData]);
 
   return (
@@ -452,10 +558,11 @@ export default function PfoTrainingReports() {
         <Text style={styles.subtitle}>Filter multiple milestone validation tracks synchronously.</Text>
       </View>
 
+      <View style={styles.filtersRow}>
       <View style={styles.dropdownWrapper}>
         <Text style={styles.fieldLabel}>Selected Filter Targets ({selectedTrainings.length}):</Text>
-        <TouchableOpacity 
-          style={styles.dropdownHeader} 
+        <TouchableOpacity
+          style={styles.dropdownHeader}
           activeOpacity={0.8}
           onPress={() => setDropdownOpen(!dropdownOpen)}
         >
@@ -479,6 +586,18 @@ export default function PfoTrainingReports() {
                 clearButtonMode="while-editing"
               />
             </View>
+
+            <TouchableOpacity style={styles.selectAllRow} onPress={handleToggleSelectAll}>
+              <Ionicons
+                name={allFilteredSelected ? 'checkbox' : 'square-outline'}
+                size={16}
+                color={allFilteredSelected ? '#2563eb' : '#94a3b8'}
+                style={styles.checkboxIcon}
+              />
+              <Text style={styles.selectAllText}>
+                {allFilteredSelected ? 'Deselect All' : 'Select All'} ({filteredTrainingColumns.length})
+              </Text>
+            </TouchableOpacity>
 
             <FlatList
               data={filteredTrainingColumns}
@@ -513,9 +632,9 @@ export default function PfoTrainingReports() {
                 <Text style={styles.dropdownEmptyText}>No training tracks match your entry.</Text>
               }
             />
-            
-            <TouchableOpacity 
-              style={styles.closeDropdownButton} 
+
+            <TouchableOpacity
+              style={styles.closeDropdownButton}
               onPress={() => setDropdownOpen(false)}
             >
               <Text style={styles.closeDropdownButtonText}>Apply Selected Filters</Text>
@@ -559,11 +678,39 @@ export default function PfoTrainingReports() {
           </View>
         )}
       </View>
+      </View>
 
       <View style={styles.actionRowContainer}>
-        <View style={styles.kpiSplitCard}>
-          <Text style={styles.kpiLabel}>Passed Matches</Text>
-          <Text style={styles.kpiValue}>{loading ? '...' : passedCount}</Text>
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, styles.statCardPassed]}>
+            <View style={[styles.statIconChip, styles.statIconChipPassed]}>
+              <Ionicons name="checkmark-circle-outline" size={22} color="#16a34a" />
+            </View>
+            <View>
+              <Text style={styles.statValue}>{loading ? '...' : passedCount}</Text>
+              <Text style={styles.statLabel}>Passed Matches</Text>
+            </View>
+          </View>
+
+          <View style={[styles.statCard, styles.statCardFailed]}>
+            <View style={[styles.statIconChip, styles.statIconChipFailed]}>
+              <Ionicons name="close-circle-outline" size={22} color="#dc2626" />
+            </View>
+            <View>
+              <Text style={styles.statValue}>{loading ? '...' : failedCount}</Text>
+              <Text style={styles.statLabel}>Failed Matches</Text>
+            </View>
+          </View>
+
+          <View style={[styles.statCard, styles.statCardMixed]}>
+            <View style={[styles.statIconChip, styles.statIconChipMixed]}>
+              <Ionicons name="shuffle-outline" size={22} color="#b45309" />
+            </View>
+            <View>
+              <Text style={styles.statValue}>{loading ? '...' : mixedCount}</Text>
+              <Text style={styles.statLabel}>Mixed Matches</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.buttonsContainer}>
@@ -573,8 +720,18 @@ export default function PfoTrainingReports() {
             onPress={handleExportTxt}
             disabled={loading}
           >
-            <Ionicons name="document-text-outline" size={15} color="#ffffff" style={styles.actionButtonIcon} />
+            <Ionicons name="document-text-outline" size={14} color="#ffffff" style={styles.actionButtonIcon} />
             <Text style={styles.actionButtonText}>Export as TXT</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionButton, styles.xlsxButton]}
+            activeOpacity={0.7}
+            onPress={handleExportXlsx}
+            disabled={loading}
+          >
+            <Ionicons name="grid-outline" size={14} color="#ffffff" style={styles.actionButtonIcon} />
+            <Text style={styles.actionButtonText}>Export as XLSX</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -620,8 +777,14 @@ const styles = StyleSheet.create({
   titleIcon: { marginRight: 8 },
   title: { fontSize: 22, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4 },
-  dropdownWrapper: { zIndex: 10, marginBottom: 14 },
-  areaDropdownWrapper: { zIndex: 9, marginBottom: 14, maxWidth: 260 },
+  // zIndex on the individual dropdowns below only orders them against each
+  // other -- it doesn't let them float above actionRowContainer/reportCard,
+  // which are this row's siblings, not its children. This wrapper needs its
+  // own zIndex so the whole row (and whichever dropdown is open inside it)
+  // paints above the cards/table that follow it.
+  filtersRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 12, marginBottom: 14, zIndex: 10 },
+  dropdownWrapper: { zIndex: 10, flex: 2, minWidth: 260 },
+  areaDropdownWrapper: { zIndex: 9, flex: 1, minWidth: 180, maxWidth: 280 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -647,6 +810,11 @@ const styles = StyleSheet.create({
   dropdownMenuList: { maxHeight: 220 },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   dropdownItemActive: { backgroundColor: '#eff6ff' },
+  selectAllRow: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#e2e8f0', backgroundColor: '#f8fafc',
+  },
+  selectAllText: { fontSize: 12, fontWeight: '700', color: '#334155' },
   checkboxContainer: { flexDirection: 'row', alignItems: 'center' },
   checkboxIcon: { marginRight: 8 },
   dropdownItemText: { fontSize: 13, fontWeight: '500', color: '#334155' },
@@ -654,15 +822,29 @@ const styles = StyleSheet.create({
   dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700', paddingLeft: 22 },
   closeDropdownButton: { backgroundColor: '#002060', margin: 8, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
   closeDropdownButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
-  actionRowContainer: { flexDirection: 'row', alignItems: 'stretch', justifyContent: 'space-between', marginBottom: 14, gap: 10 },
-  kpiSplitCard: { flex: 0.35, backgroundColor: '#ffffff', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e2e8f0', justifyContent: 'center' },
-  kpiLabel: { fontSize: 10, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
-  kpiValue: { fontSize: 22, fontWeight: '800', color: '#002060', marginTop: 2 },
-  buttonsContainer: { flex: 0.65, flexDirection: 'row', gap: 8, justifyContent: 'center' },
-  actionButton: { flex: 1, flexDirection: 'row', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 8, justifyContent: 'center', alignItems: 'center' },
-  completedButton: { backgroundColor: '#2563eb' },
-  actionButtonIcon: { marginRight: 8 },
-  actionButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  actionRowContainer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 },
+  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, flex: 1 },
+  statCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1, minWidth: 180,
+    backgroundColor: '#ffffff', borderRadius: 16, paddingVertical: 18, paddingHorizontal: 18,
+    borderWidth: 1, borderColor: '#e2e8f0', shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
+  },
+  statCardPassed: { borderColor: '#bbf7d0' },
+  statCardFailed: { borderColor: '#fecaca' },
+  statCardMixed: { borderColor: '#fde68a' },
+  statIconChip: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  statIconChipPassed: { backgroundColor: '#dcfce7' },
+  statIconChipFailed: { backgroundColor: '#fee2e2' },
+  statIconChipMixed: { backgroundColor: '#fef3c7' },
+  statValue: { fontSize: 26, fontWeight: '800', color: '#0f172a' },
+  statLabel: { fontSize: 12, fontWeight: '700', color: '#64748b', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
+  buttonsContainer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  actionButton: { flexDirection: 'row', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center' },
+  completedButton: { backgroundColor: '#002060' },
+  xlsxButton: { backgroundColor: '#15803d' },
+  actionButtonIcon: { marginRight: 6 },
+  actionButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
   reportCard: { flex: 1, backgroundColor: '#ffffff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },
   tableHeader: { flexDirection: 'row', backgroundColor: '#f8fafc', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingHorizontal: 12 },
   headerText: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
