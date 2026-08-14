@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -37,6 +38,7 @@ function formatDate(dateStr) {
 }
 
 export default function ProfileScreen() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -288,6 +290,10 @@ export default function ProfileScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity style={styles.privacyLink} onPress={() => router.push('/privacy-policy')}>
+        <Text style={styles.privacyLinkText}>Privacy Policy</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -346,4 +352,7 @@ const styles = StyleSheet.create({
   },
   saveButtonDisabled: { opacity: 0.7 },
   saveButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+
+  privacyLink: { alignItems: 'center', paddingVertical: 20 },
+  privacyLinkText: { color: '#64748b', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
 });

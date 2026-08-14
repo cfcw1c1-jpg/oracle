@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -26,6 +27,7 @@ function showAlert(title, message) {
 }
 
 export default function Login() {
+  const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 760;
 
@@ -147,6 +149,10 @@ export default function Login() {
           </View>
         </View>
       </View>
+
+      <TouchableOpacity style={styles.privacyLink} onPress={() => router.push('/privacy-policy')}>
+        <Text style={styles.privacyLinkText}>Privacy Policy</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -200,4 +206,7 @@ const styles = StyleSheet.create({
   forgotText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontStyle: 'italic' },
   goButton: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingVertical: 4, paddingLeft: 12 },
   goText: { color: '#ffffff', fontSize: 18, fontWeight: '700' },
+
+  privacyLink: { marginTop: 28, padding: 6 },
+  privacyLinkText: { color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: '600', textDecorationLine: 'underline' },
 });

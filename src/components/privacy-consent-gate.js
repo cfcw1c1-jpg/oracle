@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -33,6 +34,7 @@ const MODERATOR_EMAILS = [
 // principle. Agreement is remembered per-device via AsyncStorage so
 // returning visitors aren't re-blocked every time.
 export default function PrivacyConsentGate({ purpose, children }) {
+  const router = useRouter();
   const [agreed, setAgreed] = useState(null); // null = not checked yet
   const [checkboxChecked, setCheckboxChecked] = useState(false);
 
@@ -81,6 +83,10 @@ export default function PrivacyConsentGate({ purpose, children }) {
             request deletion of your personal data. For any privacy concerns or requests, contact the
             moderators below.
           </Text>
+
+          <TouchableOpacity onPress={() => router.push('/privacy-policy')}>
+            <Text style={styles.policyLink}>Read the full Privacy Policy</Text>
+          </TouchableOpacity>
 
           {MODERATOR_EMAILS.map((email) => (
             <TouchableOpacity key={email} style={styles.emailRow} onPress={() => Linking.openURL(`mailto:${email}`)}>
@@ -132,6 +138,7 @@ const styles = StyleSheet.create({
   // one -- it just takes whatever room is actually left.
   scroll: { flexShrink: 1, marginBottom: 14 },
   text: { fontSize: 13, color: '#334155', lineHeight: 19, marginBottom: 10 },
+  policyLink: { fontSize: 13, color: '#2563eb', fontWeight: '700', marginBottom: 12, textDecorationLine: 'underline' },
   emailRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   emailText: { fontSize: 12, color: '#334155', fontWeight: '600' },
 
