@@ -34,6 +34,7 @@ const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
 const NARROW_BREAKPOINT = 720;
 const PAGE_SIZE = 10;
+const AREA_PILL_LIMIT = 2;
 
 // Matches the Sector/Cluster/Chapter palette used on the Areas screen so a
 // badge reads the same way in both places.
@@ -400,14 +401,21 @@ export default function PortalUsers({ onAccessChanged }) {
                 ? <Pill label={item.roles.name} color="#1d4ed8" bg="#dbeafe" />
                 : <Pill label="Unassigned" color="#64748b" bg="#f1f5f9" />;
 
+              // Capped to keep every row a fixed height -- an account scoped
+              // to a handful of Clusters/Chapters used to wrap into a wall
+              // of pills here. Tapping the cell (same as the "Areas" action
+              // link) opens the full list in the Assign Areas modal.
+              const visibleAreas = assignedAreas.slice(0, AREA_PILL_LIMIT);
+              const hiddenAreaCount = assignedAreas.length - visibleAreas.length;
               const areaPills = assignedAreas.length === 0
                 ? <Pill label="All Areas" color="#64748b" bg="#f1f5f9" />
                 : (
-                  <View style={styles.pillWrap}>
-                    {assignedAreas.map((a) => (
+                  <TouchableOpacity style={styles.pillWrap} onPress={() => openAreasModal(item)} activeOpacity={0.6}>
+                    {visibleAreas.map((a) => (
                       <Pill key={a.areaId} label={a.name} color={AREA_TYPE_STYLES[a.type]?.color} bg={AREA_TYPE_STYLES[a.type]?.bg} />
                     ))}
-                  </View>
+                    {hiddenAreaCount > 0 && <Pill label={`+${hiddenAreaCount} more`} color="#64748b" bg="#f1f5f9" />}
+                  </TouchableOpacity>
                 );
 
               const actions = (
