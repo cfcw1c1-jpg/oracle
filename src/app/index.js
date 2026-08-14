@@ -534,13 +534,21 @@ export default function Page() {
     registerForPushNotificationsAsync(session.user.id);
   }, [session?.user?.id]);
 
-  // Tapping a delivered push notification jumps straight to that
-  // conversation, reusing the same mechanism MemberChangeQueue's
-  // "Message" button uses to do the same thing from inside the app.
+  // Tapping a delivered push notification routes to wherever it's about:
+  // a message notification jumps straight to that conversation (reusing
+  // the same mechanism MemberChangeQueue's "Message" button uses to do
+  // the same thing from inside the app); a change-request notification
+  // jumps to the Change Requests queue, if this account can still see it.
   useEffect(() => {
-    const subscription = addNotificationTapListener(openConversationInMessages);
+    const subscription = addNotificationTapListener((data) => {
+      if (data.conversationId) {
+        openConversationInMessages(data.conversationId);
+      } else if (data.type === 'changeRequest' && access?.allowedPages?.includes('memberChangeQueue')) {
+        handleSelectTab('memberChangeQueue');
+      }
+    });
     return () => subscription.remove();
-  }, []);
+  }, [access?.allowedPages]);
 
   // Reading the persisted session out of storage is async -- until that
   // first check resolves, "no session yet" doesn't mean "logged out". Show

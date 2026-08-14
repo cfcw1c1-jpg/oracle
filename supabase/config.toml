@@ -1,0 +1,14 @@
+project_id = "efelttlcyjfsvpxwmwjd"
+
+# Called only by the pg_net trigger in scripts/sql/add-message-webhook-trigger.sql,
+# never by a signed-in user -- there's no user JWT to verify. The function
+# guards itself instead via the x-webhook-secret header, checked against
+# the Vault-stored secret (see that script's header comment).
+[functions.send-message-notification]
+verify_jwt = false
+
+# Called only by the pg_net trigger in
+# scripts/sql/add-change-request-webhook-trigger.sql -- same reasoning as
+# send-message-notification above.
+[functions.send-change-request-notification]
+verify_jwt = false

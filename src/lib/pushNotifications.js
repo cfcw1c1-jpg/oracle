@@ -65,11 +65,13 @@ export async function registerForPushNotificationsAsync(profileId) {
 }
 
 // Fires when the user taps a delivered notification (app backgrounded,
-// killed-then-relaunched, or foregrounded) -- content.data.conversationId
-// is set server-side in supabase/functions/send-message-notification.
-export function addNotificationTapListener(onOpenConversation) {
+// killed-then-relaunched, or foregrounded). The tapped notification's
+// `data` payload is handed straight to the caller to route on -- shape
+// varies by which Edge Function sent it: send-message-notification sets
+// `conversationId`, send-change-request-notification sets
+// `type: 'changeRequest'`.
+export function addNotificationTapListener(onNotificationTapped) {
   return Notifications.addNotificationResponseReceivedListener((response) => {
-    const conversationId = response.notification.request.content.data?.conversationId;
-    if (conversationId) onOpenConversation(conversationId);
+    onNotificationTapped(response.notification.request.content.data || {});
   });
 }
