@@ -23,7 +23,9 @@ import { supabase } from '../../lib/supabase';
 import packageJson from '../../package.json';
 import Login from '../auth/Login';
 import ResetPassword from '../auth/ResetPassword';
+import ForceUpdateModal from '../components/ForceUpdateModal';
 import { fetchAccessContext } from '../lib/access';
+import { checkForceUpdate, subscribeToForceUpdateChanges } from '../lib/appVersionGate';
 import { addNotificationTapListener, registerForPushNotificationsAsync } from '../lib/pushNotifications';
 import { trackPresence } from '../lib/presence';
 import AdminDashboard from '../screens/AdminDashboard';
@@ -281,6 +283,7 @@ export default function Page() {
   // Messages tab normally afterward doesn't keep re-opening it.
   const [pendingConversationId, setPendingConversationId] = useState(null);
   const [disclaimerVisible, setDisclaimerVisible] = useState(false);
+  const [forceUpdateInfo, setForceUpdateInfo] = useState(null); // { storeUrl, message } | null once behind, checked below
   const currentTabRef = useRef(currentTab);
 
   // Track window dimensions for real-time web/mobile switching
@@ -291,6 +294,20 @@ export default function Page() {
     currentTabRef.current = currentTab;
     writeStoredTab(currentTab);
   }, [currentTab]);
+
+  // Force-update gate (native only -- see src/lib/appVersionGate.js): runs
+  // independent of auth, since an outdated build shouldn't even reach the
+  // Login screen. Also re-checks live if an Admin changes the requirement
+  // while this app instance is already open.
+  useEffect(() => {
+    let cancelled = false;
+    checkForceUpdate().then((info) => { if (!cancelled) setForceUpdateInfo(info); });
+    const unsubscribe = subscribeToForceUpdateChanges((info) => { if (!cancelled) setForceUpdateInfo(info); });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
 
   // Password-reset emails (Login's "Forgot Password") link back here with
   // a recovery token in the URL hash. detectSessionInUrl is off (see
@@ -559,6 +576,17 @@ export default function Page() {
     });
     return () => subscription.remove();
   }, [access?.allowedPages]);
+
+  // Checked before everything else, including auth -- an outdated native
+  // build shouldn't be able to reach the Login screen, let alone the app
+  // itself. Nothing renders behind the modal.
+  if (forceUpdateInfo) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centeredFull]}>
+        <ForceUpdateModal visible storeUrl={forceUpdateInfo.storeUrl} message={forceUpdateInfo.message} />
+      </SafeAreaView>
+    );
+  }
 
   // Reading the persisted session out of storage is async -- until that
   // first check resolves, "no session yet" doesn't mean "logged out". Show

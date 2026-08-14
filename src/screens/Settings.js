@@ -4,6 +4,7 @@ import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TextI
 import { supabase } from '../../lib/supabase';
 import { TableCard } from '../components/admin-table';
 import Areas from './Areas';
+import AppUpdateSettings from './AppUpdateSettings';
 import DataHealth from './DataHealth';
 import ImportCsv from './ImportCsv';
 import RolesAccess from './RolesAccess';
@@ -92,6 +93,7 @@ const TABS = [
   { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
   { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
   { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
+  { key: 'appUpdate', label: 'App Update', icon: 'phone-portrait-outline' },
 ];
 
 export default function Settings({ onAccessChanged }) {
@@ -228,6 +230,8 @@ export default function Settings({ onAccessChanged }) {
         <Areas />
       ) : tab === 'csvImport' ? (
         <ImportCsv />
+      ) : tab === 'appUpdate' ? (
+        <AppUpdateSettings />
       ) : (
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <TableCard title="Log Retention" subtitle="How long system logs are kept before being automatically deleted.">
