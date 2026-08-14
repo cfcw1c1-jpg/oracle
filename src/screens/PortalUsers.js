@@ -43,6 +43,13 @@ const AREA_TYPE_STYLES = {
   Chapter: { color: '#16a34a', bg: '#dcfce7' },
 };
 
+function formatLastLogin(iso) {
+  if (!iso) return 'Never';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 function showAlert(title, message) {
   if (Platform.OS === 'web') {
     window.alert(`${title}\n\n${message}`);
@@ -121,6 +128,7 @@ export default function PortalUsers({ onAccessChanged }) {
   const [creatingUser, setCreatingUser] = useState(false);
 
   const [onlineByProfile, setOnlineByProfile] = useState({});
+  const [lastSignInByProfile, setLastSignInByProfile] = useState({});
 
   useEffect(() => {
     loadAll();
@@ -141,16 +149,22 @@ export default function PortalUsers({ onAccessChanged }) {
   async function loadAll() {
     try {
       setLoading(true);
-      const [profilesRes, rolesRes, areasRes, userAreasRes] = await Promise.all([
+      const [profilesRes, rolesRes, areasRes, userAreasRes, lastSignInRes] = await Promise.all([
         supabase.from('profiles').select('id, email, full_name, avatar_url, role_id, roles ( name )').order('email'),
         supabase.from('roles').select('*').order('name'),
         supabase.from('areas').select('id, name, type, parent_id').order('name'),
         supabase.from('user_areas').select('profile_id, area_id, areas ( name, type )'),
+        // auth.users.last_sign_in_at isn't queryable from the client directly
+        // -- see scripts/sql/add-portal-users-last-sign-in.sql. Fails soft
+        // (empty column) rather than blocking the rest of the page if that
+        // migration hasn't been run yet.
+        supabase.rpc('get_portal_users_last_sign_in'),
       ]);
       if (profilesRes.error) throw profilesRes.error;
       if (rolesRes.error) throw rolesRes.error;
       if (areasRes.error) throw areasRes.error;
       if (userAreasRes.error) throw userAreasRes.error;
+      if (lastSignInRes.error) console.warn('Error loading last sign-in times:', lastSignInRes.error.message);
 
       const grouped = {};
       (userAreasRes.data || []).forEach((row) => {
@@ -158,10 +172,14 @@ export default function PortalUsers({ onAccessChanged }) {
         grouped[row.profile_id].push({ areaId: row.area_id, name: row.areas?.name, type: row.areas?.type });
       });
 
+      const lastSignIn = {};
+      (lastSignInRes.data || []).forEach((row) => { lastSignIn[row.profile_id] = row.last_sign_in_at; });
+
       setProfiles(profilesRes.data || []);
       setRoles(rolesRes.data || []);
       setAreas(areasRes.data || []);
       setUserAreasByProfile(grouped);
+      setLastSignInByProfile(lastSignIn);
     } catch (err) {
       showAlert('Error Loading Portal Users', err.message);
     } finally {
@@ -304,12 +322,14 @@ export default function PortalUsers({ onAccessChanged }) {
       email: p.email || '',
       role: p.roles?.name || 'Unassigned',
       areas: (userAreasByProfile[p.id] || []).map((a) => a.name).join('; ') || 'All Areas',
+      lastLogin: onlineByProfile[p.id] ? 'Online now' : formatLastLogin(lastSignInByProfile[p.id]),
     }));
     exportCsv('portal-users', [
       { key: 'name', label: 'Name' },
       { key: 'email', label: 'Email' },
       { key: 'role', label: 'Role' },
       { key: 'areas', label: 'Areas' },
+      { key: 'lastLogin', label: 'Last Login' },
     ], rows);
   }
 
@@ -351,6 +371,7 @@ export default function PortalUsers({ onAccessChanged }) {
                 { key: 'account', label: 'Account', style: styles.colAccount },
                 { key: 'role', label: 'Role', style: styles.colRole },
                 { key: 'areas', label: 'Areas', style: styles.colAreas },
+                { key: 'lastLogin', label: 'Last Login', style: styles.colLastLogin },
                 { key: 'actions', label: 'Actions', style: styles.colActions },
               ]}
             />
@@ -396,6 +417,15 @@ export default function PortalUsers({ onAccessChanged }) {
                 </View>
               );
 
+              // Presence (live) wins over the last recorded sign-in when an
+              // account is online right now -- otherwise this is whenever
+              // auth.users.last_sign_in_at last updated (see
+              // scripts/sql/add-portal-users-last-sign-in.sql).
+              const lastLoginLabel = presence ? 'Online now' : formatLastLogin(lastSignInByProfile[item.id]);
+              const lastLoginText = (
+                <Text style={[styles.plainCellText, presence && styles.onlineText]} numberOfLines={1}>{lastLoginLabel}</Text>
+              );
+
               if (isNarrow) {
                 return (
                   <TableRow key={item.id} last={isLast} style={styles.narrowRow}>
@@ -409,6 +439,7 @@ export default function PortalUsers({ onAccessChanged }) {
                     </View>
                     <View style={styles.narrowMetaRow}>{rolePill}</View>
                     <View style={styles.narrowMetaRow}>{areaPills}</View>
+                    <View style={styles.narrowMetaRow}>{lastLoginText}</View>
                     <View style={[styles.narrowMetaRow, { marginTop: 8 }]}>{actions}</View>
                   </TableRow>
                 );
@@ -426,6 +457,7 @@ export default function PortalUsers({ onAccessChanged }) {
                   </View>
                   <View style={styles.colRole}>{rolePill}</View>
                   <View style={styles.colAreas}>{areaPills}</View>
+                  <View style={styles.colLastLogin}>{lastLoginText}</View>
                   <View style={styles.colActions}>{actions}</View>
                 </TableRow>
               );
@@ -630,6 +662,7 @@ const styles = StyleSheet.create({
   colAccount: { flex: 2.2, minWidth: 160 },
   colRole: { flex: 1.1, minWidth: 100 },
   colAreas: { flex: 1.8, minWidth: 140 },
+  colLastLogin: { flex: 1.5, minWidth: 140 },
   colActions: { flex: 1.4, minWidth: 150 },
 
   narrowRow: { flexDirection: 'column', alignItems: 'stretch' },
@@ -638,6 +671,8 @@ const styles = StyleSheet.create({
   mainText: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
   subText: { fontSize: 11, color: '#64748b', marginTop: 2 },
   deviceText: { fontSize: 11, color: '#16a34a', fontWeight: '600', marginTop: 2 },
+  plainCellText: { fontSize: 12, color: '#475569', fontWeight: '500' },
+  onlineText: { color: '#16a34a', fontWeight: '700' },
 
   avatarWrap: { position: 'relative' },
   onlineDot: {
