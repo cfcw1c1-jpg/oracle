@@ -11,10 +11,13 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
+    useWindowDimensions,
     View
 } from 'react-native';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
+
+const NARROW_BREAKPOINT = 720;
 
 // Complete master tracking matrix columns list synced with full definitions data
 const TRAINING_COLUMNS = [
@@ -189,6 +192,8 @@ const getCleanTrackCode = (rawId) => {
 };
 
 export default function PfoTrainingReports() {
+  const { width } = useWindowDimensions();
+  const isNarrow = width < NARROW_BREAKPOINT;
   const [selectedTrainings, setSelectedTrainings] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -680,7 +685,7 @@ export default function PfoTrainingReports() {
       </View>
       </View>
 
-      <View style={styles.actionRowContainer}>
+      <View style={[styles.actionRowContainer, isNarrow && styles.actionRowContainerNarrow]}>
         <View style={styles.statsRow}>
           <View style={[styles.statCard, styles.statCardPassed]}>
             <View style={[styles.statIconChip, styles.statIconChipPassed]}>
@@ -713,7 +718,7 @@ export default function PfoTrainingReports() {
           </View>
         </View>
 
-        <View style={styles.buttonsContainer}>
+        <View style={[styles.buttonsContainer, isNarrow && styles.buttonsContainerNarrow]}>
           <TouchableOpacity
             style={[styles.actionButton, styles.completedButton]}
             activeOpacity={0.7}
@@ -822,7 +827,14 @@ const styles = StyleSheet.create({
   dropdownItemGroupText: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', fontWeight: '700', paddingLeft: 22 },
   closeDropdownButton: { backgroundColor: '#002060', margin: 8, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
   closeDropdownButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  // Row layout works fine once statsRow's own 3 cards fit on one line
+  // (wide screens); on narrow ones each stat card wraps to its own line
+  // and statsRow's reported width shrinks to a single card, leaving
+  // buttonsContainer "room" to sit on that same row at vertical-center --
+  // which visually plants it on top of the middle stat card. Forcing a
+  // column stack below the breakpoint avoids that overlap outright.
   actionRowContainer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 },
+  actionRowContainerNarrow: { flexDirection: 'column', alignItems: 'stretch' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, flex: 1 },
   statCard: {
     flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1, minWidth: 180,
@@ -840,6 +852,7 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 26, fontWeight: '800', color: '#0f172a' },
   statLabel: { fontSize: 12, fontWeight: '700', color: '#64748b', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 },
   buttonsContainer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  buttonsContainerNarrow: { justifyContent: 'flex-start' },
   actionButton: { flexDirection: 'row', borderRadius: 8, paddingVertical: 9, paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center' },
   completedButton: { backgroundColor: '#002060' },
   xlsxButton: { backgroundColor: '#15803d' },

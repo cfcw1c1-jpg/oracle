@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Image,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import PrivacyConsentGate from '../components/privacy-consent-gate';
 import { parseTrainingName, TRAINING_COLUMNS } from '../screens/PfoList';

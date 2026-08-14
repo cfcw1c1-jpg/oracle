@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -545,6 +546,7 @@ export default function MemberChangeQueue({ onOpenConversation }) {
       </View>
 
       <Modal visible={rejectModalVisible} transparent animationType="fade" onRequestClose={closeRejectModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Reject Change Request</Text>
@@ -569,6 +571,7 @@ export default function MemberChangeQueue({ onOpenConversation }) {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

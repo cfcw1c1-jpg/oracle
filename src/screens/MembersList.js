@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -991,6 +992,7 @@ export default function MembersList({ roleName }) {
       </View>
 
       <Modal visible={assignModalVisible} animationType="slide" transparent onRequestClose={closeAssignModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
             <View style={styles.modalContent}>
@@ -1111,9 +1113,11 @@ export default function MembersList({ roleName }) {
             </View>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={editModalVisible} animationType="slide" transparent onRequestClose={closeEditModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
             <View style={[styles.modalContent, styles.editModalContent]}>
@@ -1229,6 +1233,7 @@ export default function MembersList({ roleName }) {
             </View>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -406,6 +407,7 @@ export default function Areas() {
       </View>
 
       <Modal visible={manageModalVisible} transparent animationType="fade" onRequestClose={() => setManageModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, styles.manageModalCard]}>
             <Text style={styles.modalTitle}>{selectedArea ? `${selectedArea.name} — ${selectedArea.type}` : 'Manage Area'}</Text>
@@ -493,9 +495,11 @@ export default function Areas() {
             </TouchableOpacity>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal visible={areaModalVisible} transparent animationType="fade" onRequestClose={() => setAreaModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{areaModalMode === 'edit' ? 'Edit Area' : 'Add Area'}</Text>
@@ -559,6 +563,7 @@ export default function Areas() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

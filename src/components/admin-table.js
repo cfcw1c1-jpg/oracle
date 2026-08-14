@@ -168,16 +168,58 @@ export function usePagination(items, pageSize = 10) {
   return { page: safePage, pageCount, pageItems, setPage };
 }
 
+// Compact page-chip list: always shows the first and last page, plus a
+// small window around the current page, collapsing any gap into a single
+// "ellipsis" marker rather than listing every page number -- keeps the row
+// a fixed, readable width regardless of how many pages there are (e.g.
+// page 1 of 10 renders "1 2 3 … 10", page 5 of 10 renders "1 … 4 5 6 … 10").
+function getPageRange(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+
+  const pages = new Set([1, total, current]);
+  if (current <= 3) {
+    pages.add(2);
+    pages.add(3);
+  } else if (current >= total - 2) {
+    pages.add(total - 1);
+    pages.add(total - 2);
+  } else {
+    pages.add(current - 1);
+    pages.add(current + 1);
+  }
+
+  const sorted = Array.from(pages)
+    .filter((p) => p >= 1 && p <= total)
+    .sort((a, b) => a - b);
+
+  const result = [];
+  let prev = null;
+  sorted.forEach((p) => {
+    if (prev !== null && p - prev > 1) result.push('ellipsis');
+    result.push(p);
+    prev = p;
+  });
+  return result;
+}
+
 export function TablePagination({ page, pageCount, totalCount, pageSize, onChange }) {
   if (totalCount === 0) return null;
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
-  const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
+  const pageRange = getPageRange(page, pageCount);
   return (
     <View style={styles.paginationRow}>
       <Text style={styles.paginationLabel}>{start} to {end} of {totalCount} records</Text>
       {pageCount > 1 && (
         <View style={styles.paginationControls}>
+          <TouchableOpacity
+            disabled={page <= 1}
+            onPress={() => onChange(1)}
+            style={styles.pageArrow}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="play-skip-back-outline" size={12} color={page <= 1 ? '#cbd5e1' : '#334155'} />
+          </TouchableOpacity>
           <TouchableOpacity
             disabled={page <= 1}
             onPress={() => onChange(page - 1)}
@@ -186,15 +228,19 @@ export function TablePagination({ page, pageCount, totalCount, pageSize, onChang
           >
             <Ionicons name="chevron-back" size={14} color={page <= 1 ? '#cbd5e1' : '#334155'} />
           </TouchableOpacity>
-          {pages.map((p) => (
-            <TouchableOpacity
-              key={p}
-              onPress={() => onChange(p)}
-              style={[styles.pageChip, p === page && styles.pageChipActive]}
-              hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-            >
-              <Text style={[styles.pageChipText, p === page && styles.pageChipTextActive]}>{p}</Text>
-            </TouchableOpacity>
+          {pageRange.map((p, index) => (
+            p === 'ellipsis' ? (
+              <Text key={`ellipsis-${index}`} style={styles.pageEllipsis}>···</Text>
+            ) : (
+              <TouchableOpacity
+                key={p}
+                onPress={() => onChange(p)}
+                style={[styles.pageChip, p === page && styles.pageChipActive]}
+                hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+              >
+                <Text style={[styles.pageChipText, p === page && styles.pageChipTextActive]}>{p}</Text>
+              </TouchableOpacity>
+            )
           ))}
           <TouchableOpacity
             disabled={page >= pageCount}
@@ -203,6 +249,14 @@ export function TablePagination({ page, pageCount, totalCount, pageSize, onChang
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Ionicons name="chevron-forward" size={14} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            disabled={page >= pageCount}
+            onPress={() => onChange(pageCount)}
+            style={styles.pageArrow}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="play-skip-forward-outline" size={12} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
           </TouchableOpacity>
         </View>
       )}
@@ -265,8 +319,12 @@ const styles = StyleSheet.create({
     width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
   },
-  pageChip: { minWidth: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  pageChipActive: { backgroundColor: TABLE_NAVY },
+  pageChip: {
+    minWidth: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
+    backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  pageChipActive: { backgroundColor: TABLE_NAVY, borderColor: TABLE_NAVY },
   pageChipText: { fontSize: 11, fontWeight: '700', color: '#334155' },
   pageChipTextActive: { color: '#ffffff' },
+  pageEllipsis: { width: 18, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#94a3b8' },
 });

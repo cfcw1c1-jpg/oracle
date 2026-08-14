@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -305,6 +306,7 @@ export default function RolesAccess({ onAccessChanged }) {
       </View>
 
       <Modal visible={addRoleModalVisible} transparent animationType="fade" onRequestClose={() => setAddRoleModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Add Role</Text>
@@ -332,6 +334,7 @@ export default function RolesAccess({ onAccessChanged }) {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

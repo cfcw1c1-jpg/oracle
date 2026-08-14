@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -457,6 +458,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
       </View>
 
       <Modal visible={newMessageModalVisible} transparent animationType="fade" onRequestClose={() => setNewMessageModalVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New Message</Text>
@@ -518,6 +520,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
             </TouchableOpacity>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

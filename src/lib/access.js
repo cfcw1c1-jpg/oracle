@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 // src/app/index.js.
 export const ALL_PAGE_KEYS = [
   'home',
+  'adminDashboard',
   'members',
   'myChangeRequests',
   'manageMembers',
@@ -12,12 +13,9 @@ export const ALL_PAGE_KEYS = [
   'pfoReports',
   'pfoStats',
   'clp',
-  'auditLogs',
   'portalUsers',
-  'csvImport',
-  'systemAudit',
+  'logs',
   'memberChangeQueue',
-  'memberChangeHistory',
   'settings',
 ];
 

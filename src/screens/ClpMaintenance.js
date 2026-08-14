@@ -4,6 +4,7 @@ import {
     ActivityIndicator,
     Alert,
     FlatList,
+    KeyboardAvoidingView,
     Modal,
     Platform,
     ScrollView,
@@ -629,6 +630,7 @@ export default function ClpMaintenance() {
 
       {/* ================= MODAL: ADD TRAINING BATCH ================= */}
       <Modal visible={trainingModalVisible} animationType="slide" transparent={true}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>New CLP Training Matrix Batch</Text>
@@ -718,16 +720,18 @@ export default function ClpMaintenance() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ================= MODAL: ENLIST PARTICIPANT ================= */}
-      <Modal 
-        visible={participantModalVisible} 
-        animationType="slide" 
+      <Modal
+        visible={participantModalVisible}
+        animationType="slide"
         transparent={true}
-        onShow={handleFocusOnModalOpen} 
+        onShow={handleFocusOnModalOpen}
         onRequestClose={() => { setParticipantModalVisible(false); resetParticipantForm(); }}
       >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
             <View style={styles.modalContent}>
@@ -846,6 +850,7 @@ export default function ClpMaintenance() {
             </View>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
     </View>

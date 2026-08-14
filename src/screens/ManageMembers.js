@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -240,7 +241,11 @@ export default function ManageMembers() {
       const last = (m.Lastname || '').toLowerCase();
       const id = (m.MemberIDNo || '').toString().toLowerCase();
       const area = (m.AreaName || '').toLowerCase();
-      return first.includes(q) || last.includes(q) || id.includes(q) || area.includes(q);
+      // Matches the raw code (e.g. "CL") and its spelled-out label (e.g.
+      // "Chapter Leader") -- getServiceLabel returns "CODE — Label", so
+      // one .includes() check covers both.
+      const pastoralService = getServiceLabel(m.PastoralService || 'MEMBER').toLowerCase();
+      return first.includes(q) || last.includes(q) || id.includes(q) || area.includes(q) || pastoralService.includes(q);
     });
   }, [members, searchQuery]);
 
@@ -390,7 +395,7 @@ export default function ManageMembers() {
           <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search name, ID, or Area..."
+            placeholder="Search name, ID, Area, or Pastoral Service..."
             placeholderTextColor="#94a3b8"
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -531,6 +536,7 @@ export default function ManageMembers() {
       </TableCard>
 
       <Modal visible={modalVisible} animationType="slide" transparent onRequestClose={closeModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <ScrollView contentContainerStyle={styles.modalScrollContainer} style={{ width: '100%' }} showsVerticalScrollIndicator={false}>
             <View style={styles.modalContent}>
@@ -642,6 +648,7 @@ export default function ManageMembers() {
             </View>
           </ScrollView>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

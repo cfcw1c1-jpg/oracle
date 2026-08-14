@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   ScrollView,
@@ -473,6 +474,7 @@ export default function PortalUsers({ onAccessChanged }) {
       </Modal>
 
       <Modal visible={addUserModalVisible} transparent animationType="fade" onRequestClose={closeAddUserModal}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Add User</Text>
@@ -566,6 +568,7 @@ export default function PortalUsers({ onAccessChanged }) {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );

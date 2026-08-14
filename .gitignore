@@ -47,3 +47,8 @@ example
 # Supabase CLI local cache (project link, downloaded service versions) --
 # machine-specific state, not part of the function code.
 supabase/.temp/
+
+# Firebase service account key (FCM push credentials) -- uploaded directly
+# to EAS via `eas credentials`, never committed. google-services.json is
+# fine to commit (public identifiers only); this is the private one.
+*firebase-adminsdk*.json

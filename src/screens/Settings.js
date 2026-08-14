@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { TableCard } from '../components/admin-table';
 import Areas from './Areas';
 import DataHealth from './DataHealth';
+import ImportCsv from './ImportCsv';
 import RolesAccess from './RolesAccess';
 
 const NAVY = '#002060';
@@ -90,6 +91,7 @@ const TABS = [
   { key: 'dataHealth', label: 'Data Health', icon: 'pulse-outline' },
   { key: 'rolesAccess', label: 'Roles & Page Access', icon: 'key-outline' },
   { key: 'areas', label: 'Areas', icon: 'git-network-outline' },
+  { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
 ];
 
 export default function Settings({ onAccessChanged }) {
@@ -224,6 +226,8 @@ export default function Settings({ onAccessChanged }) {
         <RolesAccess onAccessChanged={onAccessChanged} />
       ) : tab === 'areas' ? (
         <Areas />
+      ) : tab === 'csvImport' ? (
+        <ImportCsv />
       ) : (
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <TableCard title="Log Retention" subtitle="How long system logs are kept before being automatically deleted.">

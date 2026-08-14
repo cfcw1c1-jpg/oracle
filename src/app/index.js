@@ -8,24 +8,28 @@ import {
   Linking,
   Modal,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View
 } from 'react-native';
+// react-native's own SafeAreaView is an iOS-only no-op -- on Android it
+// never reserved space for the status bar, which only became visible as
+// a bug once edge-to-edge became the SDK default. This one applies real
+// insets on both platforms.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 import packageJson from '../../package.json';
 import Login from '../auth/Login';
 import ResetPassword from '../auth/ResetPassword';
 import { fetchAccessContext } from '../lib/access';
-import AuditLogs from '../screens/AuditLogs';
+import { addNotificationTapListener, registerForPushNotificationsAsync } from '../lib/pushNotifications';
+import AdminDashboard from '../screens/AdminDashboard';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
-import ImportCsv from '../screens/ImportCsv';
+import Logs from '../screens/Logs';
 import ManageMembers from '../screens/ManageMembers';
-import MemberChangeHistory from '../screens/MemberChangeHistory';
 import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
@@ -37,13 +41,12 @@ import PortalUsers from '../screens/PortalUsers';
 import PredictorScreen from '../screens/PredictorScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import Settings from '../screens/Settings';
-import SystemAuditLog from '../screens/SystemAuditLog';
 
 // An item with a `group` renders under its own labeled section in the
-// sidebar (see SidebarPanel), separate from the main flat list -- used
-// here to set the two log-viewing pages apart under "Logs".
+// sidebar (see SidebarPanel), separate from the main flat list.
 const NAV_ITEMS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline' },
+  { key: 'adminDashboard', label: 'Admin Dashboard', icon: 'stats-chart-outline' },
   { key: 'members', label: 'Directory', icon: 'people-outline' },
   { key: 'myChangeRequests', label: 'My Change Requests', icon: 'hourglass-outline' },
   { key: 'manageMembers', label: 'Manage Members', icon: 'list-outline' },
@@ -52,12 +55,9 @@ const NAV_ITEMS = [
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
-  { key: 'csvImport', label: 'Import CSV', icon: 'cloud-upload-outline' },
+  { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
-  { key: 'auditLogs', label: 'Training Lookup Logs', icon: 'terminal-outline', group: 'Logs' },
-  { key: 'systemAudit', label: 'System Audit Log', icon: 'shield-checkmark-outline', group: 'Logs' },
   { key: 'memberChangeQueue', label: 'Change Requests', icon: 'checkmark-done-outline', group: 'Moderation' },
-  { key: 'memberChangeHistory', label: 'Member Change History', icon: 'time-outline', group: 'Moderation' },
 ];
 
 // Human-readable labels for the System Audit Log's PAGE_VIEW rows -- every
@@ -70,10 +70,46 @@ const PAGE_VIEW_LABELS = NAV_ITEMS.reduce((acc, item) => {
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
 
+// Remembers the last tab a signed-in account was on across a page refresh
+// (web only -- native has no "refresh" concept). localStorage rather than
+// sessionStorage -- it's scoped to the browser (origin) rather than one
+// specific tab/session, so it survives regardless of how a given dev/preview
+// environment happens to handle "refresh" under the hood. Cleared explicitly
+// on sign-out so the next login on the same browser never inherits a
+// previous account's last-viewed page.
+const CURRENT_TAB_STORAGE_KEY = 'oracle_current_tab';
+
+function readStoredTab() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(CURRENT_TAB_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredTab(tabKey) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(CURRENT_TAB_STORAGE_KEY, tabKey);
+  } catch {
+    // Ignore (e.g. Safari private mode can throw on storage access).
+  }
+}
+
+function clearStoredTab() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(CURRENT_TAB_STORAGE_KEY);
+  } catch {
+    // Ignore.
+  }
+}
+
 // Shared by the permanent (wide-screen) sidebar and the mobile drawer.
 // Renders a floating "glass" card (blurred/translucent) over a navy-to-violet
 // gradient backdrop, matching the transparent sidebar design reference.
-function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollapseToggle, onToggleCollapse, navItems, roleName }) {
+function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollapseToggle, onToggleCollapse, navItems, roleName, badgeCounts = {} }) {
   const avatarUrl = session?.user?.user_metadata?.avatar_url;
   const email = session?.user?.email;
   const portalLabel = roleName ? `${roleName} Portal` : 'Members Portal';
@@ -92,15 +128,32 @@ function SidebarPanel({ currentTab, onSelectTab, collapsed, session, showCollaps
 
   function renderNavItem(item) {
     const isActive = currentTab === item.key;
+    const badgeCount = badgeCounts[item.key] || 0;
     return (
       <TouchableOpacity
         key={item.key}
         style={[styles.sidebarButton, collapsed && styles.sidebarButtonCollapsed, isActive && styles.activeSidebarButton]}
         onPress={() => onSelectTab(item.key)}
       >
-        <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : 'rgba(226,232,255,0.65)'} style={!collapsed && styles.sidebarIcon} />
+        {collapsed ? (
+          <View style={styles.sidebarIconWrapCollapsed}>
+            <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : 'rgba(226,232,255,0.65)'} />
+            {badgeCount > 0 && (
+              <View style={styles.sidebarIconBadge}>
+                <Text style={styles.sidebarIconBadgeText}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <Ionicons name={item.icon} size={18} color={isActive ? '#ffffff' : 'rgba(226,232,255,0.65)'} style={styles.sidebarIcon} />
+        )}
         {!collapsed && (
           <Text style={[styles.sidebarButtonText, isActive && styles.activeSidebarText]} numberOfLines={1}>{item.label}</Text>
+        )}
+        {!collapsed && badgeCount > 0 && (
+          <View style={styles.sidebarPillBadge}>
+            <Text style={styles.sidebarPillBadgeText}>{badgeCount > 99 ? '99+' : badgeCount}</Text>
+          </View>
         )}
       </TouchableOpacity>
     );
@@ -207,12 +260,19 @@ export default function Page() {
   // variable would otherwise stay stale forever once this flips true from
   // a completely separate effect.
   const passwordRecoveryModeRef = useRef(false);
-  const [currentTab, setCurrentTab] = useState('home');
+  const [currentTab, setCurrentTab] = useState(() => readStoredTab() || 'home');
+  // Set on a genuine interactive SIGNED_IN event (never on a refresh merely
+  // restoring an existing session -- see the readyForSignInEvents guard
+  // below), consumed once access loads to send an Admin to Admin Dashboard
+  // first. Kept as a ref rather than state since it only needs to be read
+  // once, inside an effect, not drive a render itself.
+  const justSignedInRef = useRef(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [access, setAccess] = useState(null);
   const [accessLoading, setAccessLoading] = useState(true);
 
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [pendingChangeRequestCount, setPendingChangeRequestCount] = useState(0);
   const [messageToast, setMessageToast] = useState(null);
   // Set by MemberChangeQueue's "Message" button so Messages knows which
   // conversation to jump straight into once it mounts on the tab switch
@@ -228,6 +288,7 @@ export default function Page() {
 
   useEffect(() => {
     currentTabRef.current = currentTab;
+    writeStoredTab(currentTab);
   }, [currentTab]);
 
   // Password-reset emails (Login's "Forgot Password") link back here with
@@ -285,6 +346,7 @@ export default function Page() {
       setAuthChecked(true);
       if (event === 'SIGNED_IN' && readyForSignInEvents && !passwordRecoveryModeRef.current) {
         setDisclaimerVisible(true);
+        justSignedInRef.current = true;
       }
     });
 
@@ -307,15 +369,42 @@ export default function Page() {
       // still false from the previous session and the accessLoading gate
       // below lets the render through with access still null.
       setAccessLoading(true);
+      // `session` starts null on every mount and only becomes truthy once
+      // getSession() resolves (async) -- authChecked is what actually marks
+      // "we've confirmed there's no session" vs. "haven't checked yet".
+      // Without this guard, that transient null-session window on every
+      // single page load (refresh included) would immediately wipe the
+      // just-restored tab below, before the real session even had a chance
+      // to come back -- which was quietly undoing the whole "stay on
+      // refresh" fix every time.
+      if (authChecked) {
+        // Clears whatever tab was remembered for the account that just
+        // signed out, so a different account signing in on this same
+        // browser afterward never inherits it.
+        clearStoredTab();
+        setCurrentTab('home');
+      }
       return;
     }
     loadAccess(session.user.id);
-  }, [session?.user?.id]);
+  }, [session?.user?.id, authChecked]);
 
-  // Once access loads, steer away from the default 'home' tab if the
-  // signed-in account isn't allowed to see it.
+  // Once access loads: an Admin on a genuine fresh sign-in (never a refresh
+  // -- see justSignedInRef above) lands on Admin Dashboard first. Otherwise,
+  // steer away from the default 'home' tab only if the signed-in account
+  // isn't allowed to see it -- a refreshed page's restored tab (read from
+  // storage into currentTab's initial state) is left alone either way.
   useEffect(() => {
     if (accessLoading || !access) return;
+
+    if (justSignedInRef.current) {
+      justSignedInRef.current = false;
+      if (access.roleName === 'Admin' && access.allowedPages.includes('adminDashboard')) {
+        setCurrentTab('adminDashboard');
+        return;
+      }
+    }
+
     if (currentTab !== 'home') return;
     if (access.allowedPages.includes('home')) return;
     setCurrentTab(access.allowedPages[0] || 'profile');
@@ -391,11 +480,67 @@ export default function Page() {
     };
   }, [session?.user?.id]);
 
+  async function loadPendingChangeRequestCount() {
+    try {
+      const { count, error } = await supabase
+        .from('member_change_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending');
+      if (error) throw error;
+      setPendingChangeRequestCount(count || 0);
+    } catch (err) {
+      console.error('Error loading pending change request count:', err.message);
+    }
+  }
+
+  // Drives the "Change Requests" sidebar badge -- only fetched/subscribed
+  // for accounts that can actually see that page (Admins/Moderators; RLS on
+  // member_change_requests also only exposes the full pending count to
+  // them), same app-wide-regardless-of-current-tab approach as the
+  // messages unread count above.
+  useEffect(() => {
+    if (!session?.user?.id || !access?.allowedPages?.includes('memberChangeQueue')) {
+      setPendingChangeRequestCount(0);
+      return undefined;
+    }
+
+    loadPendingChangeRequestCount();
+
+    const channel = supabase
+      .channel('global_change_requests_watch')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'member_change_requests' },
+        () => loadPendingChangeRequestCount()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, access?.allowedPages]);
+
   useEffect(() => {
     if (!messageToast) return undefined;
     const timer = setTimeout(() => setMessageToast(null), 5000);
     return () => clearTimeout(timer);
   }, [messageToast]);
+
+  // Registers this device for push notifications once signed in -- no-ops
+  // on web and fails soft (see src/lib/pushNotifications.js) when running
+  // in Expo Go or before `eas init` has populated a real projectId.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    registerForPushNotificationsAsync(session.user.id);
+  }, [session?.user?.id]);
+
+  // Tapping a delivered push notification jumps straight to that
+  // conversation, reusing the same mechanism MemberChangeQueue's
+  // "Message" button uses to do the same thing from inside the app.
+  useEffect(() => {
+    const subscription = addNotificationTapListener(openConversationInMessages);
+    return () => subscription.remove();
+  }, []);
 
   // Reading the persisted session out of storage is async -- until that
   // first check resolves, "no session yet" doesn't mean "logged out". Show
@@ -435,16 +580,19 @@ export default function Page() {
   const canView = (pageKey) => allowedPageKeys.has(pageKey);
   const headerPortalLabel = access?.roleName ? `${access.roleName.toUpperCase()} PORTAL` : 'MEMBERS PORTAL';
 
-  // currentTab defaults to 'home'. The effect above steers away from it once
-  // access loads if this account can't see it, but that's a state update
-  // applied after render -- there's an in-between render, right as access
-  // finishes loading, where currentTab is still 'home' and canView('home')
-  // is already false. Computing the effective tab here instead of waiting
-  // for that effect to land means the very first render after access loads
-  // already shows the right page, with no "no access" flash in between.
-  const effectiveTab = currentTab === 'home' && access && !canView('home')
-    ? (access.allowedPages[0] || 'profile')
-    : currentTab;
+  // The effect above steers to the right tab once access loads, but that's
+  // a state update applied after render -- there's an in-between render,
+  // right as access finishes loading, where currentTab hasn't caught up
+  // yet. Computing the effective tab here instead of waiting for that
+  // effect to land means the very first render after access loads already
+  // shows the right page: Admin Dashboard for an Admin's fresh sign-in, or
+  // (same as before) the first allowed page if the restored/default tab
+  // turns out to be 'home' and this account can't see it.
+  const effectiveTab = justSignedInRef.current && access?.roleName === 'Admin' && access.allowedPages.includes('adminDashboard')
+    ? 'adminDashboard'
+    : currentTab === 'home' && access && !canView('home')
+      ? (access.allowedPages[0] || 'profile')
+      : currentTab;
 
   function handleSelectTab(tabKey) {
     if (tabKey !== currentTab) logPageView(tabKey);
@@ -550,6 +698,7 @@ export default function Page() {
               onToggleCollapse={() => setIsSidebarCollapsed((v) => !v)}
               navItems={visibleNavItems}
               roleName={access?.roleName}
+              badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
             />
           </View>
         )}
@@ -566,6 +715,7 @@ export default function Page() {
                 showCollapseToggle={false}
                 navItems={visibleNavItems}
                 roleName={access?.roleName}
+                badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
               />
             </View>
             <TouchableOpacity style={styles.drawerDismissZone} onPress={() => setIsMobileMenuOpen(false)} />
@@ -575,6 +725,7 @@ export default function Page() {
         {/* MAIN DYNAMIC SCREEN CONTENT */}
         <View style={styles.mainContentPane}>
           {effectiveTab === 'home' && canView('home') && <DashboardHome onNavigate={setCurrentTab} roleName={access?.roleName} />}
+          {effectiveTab === 'adminDashboard' && canView('adminDashboard') && <AdminDashboard />}
           {effectiveTab === 'members' && canView('members') && <MembersList roleName={access?.roleName} />}
           {effectiveTab === 'myChangeRequests' && canView('myChangeRequests') && <MyChangeRequests />}
           {effectiveTab === 'manageMembers' && canView('manageMembers') && <ManageMembers />}
@@ -582,16 +733,13 @@ export default function Page() {
           {effectiveTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
           {effectiveTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
           {effectiveTab === 'clp' && canView('clp') && <ClpMaintenance />}
-          {effectiveTab === 'auditLogs' && canView('auditLogs') && <AuditLogs />}
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}
-          {effectiveTab === 'csvImport' && canView('csvImport') && <ImportCsv />}
-          {effectiveTab === 'systemAudit' && canView('systemAudit') && <SystemAuditLog />}
+          {effectiveTab === 'logs' && canView('logs') && <Logs />}
           {effectiveTab === 'memberChangeQueue' && canView('memberChangeQueue') && (
             <MemberChangeQueue onOpenConversation={openConversationInMessages} />
           )}
-          {effectiveTab === 'memberChangeHistory' && canView('memberChangeHistory') && <MemberChangeHistory />}
           {effectiveTab === 'settings' && canView('settings') && (
             <Settings onAccessChanged={() => loadAccess(session.user.id)} />
           )}
@@ -864,6 +1012,18 @@ const styles = StyleSheet.create({
   activeSidebarButton: { backgroundColor: 'rgba(255,255,255,0.16)' },
   sidebarButtonText: { fontSize: 14, color: 'rgba(226,232,255,0.75)', fontWeight: '600', flexShrink: 1 },
   sidebarIcon: { marginRight: 10 },
+  sidebarIconWrapCollapsed: { position: 'relative' },
+  sidebarIconBadge: {
+    position: 'absolute', top: -6, right: -8, backgroundColor: '#ef4444', borderRadius: 8,
+    minWidth: 15, height: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+    borderWidth: 1.5, borderColor: '#1d3f9e',
+  },
+  sidebarIconBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
+  sidebarPillBadge: {
+    marginLeft: 8, backgroundColor: '#ef4444', borderRadius: 20,
+    minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
+  },
+  sidebarPillBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
   activeSidebarText: { color: '#ffffff', fontWeight: '700' },
   logoutButton: { backgroundColor: 'rgba(248,113,113,0.14)', marginTop: 0, marginBottom: 0 },
   logoutText: { color: '#f87171', fontWeight: '600' },
