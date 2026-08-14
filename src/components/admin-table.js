@@ -202,7 +202,10 @@ function getPageRange(current, total) {
   return result;
 }
 
-export function TablePagination({ page, pageCount, totalCount, pageSize, onChange }) {
+// pageSizeOptions/onPageSizeChange are optional -- only screens that pass
+// both get the "Rows: 10 20 50 100 200" selector; every other caller of
+// this shared component renders exactly as before.
+export function TablePagination({ page, pageCount, totalCount, pageSize, onChange, pageSizeOptions, onPageSizeChange }) {
   if (totalCount === 0) return null;
   const start = (page - 1) * pageSize + 1;
   const end = Math.min(page * pageSize, totalCount);
@@ -210,56 +213,73 @@ export function TablePagination({ page, pageCount, totalCount, pageSize, onChang
   return (
     <View style={styles.paginationRow}>
       <Text style={styles.paginationLabel}>{start} to {end} of {totalCount} records</Text>
-      {pageCount > 1 && (
-        <View style={styles.paginationControls}>
-          <TouchableOpacity
-            disabled={page <= 1}
-            onPress={() => onChange(1)}
-            style={styles.pageArrow}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons name="play-skip-back-outline" size={12} color={page <= 1 ? '#cbd5e1' : '#334155'} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            disabled={page <= 1}
-            onPress={() => onChange(page - 1)}
-            style={styles.pageArrow}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons name="chevron-back" size={14} color={page <= 1 ? '#cbd5e1' : '#334155'} />
-          </TouchableOpacity>
-          {pageRange.map((p, index) => (
-            p === 'ellipsis' ? (
-              <Text key={`ellipsis-${index}`} style={styles.pageEllipsis}>···</Text>
-            ) : (
+      <View style={styles.paginationControls}>
+        {!!onPageSizeChange && !!pageSizeOptions?.length && (
+          <View style={styles.pageSizeRow}>
+            <Text style={styles.pageSizeLabel}>Rows:</Text>
+            {pageSizeOptions.map((size) => (
               <TouchableOpacity
-                key={p}
-                onPress={() => onChange(p)}
-                style={[styles.pageChip, p === page && styles.pageChipActive]}
+                key={size}
+                onPress={() => onPageSizeChange(size)}
+                style={[styles.pageChip, size === pageSize && styles.pageChipActive]}
                 hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
               >
-                <Text style={[styles.pageChipText, p === page && styles.pageChipTextActive]}>{p}</Text>
+                <Text style={[styles.pageChipText, size === pageSize && styles.pageChipTextActive]}>{size}</Text>
               </TouchableOpacity>
-            )
-          ))}
-          <TouchableOpacity
-            disabled={page >= pageCount}
-            onPress={() => onChange(page + 1)}
-            style={styles.pageArrow}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons name="chevron-forward" size={14} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            disabled={page >= pageCount}
-            onPress={() => onChange(pageCount)}
-            style={styles.pageArrow}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons name="play-skip-forward-outline" size={12} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
-          </TouchableOpacity>
-        </View>
-      )}
+            ))}
+          </View>
+        )}
+        {pageCount > 1 && (
+          <View style={styles.paginationControls}>
+            <TouchableOpacity
+              disabled={page <= 1}
+              onPress={() => onChange(1)}
+              style={styles.pageArrow}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="play-skip-back-outline" size={12} color={page <= 1 ? '#cbd5e1' : '#334155'} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              disabled={page <= 1}
+              onPress={() => onChange(page - 1)}
+              style={styles.pageArrow}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="chevron-back" size={14} color={page <= 1 ? '#cbd5e1' : '#334155'} />
+            </TouchableOpacity>
+            {pageRange.map((p, index) => (
+              p === 'ellipsis' ? (
+                <Text key={`ellipsis-${index}`} style={styles.pageEllipsis}>···</Text>
+              ) : (
+                <TouchableOpacity
+                  key={p}
+                  onPress={() => onChange(p)}
+                  style={[styles.pageChip, p === page && styles.pageChipActive]}
+                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+                >
+                  <Text style={[styles.pageChipText, p === page && styles.pageChipTextActive]}>{p}</Text>
+                </TouchableOpacity>
+              )
+            ))}
+            <TouchableOpacity
+              disabled={page >= pageCount}
+              onPress={() => onChange(page + 1)}
+              style={styles.pageArrow}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="chevron-forward" size={14} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              disabled={page >= pageCount}
+              onPress={() => onChange(pageCount)}
+              style={styles.pageArrow}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="play-skip-forward-outline" size={12} color={page >= pageCount ? '#cbd5e1' : '#334155'} />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -314,7 +334,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12, flexWrap: 'wrap', gap: 8,
   },
   paginationLabel: { fontSize: 11, color: '#94a3b8', fontWeight: '600' },
-  paginationControls: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  paginationControls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pageSizeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  pageSizeLabel: { fontSize: 11, color: '#94a3b8', fontWeight: '600', marginRight: 2 },
   pageArrow: {
     width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0',

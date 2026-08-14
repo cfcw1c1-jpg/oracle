@@ -33,7 +33,8 @@ import { formatPlatform, subscribeToPresence } from '../lib/presence';
 const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
 const NARROW_BREAKPOINT = 720;
-const PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
 const AREA_PILL_LIMIT = 2;
 
 // Matches the Sector/Cluster/Chapter palette used on the Areas screen so a
@@ -130,6 +131,7 @@ export default function PortalUsers({ onAccessChanged }) {
 
   const [onlineByProfile, setOnlineByProfile] = useState({});
   const [lastSignInByProfile, setLastSignInByProfile] = useState({});
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
   useEffect(() => {
     loadAll();
@@ -315,7 +317,12 @@ export default function PortalUsers({ onAccessChanged }) {
   }
 
   const areaTree = buildAreaTree(areas);
-  const { page, pageCount, pageItems, setPage } = usePagination(profiles, PAGE_SIZE);
+  const { page, pageCount, pageItems, setPage } = usePagination(profiles, pageSize);
+
+  function handlePageSizeChange(size) {
+    setPageSize(size);
+    setPage(1);
+  }
 
   function handleExport() {
     const rows = profiles.map((p) => ({
@@ -473,7 +480,15 @@ export default function PortalUsers({ onAccessChanged }) {
             </ScrollView>
           )}
 
-          <TablePagination page={page} pageCount={pageCount} totalCount={profiles.length} pageSize={PAGE_SIZE} onChange={setPage} />
+          <TablePagination
+            page={page}
+            pageCount={pageCount}
+            totalCount={profiles.length}
+            pageSize={pageSize}
+            onChange={setPage}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSizeChange={handlePageSizeChange}
+          />
         </TableCard>
       </View>
 
