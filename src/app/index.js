@@ -25,6 +25,7 @@ import Login from '../auth/Login';
 import ResetPassword from '../auth/ResetPassword';
 import { fetchAccessContext } from '../lib/access';
 import { addNotificationTapListener, registerForPushNotificationsAsync } from '../lib/pushNotifications';
+import { trackPresence } from '../lib/presence';
 import AdminDashboard from '../screens/AdminDashboard';
 import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP Maintenance screen
 import DashboardHome from '../screens/DashboardHome';
@@ -532,6 +533,15 @@ export default function Page() {
   useEffect(() => {
     if (!session?.user?.id) return;
     registerForPushNotificationsAsync(session.user.id);
+  }, [session?.user?.id]);
+
+  // Marks this session "online" on the shared presence channel for as long
+  // as a session exists -- see src/lib/presence.js. Portal Users reads the
+  // live result of this. Cleanup (untrack) runs on sign-out; a closed
+  // tab/killed app is handled by Realtime itself once the socket drops.
+  useEffect(() => {
+    if (!session?.user?.id) return undefined;
+    return trackPresence(session.user.id);
   }, [session?.user?.id]);
 
   // Tapping a delivered push notification routes to wherever it's about:

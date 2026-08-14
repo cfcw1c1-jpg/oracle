@@ -28,6 +28,7 @@ import {
   usePagination,
 } from '../components/admin-table';
 import { supabase } from '../../lib/supabase';
+import { formatPlatform, subscribeToPresence } from '../lib/presence';
 
 const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
@@ -119,8 +120,22 @@ export default function PortalUsers({ onAccessChanged }) {
   const [newUserRoleId, setNewUserRoleId] = useState(null);
   const [creatingUser, setCreatingUser] = useState(false);
 
+  const [onlineByProfile, setOnlineByProfile] = useState({});
+
   useEffect(() => {
     loadAll();
+  }, []);
+
+  // Live "who's online right now" -- src/app/index.js tracks every signed-in
+  // session onto the shared presence channel (profile_id + platform), this
+  // just reads it. Keyed by profile_id, last-tracked entry wins if the same
+  // account somehow has more than one open session.
+  useEffect(() => {
+    return subscribeToPresence((entries) => {
+      const map = {};
+      entries.forEach((e) => { map[e.profile_id] = e; });
+      setOnlineByProfile(map);
+    });
   }, []);
 
   async function loadAll() {
@@ -298,12 +313,20 @@ export default function PortalUsers({ onAccessChanged }) {
     ], rows);
   }
 
+  const onlineCount = Object.keys(onlineByProfile).length;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Ionicons name="people-circle-outline" size={22} color="#0f172a" style={styles.titleIcon} />
           <Text style={styles.title}>Portal Users</Text>
+          {onlineCount > 0 && (
+            <View style={styles.onlinePill}>
+              <View style={styles.onlinePillDot} />
+              <Text style={styles.onlinePillText}>{onlineCount} online now</Text>
+            </View>
+          )}
         </View>
         <Text style={styles.subtitle}>Every account that has signed in, its role, and the areas it can view.</Text>
       </View>
@@ -343,6 +366,14 @@ export default function PortalUsers({ onAccessChanged }) {
               const assignedAreas = userAreasByProfile[item.id] || [];
               const initials = (item.full_name || item.email || '?').slice(0, 2).toUpperCase();
               const isLast = index === pageItems.length - 1;
+              const presence = onlineByProfile[item.id];
+
+              const avatar = (
+                <View style={styles.avatarWrap}>
+                  <InitialsBadge text={initials} imageUri={item.avatar_url} />
+                  {!!presence && <View style={styles.onlineDot} />}
+                </View>
+              );
 
               const rolePill = item.roles
                 ? <Pill label={item.roles.name} color="#1d4ed8" bg="#dbeafe" />
@@ -369,10 +400,11 @@ export default function PortalUsers({ onAccessChanged }) {
                 return (
                   <TableRow key={item.id} last={isLast} style={styles.narrowRow}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-                      <InitialsBadge text={initials} imageUri={item.avatar_url} />
+                      {avatar}
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
                         {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
+                        {!!presence && <Text style={styles.deviceText} numberOfLines={1}>Online · {formatPlatform(presence.platform)}</Text>}
                       </View>
                     </View>
                     <View style={styles.narrowMetaRow}>{rolePill}</View>
@@ -385,10 +417,11 @@ export default function PortalUsers({ onAccessChanged }) {
               return (
                 <TableRow key={item.id} last={isLast}>
                   <View style={[styles.colAccount, { flexDirection: 'row', alignItems: 'center' }]}>
-                    <InitialsBadge text={initials} imageUri={item.avatar_url} />
+                    {avatar}
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
                       {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
+                      {!!presence && <Text style={styles.deviceText} numberOfLines={1}>Online · {formatPlatform(presence.platform)}</Text>}
                     </View>
                   </View>
                   <View style={styles.colRole}>{rolePill}</View>
@@ -583,6 +616,13 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 4 },
 
+  onlinePill: {
+    flexDirection: 'row', alignItems: 'center', marginLeft: 10,
+    paddingHorizontal: 9, paddingVertical: 3, borderRadius: 20, backgroundColor: '#dcfce7',
+  },
+  onlinePillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#16a34a', marginRight: 5 },
+  onlinePillText: { fontSize: 11, fontWeight: '700', color: '#15803d' },
+
   body: { flex: 1, paddingHorizontal: 16, paddingBottom: 16 },
   fillCard: { flex: 1 },
   rowsScroll: { flex: 1 },
@@ -597,6 +637,13 @@ const styles = StyleSheet.create({
 
   mainText: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
   subText: { fontSize: 11, color: '#64748b', marginTop: 2 },
+  deviceText: { fontSize: 11, color: '#16a34a', fontWeight: '600', marginTop: 2 },
+
+  avatarWrap: { position: 'relative' },
+  onlineDot: {
+    position: 'absolute', bottom: -1, right: -1, width: 11, height: 11, borderRadius: 6,
+    backgroundColor: '#16a34a', borderWidth: 2, borderColor: '#ffffff',
+  },
 
   pillWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   actionsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
