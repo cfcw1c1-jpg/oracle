@@ -17,6 +17,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 
 const NAVY = '#002060';
@@ -73,6 +74,7 @@ function Avatar({ avatarUrl, name, email, isGroup, size = 36 }) {
 export default function Messages({ onConversationsChanged, initialConversationId, onInitialConversationHandled, onExit }) {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
+  const insets = useSafeAreaInsets();
 
   const [currentUserId, setCurrentUserId] = useState(null);
   const [conversations, setConversations] = useState([]);
@@ -276,6 +278,12 @@ export default function Messages({ onConversationsChanged, initialConversationId
   // screen -- this screen's container no longer reached the physical
   // bottom, so the measurement undercounted. Tracking the keyboard's actual
   // height directly sidesteps that measurement entirely.
+  //
+  // e.endCoordinates.height is measured from the true physical bottom of
+  // the screen, but this container already sits insets.bottom above that
+  // (the root SafeAreaView already reserved that strip for the home
+  // indicator) -- applying the raw keyboard height on top would double-count
+  // that strip and leave a gap between the compose row and the keyboard.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
@@ -430,7 +438,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return (
-    <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
+    <View style={[styles.container, { paddingBottom: Math.max(0, keyboardHeight - insets.bottom) }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           {/* Messages runs full-screen on mobile with no bottom tab bar, so

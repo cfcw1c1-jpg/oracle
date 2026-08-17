@@ -1248,11 +1248,11 @@ const styles = StyleSheet.create({
   bottomNavItemText: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
   bottomNavItemTextActive: { color: '#002060' },
   bottomNavBadge: {
-    position: 'absolute', top: -4, right: -8, backgroundColor: '#ef4444', borderRadius: 8,
-    minWidth: 15, height: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+    position: 'absolute', top: -6, right: -10, backgroundColor: '#ef4444', borderRadius: 9,
+    minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
     borderWidth: 1.5, borderColor: '#ffffff',
   },
-  bottomNavBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
+  bottomNavBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
   bottomNavMoreCircle: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: -18,
@@ -1263,11 +1263,15 @@ const styles = StyleSheet.create({
     }),
   },
   bottomNavMoreDot: {
-    position: 'absolute', top: -6, right: -6, backgroundColor: '#ef4444', borderRadius: 8,
-    minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
-    borderWidth: 1.5, borderColor: '#ffffff',
+    position: 'absolute', top: -7, right: -7, backgroundColor: '#ef4444', borderRadius: 10,
+    minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
+    borderWidth: 2, borderColor: '#ffffff',
+    ...Platform.select({
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.3)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 4 },
+    }),
   },
-  bottomNavMoreDotText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
+  bottomNavMoreDotText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
   bottomNavPopoverOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
   bottomNavPopoverCard: {
     backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20,

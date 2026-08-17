@@ -337,8 +337,13 @@ export default function MemberChangeQueue({ onOpenConversation }) {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Change Requests ({filteredRequests.length})</Text>
-            <View style={styles.cardHeaderRight}>
-              <View style={styles.filterRow}>
+            <View style={[styles.cardHeaderRight, isNarrow && styles.cardHeaderRightNarrow]}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={[styles.filterRowScroll, isNarrow && styles.filterRowScrollNarrow]}
+                contentContainerStyle={styles.filterRow}
+              >
                 {['pending', 'on_going', 'approved', 'rejected', 'all'].map((s) => {
                   const isActive = statusFilter === s;
                   const style = STATUS_STYLES[s];
@@ -351,7 +356,7 @@ export default function MemberChangeQueue({ onOpenConversation }) {
                     </TouchableOpacity>
                   );
                 })}
-              </View>
+              </ScrollView>
               <ExportButton onPress={handleExport} />
             </View>
           </View>
@@ -594,6 +599,14 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 20, fontWeight: '800', color: '#1e293b' },
   cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  // Narrow screens: the 5 filter tabs alone can outrun the available width,
+  // silently pushing ExportButton off past the card's own overflow:hidden
+  // edge with no way to reach it. Stacking the export button below (instead
+  // of squeezed onto the same row) and letting the tabs scroll horizontally
+  // keeps every control reachable regardless of label lengths.
+  cardHeaderRightNarrow: { flexDirection: 'column', alignItems: 'stretch', width: '100%' },
+  filterRowScroll: { flexGrow: 0, flexShrink: 1 },
+  filterRowScrollNarrow: { width: '100%', flexShrink: 0, marginBottom: 10 },
 
   filterRow: { flexDirection: 'row', gap: 16 },
   filterItem: { alignItems: 'center', paddingBottom: 4 },

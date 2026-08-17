@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
 
 const NAVY = '#002060';
@@ -40,6 +41,7 @@ function formatDate(dateStr) {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -60,6 +62,12 @@ export default function ProfileScreen() {
   // the bottom of the screen -- this screen's container no longer reaches
   // the physical bottom, so the measurement undercounts. Tracking the
   // keyboard's actual height directly sidesteps that measurement entirely.
+  //
+  // e.endCoordinates.height is measured from the true physical bottom of
+  // the screen, but this container already sits insets.bottom above that
+  // (the root SafeAreaView already reserved that strip for the home
+  // indicator) -- applying the raw keyboard height on top would double-count
+  // that strip and leave a gap below the fields, above the keyboard.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
@@ -192,7 +200,7 @@ export default function ProfileScreen() {
   const avatarUrl = user?.user_metadata?.avatar_url;
 
   return (
-    <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
+    <View style={[styles.container, { paddingBottom: Math.max(0, keyboardHeight - insets.bottom) }]}>
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <View style={styles.heroSection}>
         <View style={styles.titleRow}>
