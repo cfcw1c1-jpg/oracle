@@ -419,6 +419,10 @@ export default function Page() {
   const [disclaimerVisible, setDisclaimerVisible] = useState(false);
   const [forceUpdateInfo, setForceUpdateInfo] = useState(null); // { storeUrl, message } | null once behind, checked below
   const currentTabRef = useRef(currentTab);
+  // Whatever tab was active right before switching into Messages -- since
+  // mobile's Messages screen has no bottom tab bar of its own to navigate
+  // away with, its back button needs somewhere to return to.
+  const previousTabRef = useRef('home');
 
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
@@ -795,6 +799,9 @@ export default function Page() {
 
   function handleSelectTab(tabKey) {
     if (tabKey !== currentTab) logPageView(tabKey);
+    if (tabKey === 'messages' && currentTab !== 'messages') {
+      previousTabRef.current = currentTab;
+    }
     setCurrentTab(tabKey);
   }
 
@@ -929,6 +936,7 @@ export default function Page() {
               onConversationsChanged={(convos) => setUnreadMessageCount(convos.reduce((sum, c) => sum + (c.unread_count || 0), 0))}
               initialConversationId={pendingConversationId}
               onInitialConversationHandled={() => setPendingConversationId(null)}
+              onExit={!isLargeScreen ? () => handleSelectTab(previousTabRef.current) : undefined}
             />
           )}
           {NAV_ITEMS.some((item) => item.key === effectiveTab) && !canView(effectiveTab) && (
@@ -944,7 +952,11 @@ export default function Page() {
         </View>
       </View>
 
-      {!isLargeScreen && !isKeyboardVisible && (
+      {/* Messages runs full-screen on mobile -- no bottom tab bar competing
+          for space with it (or with its own compose row/keyboard) at all,
+          same as opening a thread in Messenger. Every other mobile screen
+          still just hides it while the keyboard is up. */}
+      {!isLargeScreen && !isKeyboardVisible && effectiveTab !== 'messages' && (
         <MobileBottomNav
           currentTab={effectiveTab}
           onSelectTab={handleSelectTab}

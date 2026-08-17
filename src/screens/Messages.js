@@ -70,7 +70,7 @@ function Avatar({ avatarUrl, name, email, isGroup, size = 36 }) {
 // (with unread counts) and message thread both stay live via Supabase
 // Realtime; RLS ensures a subscriber only ever receives rows for
 // conversations they're actually a participant of.
-export default function Messages({ onConversationsChanged, initialConversationId, onInitialConversationHandled }) {
+export default function Messages({ onConversationsChanged, initialConversationId, onInitialConversationHandled, onExit }) {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
 
@@ -433,6 +433,13 @@ export default function Messages({ onConversationsChanged, initialConversationId
     <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
+          {/* Messages runs full-screen on mobile with no bottom tab bar, so
+              this is the only way back out to the rest of the app there. */}
+          {!isWide && !!onExit && (
+            <TouchableOpacity onPress={onExit} style={styles.exitBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="chevron-back" size={22} color="#0f172a" />
+            </TouchableOpacity>
+          )}
           <Ionicons name="chatbubbles-outline" size={22} color="#0f172a" style={styles.titleIcon} />
           <Text style={styles.title}>Messages</Text>
           {totalUnread > 0 && (
@@ -666,6 +673,7 @@ const styles = StyleSheet.create({
 
   header: { padding: 16, paddingBottom: 8 },
   titleRow: { flexDirection: 'row', alignItems: 'center' },
+  exitBtn: { marginRight: 8, padding: 2 },
   titleIcon: { marginRight: 8 },
   title: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
   subtitle: { fontSize: 12, color: '#64748b', marginTop: 4 },
