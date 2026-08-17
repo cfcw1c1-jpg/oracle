@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
+import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole } from './PfoStatGenerator';
 
@@ -228,20 +229,18 @@ export default function DashboardHome({ onNavigate, roleName }) {
     try {
       setLoading(true);
 
-      const [{ data: sessionData }, membersRes, pfoRes, clpRes] = await Promise.all([
+      const [{ data: sessionData }, membersData, pfoData, clpRes] = await Promise.all([
         supabase.auth.getSession(),
-        supabase.from('members').select('Gender, Status, PastoralService'),
-        supabase.from('pfo_members').select('*, members (Status)'),
+        fetchAllRows('members', 'Gender, Status, PastoralService'),
+        fetchAllRows('pfo_members', '*, members (Status)'),
         supabase.from('clp_trainings').select('*').order('start_date', { ascending: false }),
       ]);
 
-      if (membersRes.error) throw membersRes.error;
-      if (pfoRes.error) throw pfoRes.error;
       if (clpRes.error) throw clpRes.error;
 
       setSessionUser(sessionData?.session?.user || null);
-      setMemberGenders(membersRes.data || []);
-      setPfoRows(pfoRes.data || []);
+      setMemberGenders(membersData);
+      setPfoRows(pfoData);
       setClpTrainings(clpRes.data || []);
     } catch (err) {
       console.error('Error loading dashboard:', err.message);

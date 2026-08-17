@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import { EmptyRow, ExportButton, exportCsv, Pill, TableCard, TableRow } from '../components/admin-table';
 
@@ -102,14 +103,13 @@ export default function DataHealth() {
   async function loadData() {
     try {
       setLoading(true);
-      const [areasRes, membersRes] = await Promise.all([
+      const [areasRes, membersData] = await Promise.all([
         supabase.from('areas').select('id, name, type').order('name'),
-        supabase.from('members').select('MemberIDNo, Lastname, Firstname, AreaName, Status'),
+        fetchAllRows('members', 'MemberIDNo, Lastname, Firstname, AreaName, Status'),
       ]);
       if (areasRes.error) throw areasRes.error;
-      if (membersRes.error) throw membersRes.error;
       setAreas(areasRes.data || []);
-      setMembers(membersRes.data || []);
+      setMembers(membersData);
     } catch (err) {
       showAlert('Error Loading Data Health', err.message);
     } finally {

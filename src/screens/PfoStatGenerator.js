@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import { TRAINING_COLUMNS } from './PfoList';
 
@@ -242,16 +243,13 @@ export default function PfoStatGenerator() {
     try {
       setLoading(true);
 
-      const [{ data: members, error: memberError }, { data, error: pfoError }] = await Promise.all([
-        supabase.from('members').select('MemberIDNo, PastoralService, Status, AreaName'),
-        supabase.from('pfo_members').select('*, members (PastoralService, Status, AreaName)'),
+      const [members, data] = await Promise.all([
+        fetchAllRows('members', 'MemberIDNo, PastoralService, Status, AreaName'),
+        fetchAllRows('pfo_members', '*, members (PastoralService, Status, AreaName)'),
       ]);
 
-      if (memberError) throw memberError;
-      if (pfoError) throw pfoError;
-
-      setMembersRows(members || []);
-      setPfoRows(data || []);
+      setMembersRows(members);
+      setPfoRows(data);
     } catch (err) {
       console.error('Error generating PFO formation statistics:', err.message);
     } finally {

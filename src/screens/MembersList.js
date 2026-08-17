@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import { TablePagination, usePagination } from '../components/admin-table';
 import { parseTrainingName, TRAINING_COLUMNS } from './PfoList';
@@ -342,13 +343,11 @@ export default function MembersList({ roleName }) {
 
   async function fetchMembers() {
     try {
-      const { data, error } = await supabase
-        .from('members')
-        .select('*')
-        .order('Lastname', { ascending: true });
-
-      if (error) throw error;
-      setMembers(data || []);
+      // Ordered by MemberIDNo too, as a tiebreaker -- ORDER BY on
+      // Lastname alone isn't guaranteed stable across fetchAllRows'
+      // separate paginated requests, since many members share a surname.
+      const data = await fetchAllRows('members', '*', { orderBy: ['Lastname', 'MemberIDNo'] });
+      setMembers(data);
     } catch (error) {
       console.error(error.message);
     } finally {

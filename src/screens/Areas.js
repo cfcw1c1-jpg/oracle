@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import {
   ActionLink,
@@ -165,17 +166,16 @@ export default function Areas() {
   async function loadAreas() {
     try {
       setLoading(true);
-      const [areasRes, membersRes] = await Promise.all([
+      const [areasRes, membersData] = await Promise.all([
         supabase
           .from('areas')
           .select('id, name, type, parent_id, head_member_id, members ( Firstname, Lastname )')
           .order('name'),
-        supabase.from('members').select('MemberIDNo, Firstname, Lastname, AreaName, Status, PastoralService'),
+        fetchAllRows('members', 'MemberIDNo, Firstname, Lastname, AreaName, Status, PastoralService'),
       ]);
       if (areasRes.error) throw areasRes.error;
-      if (membersRes.error) throw membersRes.error;
       setAreas(areasRes.data || []);
-      setAllMembers(membersRes.data || []);
+      setAllMembers(membersData);
     } catch (err) {
       showAlert('Error Loading Areas', err.message);
     } finally {
