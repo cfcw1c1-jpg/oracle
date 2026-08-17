@@ -165,14 +165,20 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMes
           signed-in account can message regardless of role), so this button
           is unconditional -- reusing canView here would hide it for everyone. */}
       <TouchableOpacity style={styles.bottomNavMoreItem} onPress={() => onSelectTab('messages')}>
-        <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.bottomNavMoreCircle}>
-          <Ionicons name={currentTab === 'messages' ? 'chatbubbles' : 'chatbubbles-outline'} size={20} color="#ffffff" />
+        <View style={styles.bottomNavMoreCircleWrap}>
+          <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.bottomNavMoreCircle}>
+            <Ionicons name={currentTab === 'messages' ? 'chatbubbles' : 'chatbubbles-outline'} size={20} color="#ffffff" />
+          </LinearGradient>
+          {/* Sibling of LinearGradient, not a child -- LinearGradient clips
+              its children to its own rounded bounds, which was cutting this
+              badge down to a sliver instead of a full circle sitting on top
+              of the button's edge. */}
           {unreadMessageCount > 0 && (
             <View style={styles.bottomNavMoreDot}>
               <Text style={styles.bottomNavMoreDotText}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
             </View>
           )}
-        </LinearGradient>
+        </View>
         <Text style={[styles.bottomNavItemText, currentTab === 'messages' && styles.bottomNavItemTextActive]}>Messages</Text>
       </TouchableOpacity>
 
@@ -1254,9 +1260,13 @@ const styles = StyleSheet.create({
   },
   bottomNavBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
+  // Plain wrapper (no overflow clipping, unlike LinearGradient) so the
+  // unread badge below can be positioned relative to this same box without
+  // getting cut off by the circle's own rounded bounds.
+  bottomNavMoreCircleWrap: { width: 40, height: 40, marginTop: -18, position: 'relative' },
   bottomNavMoreCircle: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: -18,
-    borderWidth: 3, borderColor: '#ffffff', position: 'relative',
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: '#ffffff',
     ...Platform.select({
       web: { boxShadow: '0 4px 10px rgba(29,63,158,0.4)' },
       default: { shadowColor: '#1d3f9e', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 },

@@ -521,7 +521,7 @@ export default function PfoStatGenerator() {
           )}
         </View>
 
-        <View style={styles.areaDropdownWrapper}>
+        <View style={styles.roleDropdownWrapper}>
           <Text style={styles.fieldLabel}>Roles:</Text>
           <TouchableOpacity
             style={styles.dropdownHeader}
@@ -737,6 +737,11 @@ const styles = StyleSheet.create({
 
   filtersRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 14, zIndex: 10 },
   areaDropdownWrapper: { zIndex: 10, flexGrow: 1, flexBasis: 200, maxWidth: 260 },
+  // Lower than areaDropdownWrapper so Area's own floating menu (it comes
+  // first and opens downward) reliably paints over the Roles field sitting
+  // right below it on narrow screens, instead of the two tying at an equal
+  // zIndex and the stacking order becoming a platform-dependent toss-up.
+  roleDropdownWrapper: { zIndex: 9, flexGrow: 1, flexBasis: 200, maxWidth: 260 },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
