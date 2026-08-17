@@ -215,7 +215,7 @@ const COLUMN_HEADER_HEIGHT = 52;
 
 // Owns its own search text locally so typing here only re-renders this small
 // dropdown, not the entire (expensive) matrix table below it.
-const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selectedIds, onToggle, onClear }) {
+const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selectedIds, onToggle, onClear, isNarrow }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -243,15 +243,19 @@ const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selec
   }, [query, members]);
 
   return (
-    <View style={styles.memberFilterWrapper}>
-      <TouchableOpacity style={styles.memberFilterHeader} activeOpacity={0.8} onPress={() => setOpen((v) => !v)}>
+    <View style={[styles.memberFilterWrapper, isNarrow && styles.filterWrapperNarrow]}>
+      <TouchableOpacity
+        style={[styles.memberFilterHeader, isNarrow && styles.filterHeaderNarrow]}
+        activeOpacity={0.8}
+        onPress={() => setOpen((v) => !v)}
+      >
         <Ionicons name="people-outline" size={14} color="#64748b" style={{ marginRight: 6 }} />
         <Text style={styles.memberFilterHeaderText} numberOfLines={1}>{label}</Text>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" style={{ marginLeft: 6 }} />
       </TouchableOpacity>
 
       {open && (
-        <View style={[styles.memberFilterMenu, styles.memberFilterMenuRight]}>
+        <View style={[styles.memberFilterMenu, isNarrow ? styles.memberFilterMenuNarrow : styles.memberFilterMenuRight]}>
           <View style={styles.memberFilterSearchBar}>
             <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
             <TextInput
@@ -308,19 +312,23 @@ const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selec
 // above. Options are narrowed to the signed-in account's assigned areas
 // when it has any (see loadAssignedAreas in PfoList) so this always
 // matches what area-scoping RLS already limits the roster to.
-const AreaFilterDropdown = memo(function AreaFilterDropdown({ options, value, onChange }) {
+const AreaFilterDropdown = memo(function AreaFilterDropdown({ options, value, onChange, isNarrow }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <View style={styles.memberFilterWrapper}>
-      <TouchableOpacity style={styles.memberFilterHeader} activeOpacity={0.8} onPress={() => setOpen((v) => !v)}>
+    <View style={[styles.memberFilterWrapper, isNarrow && styles.filterWrapperNarrow]}>
+      <TouchableOpacity
+        style={[styles.memberFilterHeader, isNarrow && styles.filterHeaderNarrow]}
+        activeOpacity={0.8}
+        onPress={() => setOpen((v) => !v)}
+      >
         <Ionicons name="location-outline" size={14} color="#64748b" style={{ marginRight: 6 }} />
         <Text style={styles.memberFilterHeaderText} numberOfLines={1}>Area: {value}</Text>
         <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={12} color="#64748b" style={{ marginLeft: 6 }} />
       </TouchableOpacity>
 
       {open && (
-        <View style={styles.memberFilterMenu}>
+        <View style={[styles.memberFilterMenu, isNarrow && styles.memberFilterMenuNarrow]}>
           <ScrollView style={styles.memberFilterList} nestedScrollEnabled>
             {options.map((option) => {
               const isSelected = option === value;
@@ -564,7 +572,7 @@ export default function PfoList() {
       </View>
 
       <View style={styles.controlsRow}>
-        <View style={styles.searchContainer}>
+        <View style={[styles.searchContainer, isNarrow && styles.filterWrapperNarrow]}>
           <Ionicons name="search" size={16} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
@@ -582,9 +590,10 @@ export default function PfoList() {
           selectedIds={selectedMemberIds}
           onToggle={toggleMemberFilter}
           onClear={clearMemberFilter}
+          isNarrow={isNarrow}
         />
 
-        <AreaFilterDropdown options={areaOptions} value={areaFilter} onChange={setAreaFilter} />
+        <AreaFilterDropdown options={areaOptions} value={areaFilter} onChange={setAreaFilter} isNarrow={isNarrow} />
       </View>
 
       <View style={styles.tableWrapper}>
@@ -687,6 +696,14 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: '#1e293b', fontWeight: '500' },
 
+  // Narrow screens: every filter control gets its own full-width row
+  // instead of wrapping two-or-so-per-line -- with only one trigger ever
+  // on a line, there's no "which edge is it near" ambiguity to get wrong,
+  // and each fixed-width dropdown menu comfortably fits below its now
+  // full-width trigger regardless of left/right anchor.
+  filterWrapperNarrow: { width: '100%', flexBasis: '100%', maxWidth: undefined },
+  filterHeaderNarrow: { maxWidth: undefined },
+
   memberFilterWrapper: { position: 'relative' },
   memberFilterHeader: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#ffffff',
@@ -707,6 +724,9 @@ const styles = StyleSheet.create({
   // FIRST row, near the screen's RIGHT edge -- the same fixed-width menu
   // needs to grow leftward from there instead, or it overflows off-screen.
   memberFilterMenuRight: { left: undefined, right: 0 },
+  // Narrow: trigger spans the full row width, so the menu matches it edge
+  // to edge instead of relying on either fixed anchor.
+  memberFilterMenuNarrow: { left: 0, right: 0, width: undefined },
   memberFilterSearchBar: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc',
     margin: 8, borderRadius: 8, paddingHorizontal: 10, paddingVertical: Platform.OS === 'ios' ? 8 : 4,
