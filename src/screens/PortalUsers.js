@@ -251,7 +251,13 @@ export default function PortalUsers({ onAccessChanged }) {
       const { data, error } = await supabase.functions.invoke('create-portal-user', {
         body: { email, password, full_name: newUserFullName.trim() },
       });
-      if (error) throw error;
+      if (error) {
+        // supabase-js only gives a generic "non-2xx status code" message here --
+        // the real reason (bad admin check, duplicate email, etc.) is in the
+        // Edge Function's JSON response body, on error.context.
+        const bodyError = await error.context?.json?.().catch(() => null);
+        throw new Error(bodyError?.error || error.message);
+      }
       if (data?.error) throw new Error(data.error);
 
       if (newUserRoleId) {

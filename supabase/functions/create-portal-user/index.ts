@@ -3,11 +3,13 @@
 // call) because creating an auth user requires the service_role key, which
 // bypasses RLS entirely and must never be shipped in the app bundle.
 //
-// This function re-checks admin-ness itself using the CALLER's own JWT --
-// holding the service role key doesn't imply the caller is authorized, so
-// every request is verified against the same `is_admin()` rule the rest of
-// the app relies on (profiles.role_id -> roles.name = 'Admin') before any
-// privileged action runs.
+// This function re-checks the caller's own permissions using their own JWT
+// -- holding the service role key doesn't imply the caller is authorized.
+// Access is granted to Admins (via `is_admin()`) and to any other role that
+// has been explicitly granted the 'portalUsers' page in role_pages -- the
+// same permission that decides whether the "Portal Users" nav item and its
+// "Add User" button are shown client-side, so a role that can see the page
+// can also use it.
 //
 // Deploy with (from the repo root, after `npx supabase login` and
 // `npx supabase link --project-ref efelttlcyjfsvpxwmwjd`):
@@ -55,11 +57,22 @@ Deno.serve(async (req) => {
 
     const { data: callerProfile } = await callerClient
       .from('profiles')
-      .select('roles ( name )')
+      .select('role_id, roles ( name )')
       .eq('id', caller.id)
       .maybeSingle();
-    if (callerProfile?.roles?.name !== 'Admin') {
-      return jsonResponse({ error: 'Only Admins can create portal users' }, 403);
+
+    let canManageUsers = callerProfile?.roles?.name === 'Admin';
+    if (!canManageUsers && callerProfile?.role_id) {
+      const { data: pageAccess } = await callerClient
+        .from('role_pages')
+        .select('page_key')
+        .eq('role_id', callerProfile.role_id)
+        .eq('page_key', 'portalUsers')
+        .maybeSingle();
+      canManageUsers = !!pageAccess;
+    }
+    if (!canManageUsers) {
+      return jsonResponse({ error: 'You do not have access to manage portal users' }, 403);
     }
 
     const body = await req.json().catch(() => ({}));
