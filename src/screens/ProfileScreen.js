@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
@@ -171,7 +172,8 @@ export default function ProfileScreen() {
   const avatarUrl = user?.user_metadata?.avatar_url;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <View style={styles.heroSection}>
         <View style={styles.titleRow}>
           <Ionicons name="person-circle-outline" size={22} color="#0f172a" style={styles.titleIcon} />
@@ -295,6 +297,7 @@ export default function ProfileScreen() {
         <Text style={styles.privacyLinkText}>Privacy Policy</Text>
       </TouchableOpacity>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
