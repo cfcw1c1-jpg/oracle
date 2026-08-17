@@ -422,7 +422,6 @@ export default function Page() {
 
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   // Hides the bottom tab bar while the keyboard is open. It's a sibling of
   // (not inside) mainContentPane, so a screen's own KeyboardAvoidingView --
   // Messages' compose row, Profile's password fields -- never reaches the
@@ -797,7 +796,6 @@ export default function Page() {
   function handleSelectTab(tabKey) {
     if (tabKey !== currentTab) logPageView(tabKey);
     setCurrentTab(tabKey);
-    setIsMobileMenuOpen(false);
   }
 
   function openConversationInMessages(conversationId) {
@@ -835,7 +833,14 @@ export default function Page() {
         </View>
 
         <View style={styles.headerRight}>
-          {isLargeScreen ? (
+          {isLargeScreen && (
+            // Mobile has no equivalent of this button -- Messages already has
+            // its own prominent slot in the bottom tab bar there, and the
+            // hamburger/drawer entry point that used to live here on mobile
+            // has been removed per product decision (everything not pinned
+            // to the bottom tab bar -- Admin-only pages, Portal Users, Logs,
+            // Settings, non-Moderator Change Requests -- is desktop-only for
+            // now).
             <TouchableOpacity
               style={styles.headerMessagesButton}
               onPress={() => handleSelectTab('messages')}
@@ -845,24 +850,6 @@ export default function Page() {
               {unreadMessageCount > 0 && (
                 <View style={styles.headerMessagesBadge}>
                   <Text style={styles.headerMessagesBadgeText}>{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          ) : (
-            // Messages has its own prominent button in the bottom tab bar on
-            // mobile, so this slot becomes the entry point to everything
-            // NOT pinned there instead (Admin-only pages, Portal Users,
-            // Logs, Settings, Change Requests, etc.) -- the same full nav
-            // drawer the old top hamburger used to open.
-            <TouchableOpacity
-              style={styles.headerMessagesButton}
-              onPress={() => setIsMobileMenuOpen(true)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="menu-outline" size={22} color="#fff" />
-              {pendingChangeRequestCount > 0 && (
-                <View style={styles.headerMessagesBadge}>
-                  <Text style={styles.headerMessagesBadgeText}>{pendingChangeRequestCount > 99 ? '99+' : pendingChangeRequestCount}</Text>
                 </View>
               )}
             </TouchableOpacity>
@@ -911,25 +898,6 @@ export default function Page() {
               roleName={access?.roleName}
               badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
             />
-          </View>
-        )}
-
-        {/* MOBILE OVERLAY DRAWER: Slid open temporarily on smaller screens (always expanded) */}
-        {!isLargeScreen && isMobileMenuOpen && (
-          <View style={styles.mobileDrawerOverlay}>
-            <View style={styles.mobileDrawerContent}>
-              <SidebarPanel
-                currentTab={currentTab}
-                onSelectTab={handleSelectTab}
-                collapsed={false}
-                session={session}
-                showCollapseToggle={false}
-                navItems={visibleNavItems}
-                roleName={access?.roleName}
-                badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
-              />
-            </View>
-            <TouchableOpacity style={styles.drawerDismissZone} onPress={() => setIsMobileMenuOpen(false)} />
           </View>
         )}
 
@@ -1250,11 +1218,6 @@ const styles = StyleSheet.create({
   logoutText: { color: '#f87171', fontWeight: '600' },
   versionText: { fontSize: 10, color: 'rgba(226,232,255,0.45)', textAlign: 'center', marginTop: 10, fontWeight: '500' },
 
-  // Mobile Modal Drawer Styling
-  mobileDrawerOverlay: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', zIndex: 5 },
-  mobileDrawerContent: { width: 250, height: '100%' },
-  drawerDismissZone: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.4)' },
-  
   // Content view pane
   mainContentPane: { flex: 1, backgroundColor: '#f8fafc' },
   noAccessWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
