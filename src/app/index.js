@@ -73,6 +73,114 @@ const PAGE_VIEW_LABELS = NAV_ITEMS.reduce((acc, item) => {
 
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
 
+// Mobile-only bottom tab bar -- replaces the old top hamburger + slide-out
+// drawer as the primary way to navigate on narrow screens. Only the 5
+// pinned destinations below get a permanent slot; PFO fans out into its
+// own small popover since it's really 3 destinations. Everything else
+// (Admin-only pages, Portal Users, Logs, Settings, Profile, Log Out, the
+// Moderation group, etc.) stays reachable through "More", which opens the
+// exact same full nav drawer the hamburger used to.
+const PFO_CHILD_TABS = [
+  { key: 'pfo', label: 'Trainings', icon: 'bar-chart-outline' },
+  { key: 'pfoReports', label: 'Reports', icon: 'trending-up-outline' },
+  { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
+];
+
+const MOBILE_TABS = [
+  { key: 'home', label: 'Dashboard', icon: 'home-outline', activeIcon: 'home' },
+  { key: 'members', label: 'Directory', icon: 'people-outline', activeIcon: 'people' },
+  { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
+  { key: 'clp', label: 'CLP', icon: 'construct-outline', activeIcon: 'construct' },
+  { key: 'messages', label: 'Messages', icon: 'chatbubbles-outline', activeIcon: 'chatbubbles' },
+];
+
+function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount, moreBadge, onOpenMore }) {
+  const [pfoMenuOpen, setPfoMenuOpen] = useState(false);
+
+  const visibleTabs = MOBILE_TABS
+    .map((item) => (item.children ? { ...item, children: item.children.filter((c) => canView(c.key)) } : item))
+    .filter((item) => (item.children ? item.children.length > 0 : canView(item.key)));
+
+  const pfoGroup = visibleTabs.find((item) => item.key === 'pfoGroup');
+
+  function isActive(item) {
+    return item.children ? item.children.some((c) => c.key === currentTab) : currentTab === item.key;
+  }
+
+  function handlePress(item) {
+    if (item.children) {
+      if (item.children.length === 1) {
+        onSelectTab(item.children[0].key);
+      } else {
+        setPfoMenuOpen(true);
+      }
+      return;
+    }
+    onSelectTab(item.key);
+  }
+
+  return (
+    <View style={styles.bottomNavBar}>
+      {visibleTabs.map((item) => {
+        const active = isActive(item);
+        return (
+          <TouchableOpacity key={item.key} style={styles.bottomNavItem} onPress={() => handlePress(item)}>
+            <View>
+              <Ionicons name={active ? item.activeIcon : item.icon} size={22} color={active ? '#002060' : '#94a3b8'} />
+              {item.key === 'messages' && unreadMessageCount > 0 && (
+                <View style={styles.bottomNavBadge}>
+                  <Text style={styles.bottomNavBadgeText}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={[styles.bottomNavItemText, active && styles.bottomNavItemTextActive]} numberOfLines={1}>
+              {item.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+
+      <TouchableOpacity style={styles.bottomNavMoreItem} onPress={onOpenMore}>
+        <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.bottomNavMoreCircle}>
+          <Ionicons name="menu" size={20} color="#ffffff" />
+        </LinearGradient>
+        {moreBadge && <View style={styles.bottomNavMoreDot} />}
+        <Text style={styles.bottomNavItemText}>More</Text>
+      </TouchableOpacity>
+
+      {!!pfoGroup && (
+        <Modal visible={pfoMenuOpen} transparent animationType="fade" onRequestClose={() => setPfoMenuOpen(false)}>
+          <View style={styles.bottomNavPopoverOverlay}>
+            <View style={styles.bottomNavPopoverCard}>
+              <Text style={styles.bottomNavPopoverTitle}>PFO</Text>
+              {pfoGroup.children.map((child) => (
+                <TouchableOpacity
+                  key={child.key}
+                  style={[styles.bottomNavPopoverItem, currentTab === child.key && styles.bottomNavPopoverItemActive]}
+                  onPress={() => { setPfoMenuOpen(false); onSelectTab(child.key); }}
+                >
+                  <Ionicons
+                    name={child.icon}
+                    size={17}
+                    color={currentTab === child.key ? '#002060' : '#475569'}
+                    style={{ marginRight: 12 }}
+                  />
+                  <Text style={[styles.bottomNavPopoverItemText, currentTab === child.key && styles.bottomNavPopoverItemTextActive]}>
+                    {child.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.bottomNavPopoverCancel} onPress={() => setPfoMenuOpen(false)}>
+                <Text style={styles.bottomNavPopoverCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </View>
+  );
+}
+
 // Remembers the last tab a signed-in account was on across a page refresh
 // (web only -- native has no "refresh" concept). localStorage rather than
 // sessionStorage -- it's scoped to the browser (origin) rather than one
@@ -676,15 +784,6 @@ export default function Page() {
       {/* Top Header Row */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
-          {!isLargeScreen && (
-            <TouchableOpacity
-              style={styles.menuToggleButton}
-              onPress={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name={isMobileMenuOpen ? 'close' : 'menu'} size={24} color="#fff" />
-            </TouchableOpacity>
-          )}
           <Text style={styles.headerTitle}>ORACLE</Text>
           <Text style={styles.headerSubtitle} numberOfLines={1}>{headerPortalLabel}</Text>
         </View>
@@ -811,6 +910,17 @@ export default function Page() {
         </View>
       </View>
 
+      {!isLargeScreen && (
+        <MobileBottomNav
+          currentTab={effectiveTab}
+          onSelectTab={handleSelectTab}
+          canView={canView}
+          unreadMessageCount={unreadMessageCount}
+          moreBadge={pendingChangeRequestCount > 0}
+          onOpenMore={() => setIsMobileMenuOpen(true)}
+        />
+      )}
+
       {messageToast && (
         <TouchableOpacity
           style={styles.toast}
@@ -931,7 +1041,6 @@ const styles = StyleSheet.create({
   // Header Adjustments
   header: { backgroundColor: '#002060', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderColor: '#001540', zIndex: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerContent: { flexDirection: 'row', alignItems: 'center' },
-  menuToggleButton: { marginRight: 16, padding: 4 },
   headerTitle: { fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: 2 },
   headerSubtitle: { fontSize: 11, color: '#93c5fd', marginLeft: 10, letterSpacing: 1, fontWeight: '500', marginTop: 4 },
   headerRight: { flexDirection: 'row', alignItems: 'center' },
@@ -1084,4 +1193,55 @@ const styles = StyleSheet.create({
   mainContentPane: { flex: 1, backgroundColor: '#f8fafc' },
   noAccessWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   noAccessText: { marginTop: 12, fontSize: 13, color: '#64748b', textAlign: 'center', maxWidth: 320 },
+
+  // Mobile bottom tab bar
+  bottomNavBar: {
+    flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#ffffff',
+    borderTopWidth: 1, borderTopColor: '#e2e8f0', paddingTop: 8, paddingBottom: 8, paddingHorizontal: 4,
+    ...Platform.select({
+      web: { boxShadow: '0 -4px 16px rgba(2,6,23,0.06)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: -2 }, elevation: 12 },
+    }),
+  },
+  bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingVertical: 4, gap: 3 },
+  bottomNavItemText: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
+  bottomNavItemTextActive: { color: '#002060' },
+  bottomNavBadge: {
+    position: 'absolute', top: -4, right: -8, backgroundColor: '#ef4444', borderRadius: 8,
+    minWidth: 15, height: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+    borderWidth: 1.5, borderColor: '#ffffff',
+  },
+  bottomNavBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
+  bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
+  bottomNavMoreCircle: {
+    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: -18,
+    borderWidth: 3, borderColor: '#ffffff',
+    ...Platform.select({
+      web: { boxShadow: '0 4px 10px rgba(29,63,158,0.4)' },
+      default: { shadowColor: '#1d3f9e', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
+    }),
+  },
+  bottomNavMoreDot: {
+    position: 'absolute', top: -14, right: '30%', width: 9, height: 9, borderRadius: 4.5,
+    backgroundColor: '#ef4444', borderWidth: 1.5, borderColor: '#ffffff',
+  },
+  bottomNavPopoverOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
+  bottomNavPopoverCard: {
+    backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingTop: 14, paddingBottom: 28, paddingHorizontal: 8,
+    ...Platform.select({
+      web: { boxShadow: '0 -12px 32px rgba(2,6,23,0.25)' },
+      default: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 16, shadowOffset: { width: 0, height: -6 }, elevation: 16 },
+    }),
+  },
+  bottomNavPopoverTitle: {
+    fontSize: 11, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase',
+    letterSpacing: 1, paddingHorizontal: 14, marginBottom: 8,
+  },
+  bottomNavPopoverItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 14, borderRadius: 10, marginHorizontal: 6 },
+  bottomNavPopoverItemActive: { backgroundColor: '#eff6ff' },
+  bottomNavPopoverItemText: { fontSize: 15, fontWeight: '600', color: '#334155' },
+  bottomNavPopoverItemTextActive: { color: '#002060', fontWeight: '700' },
+  bottomNavPopoverCancel: { alignItems: 'center', paddingVertical: 13, marginTop: 4, marginHorizontal: 6, borderRadius: 10, backgroundColor: '#f8fafc' },
+  bottomNavPopoverCancelText: { fontSize: 14, fontWeight: '700', color: '#64748b' },
 });
