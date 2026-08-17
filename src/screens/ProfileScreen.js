@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  KeyboardAvoidingView,
+  Keyboard,
   Platform,
   ScrollView,
   StyleSheet,
@@ -51,6 +51,26 @@ export default function ProfileScreen() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Drives the container's own bottom padding below (iOS only -- Android's
+  // window already resizes for the keyboard via windowSoftInputMode=
+  // adjustResize). Not a KeyboardAvoidingView: that pads itself based on
+  // measuring its own on-screen position, which comes up short once the
+  // mobile bottom tab bar (a sibling of this screen, not a child) occupies
+  // the bottom of the screen -- this screen's container no longer reaches
+  // the physical bottom, so the measurement undercounts. Tracking the
+  // keyboard's actual height directly sidesteps that measurement entirely.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return undefined;
+    const showSub = Keyboard.addListener('keyboardWillShow', (e) => setKeyboardHeight(e.endCoordinates?.height || 0));
+    const hideSub = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     loadUser();
@@ -172,7 +192,7 @@ export default function ProfileScreen() {
   const avatarUrl = user?.user_metadata?.avatar_url;
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
     <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <View style={styles.heroSection}>
         <View style={styles.titleRow}>
@@ -297,7 +317,7 @@ export default function ProfileScreen() {
         <Text style={styles.privacyLinkText}>Privacy Policy</Text>
       </TouchableOpacity>
     </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

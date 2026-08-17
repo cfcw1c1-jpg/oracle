@@ -261,18 +261,35 @@ export default function Messages({ onConversationsChanged, initialConversationId
     scrollRef.current?.scrollToEnd?.({ animated: true });
   }, [messages]);
 
-  // KeyboardAvoidingView's "padding" behavior pushes this screen's content
-  // up once the keyboard opens, but it doesn't touch the ScrollView's own
-  // scroll offset -- without this, the thread stays scrolled to where it
-  // was, so the latest message (and the compose row right below it) can
-  // still end up hidden above the keyboard instead of sitting right on top
-  // of it, Messenger-style.
+  // Re-scrolls to the bottom once the keyboard opens -- without this, the
+  // thread stays scrolled to where it was, so the latest message (and the
+  // compose row right below it) can still end up hidden above the keyboard
+  // instead of sitting right on top of it, Messenger-style.
+  //
+  // keyboardHeight drives the container's own bottom padding below (iOS
+  // only -- Android's window already resizes for the keyboard via
+  // windowSoftInputMode=adjustResize, so adding padding on top of that
+  // would double-compensate). This replaced a KeyboardAvoidingView here:
+  // that component pads itself based on measuring its own on-screen
+  // position, which came up short once the mobile bottom tab bar (a sibling
+  // of this screen, not a child) started occupying the bottom of the
+  // screen -- this screen's container no longer reached the physical
+  // bottom, so the measurement undercounted. Tracking the keyboard's actual
+  // height directly sidesteps that measurement entirely.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const subscription = Keyboard.addListener(showEvent, () => {
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      if (Platform.OS === 'ios') setKeyboardHeight(e.endCoordinates?.height || 0);
       scrollRef.current?.scrollToEnd?.({ animated: true });
     });
-    return () => subscription.remove();
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
   }, []);
 
   async function handleSend() {
@@ -413,7 +430,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={[styles.container, { paddingBottom: keyboardHeight }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Ionicons name="chatbubbles-outline" size={22} color="#0f172a" style={styles.titleIcon} />
@@ -640,7 +657,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
         </View>
         </KeyboardAvoidingView>
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
