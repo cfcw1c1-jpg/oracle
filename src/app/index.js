@@ -91,10 +91,9 @@ const MOBILE_TABS = [
   { key: 'members', label: 'Directory', icon: 'people-outline', activeIcon: 'people' },
   { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
   { key: 'clp', label: 'CLP', icon: 'construct-outline', activeIcon: 'construct' },
-  { key: 'messages', label: 'Messages', icon: 'chatbubbles-outline', activeIcon: 'chatbubbles' },
 ];
 
-function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount, moreBadge, onOpenMore }) {
+function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount }) {
   const [pfoMenuOpen, setPfoMenuOpen] = useState(false);
 
   const visibleTabs = MOBILE_TABS
@@ -125,14 +124,7 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount,
         const active = isActive(item);
         return (
           <TouchableOpacity key={item.key} style={styles.bottomNavItem} onPress={() => handlePress(item)}>
-            <View>
-              <Ionicons name={active ? item.activeIcon : item.icon} size={22} color={active ? '#002060' : '#94a3b8'} />
-              {item.key === 'messages' && unreadMessageCount > 0 && (
-                <View style={styles.bottomNavBadge}>
-                  <Text style={styles.bottomNavBadgeText}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
-                </View>
-              )}
-            </View>
+            <Ionicons name={active ? item.activeIcon : item.icon} size={22} color={active ? '#002060' : '#94a3b8'} />
             <Text style={[styles.bottomNavItemText, active && styles.bottomNavItemTextActive]} numberOfLines={1}>
               {item.label}
             </Text>
@@ -140,12 +132,19 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount,
         );
       })}
 
-      <TouchableOpacity style={styles.bottomNavMoreItem} onPress={onOpenMore}>
+      {/* Messages has no page-access gate anywhere else in the app (every
+          signed-in account can message regardless of role), so this button
+          is unconditional -- reusing canView here would hide it for everyone. */}
+      <TouchableOpacity style={styles.bottomNavMoreItem} onPress={() => onSelectTab('messages')}>
         <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.bottomNavMoreCircle}>
-          <Ionicons name="menu" size={20} color="#ffffff" />
+          <Ionicons name={currentTab === 'messages' ? 'chatbubbles' : 'chatbubbles-outline'} size={20} color="#ffffff" />
+          {unreadMessageCount > 0 && (
+            <View style={styles.bottomNavMoreDot}>
+              <Text style={styles.bottomNavMoreDotText}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
+            </View>
+          )}
         </LinearGradient>
-        {moreBadge && <View style={styles.bottomNavMoreDot} />}
-        <Text style={styles.bottomNavItemText}>More</Text>
+        <Text style={[styles.bottomNavItemText, currentTab === 'messages' && styles.bottomNavItemTextActive]}>Messages</Text>
       </TouchableOpacity>
 
       {!!pfoGroup && (
@@ -789,18 +788,38 @@ export default function Page() {
         </View>
 
         <View style={styles.headerRight}>
-          <TouchableOpacity
-            style={styles.headerMessagesButton}
-            onPress={() => handleSelectTab('messages')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="chatbubbles-outline" size={20} color="#fff" />
-            {unreadMessageCount > 0 && (
-              <View style={styles.headerMessagesBadge}>
-                <Text style={styles.headerMessagesBadgeText}>{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          {isLargeScreen ? (
+            <TouchableOpacity
+              style={styles.headerMessagesButton}
+              onPress={() => handleSelectTab('messages')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="chatbubbles-outline" size={20} color="#fff" />
+              {unreadMessageCount > 0 && (
+                <View style={styles.headerMessagesBadge}>
+                  <Text style={styles.headerMessagesBadgeText}>{unreadMessageCount > 99 ? '99+' : unreadMessageCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ) : (
+            // Messages has its own prominent button in the bottom tab bar on
+            // mobile, so this slot becomes the entry point to everything
+            // NOT pinned there instead (Admin-only pages, Portal Users,
+            // Logs, Settings, Change Requests, etc.) -- the same full nav
+            // drawer the old top hamburger used to open.
+            <TouchableOpacity
+              style={styles.headerMessagesButton}
+              onPress={() => setIsMobileMenuOpen(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="menu-outline" size={22} color="#fff" />
+              {pendingChangeRequestCount > 0 && (
+                <View style={styles.headerMessagesBadge}>
+                  <Text style={styles.headerMessagesBadgeText}>{pendingChangeRequestCount > 99 ? '99+' : pendingChangeRequestCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity
             style={styles.headerAvatarButton}
@@ -916,8 +935,6 @@ export default function Page() {
           onSelectTab={handleSelectTab}
           canView={canView}
           unreadMessageCount={unreadMessageCount}
-          moreBadge={pendingChangeRequestCount > 0}
-          onOpenMore={() => setIsMobileMenuOpen(true)}
         />
       )}
 
@@ -1206,25 +1223,21 @@ const styles = StyleSheet.create({
   bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingVertical: 4, gap: 3 },
   bottomNavItemText: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
   bottomNavItemTextActive: { color: '#002060' },
-  bottomNavBadge: {
-    position: 'absolute', top: -4, right: -8, backgroundColor: '#ef4444', borderRadius: 8,
-    minWidth: 15, height: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
-    borderWidth: 1.5, borderColor: '#ffffff',
-  },
-  bottomNavBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
   bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
   bottomNavMoreCircle: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: -18,
-    borderWidth: 3, borderColor: '#ffffff',
+    borderWidth: 3, borderColor: '#ffffff', position: 'relative',
     ...Platform.select({
       web: { boxShadow: '0 4px 10px rgba(29,63,158,0.4)' },
       default: { shadowColor: '#1d3f9e', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
     }),
   },
   bottomNavMoreDot: {
-    position: 'absolute', top: -14, right: '30%', width: 9, height: 9, borderRadius: 4.5,
-    backgroundColor: '#ef4444', borderWidth: 1.5, borderColor: '#ffffff',
+    position: 'absolute', top: -6, right: -6, backgroundColor: '#ef4444', borderRadius: 8,
+    minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+    borderWidth: 1.5, borderColor: '#ffffff',
   },
+  bottomNavMoreDotText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
   bottomNavPopoverOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
   bottomNavPopoverCard: {
     backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
