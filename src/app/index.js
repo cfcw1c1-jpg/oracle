@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
+  Keyboard,
   Linking,
   Modal,
   Platform,
@@ -422,6 +423,26 @@ export default function Page() {
   // Track window dimensions for real-time web/mobile switching
   const [screenWidth, setScreenWidth] = useState(Dimensions.get('window').width);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  // Hides the bottom tab bar while the keyboard is open. It's a sibling of
+  // (not inside) mainContentPane, so a screen's own KeyboardAvoidingView --
+  // Messages' compose row, Profile's password fields -- never reaches the
+  // physical bottom of the screen while this bar occupies it, which makes
+  // that padding calculation fall short by the bar's height. Removing the
+  // bar from the tree whenever the keyboard is up sidesteps that instead of
+  // patching every screen's own KeyboardAvoidingView individually.
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => setIsKeyboardVisible(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     currentTabRef.current = currentTab;
@@ -955,7 +976,7 @@ export default function Page() {
         </View>
       </View>
 
-      {!isLargeScreen && (
+      {!isLargeScreen && !isKeyboardVisible && (
         <MobileBottomNav
           currentTab={effectiveTab}
           onSelectTab={handleSelectTab}
