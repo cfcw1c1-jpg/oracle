@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -44,13 +45,21 @@ function getInitials(name, email) {
   return source.slice(0, 2).toUpperCase();
 }
 
-function Avatar({ avatarUrl, name, email }) {
+function Avatar({ avatarUrl, name, email, isGroup, size = 36 }) {
+  const sizeStyle = { width: size, height: size, borderRadius: size / 2 };
+  if (isGroup) {
+    return (
+      <View style={[styles.avatar, styles.avatarGroup, sizeStyle]}>
+        <Ionicons name="people" size={Math.round(size * 0.47)} color={NAVY} />
+      </View>
+    );
+  }
   if (avatarUrl) {
-    return <Image source={{ uri: avatarUrl }} style={styles.avatar} />;
+    return <Image source={{ uri: avatarUrl }} style={[styles.avatar, sizeStyle]} />;
   }
   return (
-    <View style={styles.avatar}>
-      <Text style={styles.avatarText}>{getInitials(name, email)}</Text>
+    <View style={[styles.avatar, sizeStyle]}>
+      <Text style={[styles.avatarText, size < 32 && { fontSize: 10 }]}>{getInitials(name, email)}</Text>
     </View>
   );
 }
@@ -71,6 +80,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
 
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [participantsById, setParticipantsById] = useState({});
   const [composeText, setComposeText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -78,8 +88,8 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userSearchResults, setUserSearchResults] = useState([]);
   const [startingConversation, setStartingConversation] = useState(false);
-  const [randomModeratorProfile, setRandomModeratorProfile] = useState(null);
-  const [loadingRandomModerator, setLoadingRandomModerator] = useState(false);
+  const [startingModeratorGroup, setStartingModeratorGroup] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const scrollRef = useRef(null);
 
@@ -124,6 +134,38 @@ export default function Messages({ onConversationsChanged, initialConversationId
     }
   }
 
+  // Every participant's name/avatar for the open conversation, keyed by
+  // profile id -- looked up once per conversation (not per message) so
+  // sender labels/avatars in the thread (and on messages that arrive via
+  // Realtime, which only carries the raw message row) can be resolved
+  // without a round trip each time.
+  async function loadParticipants(conversationId) {
+    try {
+      const { data, error } = await supabase
+        .from('conversation_participants')
+        .select('profile_id, profiles ( full_name, email, avatar_url )')
+        .eq('conversation_id', conversationId);
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach((row) => {
+        map[row.profile_id] = row.profiles || {};
+      });
+      setParticipantsById(map);
+    } catch (err) {
+      console.error('Error loading participants:', err.message);
+    }
+  }
+
+  function getSenderInfo(senderId) {
+    const isMe = senderId === currentUserId;
+    const p = participantsById[senderId] || {};
+    return {
+      name: isMe ? 'You' : (p.full_name || p.email || 'Portal User'),
+      email: p.email,
+      avatarUrl: p.avatar_url || null,
+    };
+  }
+
   async function markAsRead(conversationId) {
     if (!currentUserId) return;
     try {
@@ -143,7 +185,9 @@ export default function Messages({ onConversationsChanged, initialConversationId
   function openConversation(conversationId) {
     setSelectedConversationId(conversationId);
     setMessages([]);
+    setParticipantsById({});
     loadMessages(conversationId);
+    loadParticipants(conversationId);
     markAsRead(conversationId);
   }
 
@@ -265,28 +309,25 @@ export default function Messages({ onConversationsChanged, initialConversationId
     }
   }
 
-  // Quick way to reach a Moderator without knowing who's currently holding
-  // that role -- picks one at random from whichever portal accounts have a
-  // role literally named "Moderator" (Roles & Page Access), and reveals
-  // their email so it can be tapped to start a conversation.
-  async function handleShowRandomModerator() {
+  // Quick way to reach the Moderator team without knowing who's currently
+  // holding that role -- opens (or reuses) a single group conversation
+  // with every portal account that has a role literally named "Moderator"
+  // (Roles & Page Access), so anything sent there -- including images --
+  // is visible to the whole team, not just whoever happens to be picked.
+  async function handleStartModeratorGroup() {
     try {
-      setLoadingRandomModerator(true);
-      setRandomModeratorProfile(null);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, full_name, roles ( name )');
+      setStartingModeratorGroup(true);
+      const { data, error } = await supabase.rpc('start_moderator_group_conversation');
       if (error) throw error;
-      const moderators = (data || []).filter((p) => p.roles?.name === 'Moderator' && p.id !== currentUserId);
-      if (moderators.length === 0) {
-        showAlert('No Moderators Found', 'No portal account currently has the Moderator role.');
-        return;
-      }
-      setRandomModeratorProfile(moderators[Math.floor(Math.random() * moderators.length)]);
+      setNewMessageModalVisible(false);
+      setUserSearchQuery('');
+      setUserSearchResults([]);
+      await loadConversations();
+      openConversation(data);
     } catch (err) {
-      showAlert('Error', err.message);
+      showAlert('Error Starting Conversation', err.message);
     } finally {
-      setLoadingRandomModerator(false);
+      setStartingModeratorGroup(false);
     }
   }
 
@@ -304,6 +345,50 @@ export default function Messages({ onConversationsChanged, initialConversationId
       showAlert('Error Starting Conversation', err.message);
     } finally {
       setStartingConversation(false);
+    }
+  }
+
+  async function handlePickAndSendImage() {
+    if (!selectedConversationId || !currentUserId || uploadingImage) return;
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        showAlert('Permission Needed', 'Please allow photo library access to send an image.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
+      if (result.canceled || !result.assets?.length) return;
+
+      const asset = result.assets[0];
+      setUploadingImage(true);
+
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      const fileExt = (asset.fileName?.split('.').pop() || asset.mimeType?.split('/').pop() || 'jpg').toLowerCase();
+      const filePath = `${currentUserId}/${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('message-images')
+        .upload(filePath, blob, { contentType: asset.mimeType || 'image/jpeg' });
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage.from('message-images').getPublicUrl(filePath);
+
+      const { error } = await supabase
+        .from('messages')
+        .insert([{ conversation_id: selectedConversationId, sender_id: currentUserId, body: '', image_url: publicUrlData.publicUrl }]);
+      if (error) throw error;
+    } catch (err) {
+      const isMissingBucket = err.message?.toLowerCase().includes('bucket not found');
+      showAlert(
+        'Image Send Failed',
+        isMissingBucket
+          ? 'No "message-images" storage bucket exists yet. Run scripts/sql/add-message-images.sql against your Supabase project, then try again.'
+          : err.message
+      );
+    } finally {
+      setUploadingImage(false);
     }
   }
 
@@ -332,7 +417,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
           <View style={[styles.listPane, isWide && styles.listPaneWide]}>
             <View style={styles.listHeader}>
               <Text style={styles.listHeaderText}>Conversations</Text>
-              <TouchableOpacity style={styles.newMessageBtn} onPress={() => { setRandomModeratorProfile(null); setNewMessageModalVisible(true); }}>
+              <TouchableOpacity style={styles.newMessageBtn} onPress={() => setNewMessageModalVisible(true)}>
                 <Ionicons name="create-outline" size={14} color="#ffffff" style={{ marginRight: 4 }} />
                 <Text style={styles.newMessageBtnText}>New</Text>
               </TouchableOpacity>
@@ -356,7 +441,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
                       style={[styles.conversationRow, isSelected && styles.conversationRowActive]}
                       onPress={() => openConversation(c.conversation_id)}
                     >
-                      <Avatar avatarUrl={c.other_avatar_url} name={c.other_full_name} email={c.other_email} />
+                      <Avatar avatarUrl={c.other_avatar_url} name={c.other_full_name} email={c.other_email} isGroup={c.is_group} />
                       <View style={{ flex: 1, marginLeft: 10 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                           <Text style={styles.conversationName} numberOfLines={1}>{displayName}</Text>
@@ -364,7 +449,8 @@ export default function Messages({ onConversationsChanged, initialConversationId
                         </View>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Text style={styles.conversationPreview} numberOfLines={1}>
-                            {c.last_message_sender_id === currentUserId ? 'You: ' : ''}{c.last_message_body || 'Say hello!'}
+                            {c.last_message_sender_id === currentUserId ? 'You: ' : ''}
+                            {c.last_message_body || (c.last_message_image_url ? '📷 Photo' : 'Say hello!')}
                           </Text>
                           {c.unread_count > 0 && (
                             <View style={styles.unreadBadge}>
@@ -404,6 +490,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
                     avatarUrl={selectedConversation.other_avatar_url}
                     name={selectedConversation.other_full_name}
                     email={selectedConversation.other_email}
+                    isGroup={selectedConversation.is_group}
                   />
                   <Text style={styles.threadHeaderName} numberOfLines={1}>
                     {selectedConversation.other_full_name || selectedConversation.other_email || 'Portal User'}
@@ -419,12 +506,22 @@ export default function Messages({ onConversationsChanged, initialConversationId
                     )}
                     {messages.map((m) => {
                       const isMine = m.sender_id === currentUserId;
+                      const sender = getSenderInfo(m.sender_id);
                       return (
                         <View key={m.id} style={[styles.bubbleRow, isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-                          <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                            <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{m.body}</Text>
+                          <Avatar avatarUrl={sender.avatarUrl} name={sender.name} email={sender.email} size={26} />
+                          <View style={[styles.bubbleColumn, isMine ? styles.bubbleColumnMine : styles.bubbleColumnTheirs]}>
+                            <Text style={styles.bubbleSenderName}>{sender.name}</Text>
+                            <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs, !!m.image_url && styles.bubbleImageWrap]}>
+                              {!!m.image_url && (
+                                <Image source={{ uri: m.image_url }} style={styles.bubbleImage} resizeMode="cover" />
+                              )}
+                              {!!m.body && (
+                                <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine, !!m.image_url && styles.bubbleTextWithImage]}>{m.body}</Text>
+                              )}
+                            </View>
+                            <Text style={styles.bubbleTime}>{formatTimestamp(m.created_at)}</Text>
                           </View>
-                          <Text style={styles.bubbleTime}>{formatTimestamp(m.created_at)}</Text>
                         </View>
                       );
                     })}
@@ -432,6 +529,18 @@ export default function Messages({ onConversationsChanged, initialConversationId
                 )}
 
                 <View style={styles.composeRow}>
+                  <TouchableOpacity
+                    style={styles.attachBtn}
+                    onPress={handlePickAndSendImage}
+                    disabled={uploadingImage}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    {uploadingImage ? (
+                      <ActivityIndicator size="small" color={NAVY} />
+                    ) : (
+                      <Ionicons name="image-outline" size={20} color={NAVY} />
+                    )}
+                  </TouchableOpacity>
                   <TextInput
                     style={styles.composeInput}
                     placeholder="Type a message..."
@@ -476,25 +585,18 @@ export default function Messages({ onConversationsChanged, initialConversationId
 
             <TouchableOpacity
               style={styles.randomModeratorBadge}
-              onPress={handleShowRandomModerator}
-              disabled={loadingRandomModerator}
+              onPress={handleStartModeratorGroup}
+              disabled={startingModeratorGroup}
             >
-              {loadingRandomModerator ? (
+              {startingModeratorGroup ? (
                 <ActivityIndicator size="small" color={ACCENT_BLUE} />
               ) : (
                 <>
-                  <Ionicons name="shuffle-outline" size={13} color={ACCENT_BLUE} style={{ marginRight: 6 }} />
-                  <Text style={styles.randomModeratorBadgeText}>Message a Moderator</Text>
+                  <Ionicons name="people-outline" size={14} color={ACCENT_BLUE} style={{ marginRight: 6 }} />
+                  <Text style={styles.randomModeratorBadgeText}>Message All Moderators</Text>
                 </>
               )}
             </TouchableOpacity>
-
-            {randomModeratorProfile && (
-              <TouchableOpacity style={styles.randomModeratorResult} onPress={() => handleStartConversation(randomModeratorProfile)}>
-                <Ionicons name="mail-outline" size={13} color="#334155" style={{ marginRight: 6 }} />
-                <Text style={styles.randomModeratorResultText} numberOfLines={1}>{randomModeratorProfile.email}</Text>
-              </TouchableOpacity>
-            )}
 
             <ScrollView style={{ maxHeight: 280, marginTop: 8 }} keyboardShouldPersistTaps="handled">
               {startingConversation && <ActivityIndicator color={NAVY} style={{ marginVertical: 12 }} />}
@@ -514,7 +616,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
 
             <TouchableOpacity
               style={styles.modalCancelBtn}
-              onPress={() => { setNewMessageModalVisible(false); setRandomModeratorProfile(null); }}
+              onPress={() => setNewMessageModalVisible(false)}
             >
               <Text style={styles.modalCancelBtnText}>Close</Text>
             </TouchableOpacity>
@@ -560,6 +662,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 12, fontWeight: '800', color: NAVY },
+  avatarGroup: { backgroundColor: '#dbeafe' },
 
   unreadBadge: { backgroundColor: ACCENT_BLUE, borderRadius: 10, minWidth: 18, height: 18, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   unreadBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
@@ -576,17 +679,25 @@ const styles = StyleSheet.create({
   threadHeaderName: { fontSize: 14, fontWeight: '800', color: '#0f172a', marginLeft: 10, flexShrink: 1 },
 
   messageScroll: { flex: 1 },
-  bubbleRow: { marginBottom: 12, maxWidth: '75%' },
-  bubbleRowMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  bubbleRowTheirs: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 14, maxWidth: '85%', gap: 6 },
+  bubbleRowMine: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
+  bubbleRowTheirs: { alignSelf: 'flex-start' },
+  bubbleColumn: { flexShrink: 1 },
+  bubbleColumnMine: { alignItems: 'flex-end' },
+  bubbleColumnTheirs: { alignItems: 'flex-start' },
+  bubbleSenderName: { fontSize: 10, fontWeight: '700', color: '#64748b', marginBottom: 2, marginHorizontal: 2 },
   bubble: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9 },
   bubbleMine: { backgroundColor: NAVY, borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: '#f1f5f9', borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 13, color: '#1e293b', lineHeight: 18 },
   bubbleTextMine: { color: '#ffffff' },
+  bubbleTextWithImage: { marginTop: 6 },
   bubbleTime: { fontSize: 9, color: '#94a3b8', marginTop: 3 },
+  bubbleImageWrap: { padding: 4 },
+  bubbleImage: { width: 200, height: 200, borderRadius: 10, backgroundColor: '#e2e8f0' },
 
   composeRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9', gap: 8 },
+  attachBtn: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
   composeInput: {
     flex: 1, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#1e293b', maxHeight: 100,
@@ -608,11 +719,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 7, marginTop: 10,
   },
   randomModeratorBadgeText: { fontSize: 12, fontWeight: '700', color: ACCENT_BLUE },
-  randomModeratorResult: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderWidth: 1,
-    borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginTop: 8,
-  },
-  randomModeratorResultText: { fontSize: 12, fontWeight: '600', color: '#334155', flex: 1 },
   userResultRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8 },
   userResultName: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
   userResultEmail: { fontSize: 11, color: '#64748b', marginTop: 1 },

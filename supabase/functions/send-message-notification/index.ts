@@ -83,8 +83,9 @@ Deno.serve(async (req) => {
     const senderName = sender?.full_name || sender?.email || 'New message';
 
     const bodyText = String(message.body ?? '');
-    const bodyPreview =
-      bodyText.length > MAX_BODY_PREVIEW ? `${bodyText.slice(0, MAX_BODY_PREVIEW - 1)}…` : bodyText;
+    const bodyPreview = bodyText
+      ? (bodyText.length > MAX_BODY_PREVIEW ? `${bodyText.slice(0, MAX_BODY_PREVIEW - 1)}…` : bodyText)
+      : (message.image_url ? '📷 Photo' : '');
 
     const pushMessages = tokenRows.map((row) => ({
       to: row.token,

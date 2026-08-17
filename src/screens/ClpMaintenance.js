@@ -322,6 +322,58 @@ export default function ClpMaintenance() {
     }
   }
 
+  async function handleDeleteTraining(training) {
+    if (!training) return;
+    const title = 'Delete Training Batch';
+    const message = `Are you sure you want to delete "${training.venue}" (${training.start_date} to ${training.end_date})? This will also remove all enrolled member records from this batch. This cannot be undone.`;
+
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm(`${title}\n\n${message}`);
+      if (confirmed) {
+        executeTrainingDeletion(training);
+      }
+      return;
+    }
+
+    Alert.alert(
+      title,
+      message,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => executeTrainingDeletion(training),
+        },
+      ]
+    );
+  }
+
+  async function executeTrainingDeletion(training) {
+    try {
+      setLoading(true);
+
+      const { error: participantsError } = await supabase
+        .from('clp_training_participants')
+        .delete()
+        .eq('clp_training_id', training.id);
+      if (participantsError) throw participantsError;
+
+      const { error } = await supabase
+        .from('clp_trainings')
+        .delete()
+        .eq('id', training.id);
+      if (error) throw error;
+
+      showAlert('Deleted', 'Training batch removed successfully.');
+      await fetchTrainings();
+    } catch (err) {
+      showAlert('Delete Failed', err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCopyPublicLink() {
     if (!selectedTraining) return;
     const url = buildPublicRegistrationLink(selectedTraining);
@@ -533,6 +585,13 @@ export default function ClpMaintenance() {
                 style={[styles.batchChip, isSelected && styles.batchChipActive]}
                 onPress={() => setSelectedTraining(t)}
               >
+                <TouchableOpacity
+                  style={styles.batchChipDeleteBtn}
+                  onPress={(e) => { e.stopPropagation?.(); handleDeleteTraining(t); }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                </TouchableOpacity>
                 <View style={styles.batchChipVenueRow}>
                   <Ionicons name="location-outline" size={12} color={isSelected ? '#2563eb' : '#334155'} style={styles.batchChipVenueIcon} />
                   <Text style={[styles.batchChipText, isSelected && styles.batchChipTextActive]} numberOfLines={1}>
@@ -886,8 +945,9 @@ const styles = StyleSheet.create({
   inlineAddBatchBtnText: { fontSize: 11, fontWeight: '700', color: '#334155' },
   horizontalScroll: { flexDirection: 'row' },
   noDataText: { fontSize: 13, color: '#94a3b8', fontWeight: '500', paddingVertical: 14, textAlign: 'center' },
-  batchChip: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0', minWidth: 140, maxWidth: 180 },
+  batchChip: { backgroundColor: '#f1f5f9', paddingHorizontal: 12, paddingVertical: 8, paddingRight: 26, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0', minWidth: 140, maxWidth: 180, position: 'relative' },
   batchChipActive: { backgroundColor: '#eff6ff', borderColor: '#2563eb' },
+  batchChipDeleteBtn: { position: 'absolute', top: 6, right: 6, zIndex: 1, padding: 2 },
   batchChipVenueRow: { flexDirection: 'row', alignItems: 'center' },
   batchChipVenueIcon: { marginRight: 4 },
   batchChipText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
