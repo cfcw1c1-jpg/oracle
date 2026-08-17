@@ -362,8 +362,29 @@ export default function Messages({ onConversationsChanged, initialConversationId
       setNewMessageModalVisible(false);
       setUserSearchQuery('');
       setUserSearchResults([]);
-      await loadConversations();
+
+      // Opens on this same tap using what's already known (a fresh or
+      // reused group, this account being the one who started it) instead
+      // of waiting on get_my_conversations() to reflect a row that may not
+      // have propagated yet -- awaiting loadConversations() before opening
+      // used to occasionally race the just-committed insert, so the first
+      // tap would silently land on the "select a conversation" empty state
+      // (selectedConversation lookup coming up empty) with nothing visibly
+      // happening, and only a second tap -- by then caught up -- worked.
+      // The real title ("Moderators w/ <email>", set server-side) replaces
+      // this placeholder moments later once loadConversations() resolves.
+      setConversations((prev) => (
+        prev.some((c) => c.conversation_id === data)
+          ? prev
+          : [{
+              conversation_id: data, is_group: true, other_profile_id: null,
+              other_full_name: 'Moderator Team', other_email: null, other_avatar_url: null,
+              last_message_at: new Date().toISOString(), last_message_body: null,
+              last_message_image_url: null, last_message_sender_id: null, unread_count: 0,
+            }, ...prev]
+      ));
       openConversation(data);
+      loadConversations();
     } catch (err) {
       showAlert('Error Starting Conversation', err.message);
     } finally {
