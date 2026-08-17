@@ -695,7 +695,11 @@ const styles = StyleSheet.create({
   },
   memberFilterHeaderText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
   memberFilterMenu: {
-    position: 'absolute', top: 46, left: 0, width: 280,
+    // Anchored to the trigger's right edge (not left) -- this button
+    // typically sits near the right side of its row, so a left-anchored
+    // fixed-width menu was extending further right and overflowing past
+    // the screen edge instead of staying on-screen by growing leftward.
+    position: 'absolute', top: 46, right: 0, width: 280,
     backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
     shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8,
     elevation: 6, zIndex: 100, paddingBottom: 4,
