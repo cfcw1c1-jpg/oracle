@@ -251,7 +251,7 @@ const MemberFilterDropdown = memo(function MemberFilterDropdown({ members, selec
       </TouchableOpacity>
 
       {open && (
-        <View style={styles.memberFilterMenu}>
+        <View style={[styles.memberFilterMenu, styles.memberFilterMenuRight]}>
           <View style={styles.memberFilterSearchBar}>
             <Ionicons name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
             <TextInput
@@ -695,15 +695,18 @@ const styles = StyleSheet.create({
   },
   memberFilterHeaderText: { flex: 1, fontSize: 13, fontWeight: '600', color: '#334155' },
   memberFilterMenu: {
-    // Anchored to the trigger's right edge (not left) -- this button
-    // typically sits near the right side of its row, so a left-anchored
-    // fixed-width menu was extending further right and overflowing past
-    // the screen edge instead of staying on-screen by growing leftward.
-    position: 'absolute', top: 46, right: 0, width: 280,
+    // Area's own trigger sits alone on its row and lands near the screen's
+    // LEFT edge (controlsRow wraps it there once Member's row is full) --
+    // left:0 keeps its fixed-width menu growing rightward, safely on-screen.
+    position: 'absolute', top: 46, left: 0, width: 280,
     backgroundColor: '#ffffff', borderRadius: 10, borderWidth: 1, borderColor: '#cbd5e1',
     shadowColor: '#0f172a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8,
     elevation: 6, zIndex: 100, paddingBottom: 4,
   },
+  // Member's own trigger instead sits paired with the search box on the
+  // FIRST row, near the screen's RIGHT edge -- the same fixed-width menu
+  // needs to grow leftward from there instead, or it overflows off-screen.
+  memberFilterMenuRight: { left: undefined, right: 0 },
   memberFilterSearchBar: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc',
     margin: 8, borderRadius: 8, paddingHorizontal: 10, paddingVertical: Platform.OS === 'ios' ? 8 : 4,
