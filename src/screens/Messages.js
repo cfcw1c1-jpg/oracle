@@ -398,7 +398,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           <Ionicons name="chatbubbles-outline" size={22} color="#0f172a" style={styles.titleIcon} />
@@ -624,7 +624,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
         </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
