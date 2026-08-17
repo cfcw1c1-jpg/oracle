@@ -74,33 +74,53 @@ const PAGE_VIEW_LABELS = NAV_ITEMS.reduce((acc, item) => {
 const SIDEBAR_GRADIENT = ['#05061a', '#0b1e4d', '#1d3f9e', '#5b21b6'];
 
 // Mobile-only bottom tab bar -- replaces the old top hamburger + slide-out
-// drawer as the primary way to navigate on narrow screens. Only the 5
-// pinned destinations below get a permanent slot; PFO fans out into its
-// own small popover since it's really 3 destinations. Everything else
-// (Admin-only pages, Portal Users, Logs, Settings, Profile, Log Out, the
-// Moderation group, etc.) stays reachable through "More", which opens the
-// exact same full nav drawer the hamburger used to.
+// drawer as the primary way to navigate on narrow screens. Only the pinned
+// destinations below get a permanent slot; a "group" item (Members, PFO)
+// fans out into its own small popover since it's really several
+// destinations sharing one slot. Everything not pinned here (Admin-only
+// pages, Logs, Settings, Profile, Log Out, etc.) stays reachable through
+// the header's menu button, which opens the same full nav drawer the old
+// hamburger did. The layout itself is role-specific -- see MOBILE_TABS_BY_ROLE.
 const PFO_CHILD_TABS = [
   { key: 'pfo', label: 'Trainings', icon: 'bar-chart-outline' },
   { key: 'pfoReports', label: 'Reports', icon: 'trending-up-outline' },
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
 ];
 
-const MOBILE_TABS = [
+const DEFAULT_MOBILE_TABS = [
   { key: 'home', label: 'Dashboard', icon: 'home-outline', activeIcon: 'home' },
   { key: 'members', label: 'Directory', icon: 'people-outline', activeIcon: 'people' },
   { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
   { key: 'clp', label: 'CLP', icon: 'construct-outline', activeIcon: 'construct' },
 ];
 
-function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount }) {
-  const [pfoMenuOpen, setPfoMenuOpen] = useState(false);
+const MODERATOR_MOBILE_TABS = [
+  { key: 'home', label: 'Dashboard', icon: 'home-outline', activeIcon: 'home' },
+  {
+    key: 'membersGroup', label: 'Members', icon: 'people-outline', activeIcon: 'people',
+    children: [
+      { key: 'members', label: 'Directory', icon: 'people-outline' },
+      { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
+      { key: 'clp', label: 'CLP', icon: 'construct-outline' },
+    ],
+  },
+  { key: 'memberChangeQueue', label: 'Change Request', icon: 'checkmark-done-outline', activeIcon: 'checkmark-done', badgeKey: 'memberChangeQueue' },
+  { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
+];
 
-  const visibleTabs = MOBILE_TABS
+const MOBILE_TABS_BY_ROLE = {
+  Moderator: MODERATOR_MOBILE_TABS,
+};
+
+function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMessageCount, badgeCounts = {} }) {
+  const [openGroupKey, setOpenGroupKey] = useState(null);
+
+  const tabsForRole = MOBILE_TABS_BY_ROLE[roleName] || DEFAULT_MOBILE_TABS;
+  const visibleTabs = tabsForRole
     .map((item) => (item.children ? { ...item, children: item.children.filter((c) => canView(c.key)) } : item))
     .filter((item) => (item.children ? item.children.length > 0 : canView(item.key)));
 
-  const pfoGroup = visibleTabs.find((item) => item.key === 'pfoGroup');
+  const openGroup = visibleTabs.find((item) => item.key === openGroupKey);
 
   function isActive(item) {
     return item.children ? item.children.some((c) => c.key === currentTab) : currentTab === item.key;
@@ -111,7 +131,7 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount 
       if (item.children.length === 1) {
         onSelectTab(item.children[0].key);
       } else {
-        setPfoMenuOpen(true);
+        setOpenGroupKey(item.key);
       }
       return;
     }
@@ -122,9 +142,17 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount 
     <View style={styles.bottomNavBar}>
       {visibleTabs.map((item) => {
         const active = isActive(item);
+        const badgeCount = badgeCounts[item.badgeKey] || 0;
         return (
           <TouchableOpacity key={item.key} style={styles.bottomNavItem} onPress={() => handlePress(item)}>
-            <Ionicons name={active ? item.activeIcon : item.icon} size={22} color={active ? '#002060' : '#94a3b8'} />
+            <View>
+              <Ionicons name={active ? item.activeIcon : item.icon} size={22} color={active ? '#002060' : '#94a3b8'} />
+              {badgeCount > 0 && (
+                <View style={styles.bottomNavBadge}>
+                  <Text style={styles.bottomNavBadgeText}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
+                </View>
+              )}
+            </View>
             <Text style={[styles.bottomNavItemText, active && styles.bottomNavItemTextActive]} numberOfLines={1}>
               {item.label}
             </Text>
@@ -147,35 +175,33 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, unreadMessageCount 
         <Text style={[styles.bottomNavItemText, currentTab === 'messages' && styles.bottomNavItemTextActive]}>Messages</Text>
       </TouchableOpacity>
 
-      {!!pfoGroup && (
-        <Modal visible={pfoMenuOpen} transparent animationType="fade" onRequestClose={() => setPfoMenuOpen(false)}>
-          <View style={styles.bottomNavPopoverOverlay}>
-            <View style={styles.bottomNavPopoverCard}>
-              <Text style={styles.bottomNavPopoverTitle}>PFO</Text>
-              {pfoGroup.children.map((child) => (
-                <TouchableOpacity
-                  key={child.key}
-                  style={[styles.bottomNavPopoverItem, currentTab === child.key && styles.bottomNavPopoverItemActive]}
-                  onPress={() => { setPfoMenuOpen(false); onSelectTab(child.key); }}
-                >
-                  <Ionicons
-                    name={child.icon}
-                    size={17}
-                    color={currentTab === child.key ? '#002060' : '#475569'}
-                    style={{ marginRight: 12 }}
-                  />
-                  <Text style={[styles.bottomNavPopoverItemText, currentTab === child.key && styles.bottomNavPopoverItemTextActive]}>
-                    {child.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-              <TouchableOpacity style={styles.bottomNavPopoverCancel} onPress={() => setPfoMenuOpen(false)}>
-                <Text style={styles.bottomNavPopoverCancelText}>Cancel</Text>
+      <Modal visible={!!openGroup} transparent animationType="fade" onRequestClose={() => setOpenGroupKey(null)}>
+        <View style={styles.bottomNavPopoverOverlay}>
+          <View style={styles.bottomNavPopoverCard}>
+            <Text style={styles.bottomNavPopoverTitle}>{openGroup?.label}</Text>
+            {openGroup?.children.map((child) => (
+              <TouchableOpacity
+                key={child.key}
+                style={[styles.bottomNavPopoverItem, currentTab === child.key && styles.bottomNavPopoverItemActive]}
+                onPress={() => { setOpenGroupKey(null); onSelectTab(child.key); }}
+              >
+                <Ionicons
+                  name={child.icon}
+                  size={17}
+                  color={currentTab === child.key ? '#002060' : '#475569'}
+                  style={{ marginRight: 12 }}
+                />
+                <Text style={[styles.bottomNavPopoverItemText, currentTab === child.key && styles.bottomNavPopoverItemTextActive]}>
+                  {child.label}
+                </Text>
               </TouchableOpacity>
-            </View>
+            ))}
+            <TouchableOpacity style={styles.bottomNavPopoverCancel} onPress={() => setOpenGroupKey(null)}>
+              <Text style={styles.bottomNavPopoverCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
-        </Modal>
-      )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -934,7 +960,9 @@ export default function Page() {
           currentTab={effectiveTab}
           onSelectTab={handleSelectTab}
           canView={canView}
+          roleName={access?.roleName}
           unreadMessageCount={unreadMessageCount}
+          badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
         />
       )}
 
@@ -1223,6 +1251,12 @@ const styles = StyleSheet.create({
   bottomNavItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingVertical: 4, gap: 3 },
   bottomNavItemText: { fontSize: 10, fontWeight: '700', color: '#94a3b8' },
   bottomNavItemTextActive: { color: '#002060' },
+  bottomNavBadge: {
+    position: 'absolute', top: -4, right: -8, backgroundColor: '#ef4444', borderRadius: 8,
+    minWidth: 15, height: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3,
+    borderWidth: 1.5, borderColor: '#ffffff',
+  },
+  bottomNavBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
   bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
   bottomNavMoreCircle: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: -18,
