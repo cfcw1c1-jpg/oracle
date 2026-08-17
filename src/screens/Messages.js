@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -259,6 +260,20 @@ export default function Messages({ onConversationsChanged, initialConversationId
   useEffect(() => {
     scrollRef.current?.scrollToEnd?.({ animated: true });
   }, [messages]);
+
+  // KeyboardAvoidingView's "padding" behavior pushes this screen's content
+  // up once the keyboard opens, but it doesn't touch the ScrollView's own
+  // scroll offset -- without this, the thread stays scrolled to where it
+  // was, so the latest message (and the compose row right below it) can
+  // still end up hidden above the keyboard instead of sitting right on top
+  // of it, Messenger-style.
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const subscription = Keyboard.addListener(showEvent, () => {
+      scrollRef.current?.scrollToEnd?.({ animated: true });
+    });
+    return () => subscription.remove();
+  }, []);
 
   async function handleSend() {
     const body = composeText.trim();
@@ -549,6 +564,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
                     onChangeText={setComposeText}
                     onSubmitEditing={handleSend}
                     onKeyPress={handleComposeKeyPress}
+                    onFocus={() => scrollRef.current?.scrollToEnd?.({ animated: true })}
                     returnKeyType="send"
                     multiline
                   />
