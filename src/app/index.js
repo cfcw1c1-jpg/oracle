@@ -109,8 +109,24 @@ const MODERATOR_MOBILE_TABS = [
   { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
 ];
 
+const ADMIN_MOBILE_TABS = [
+  { key: 'adminDashboard', label: 'Dashboard', icon: 'home-outline', activeIcon: 'home' },
+  {
+    key: 'membersGroup', label: 'Members', icon: 'people-outline', activeIcon: 'people',
+    children: [
+      { key: 'manageMembers', label: 'Manage Members', icon: 'list-outline' },
+      { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
+      { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
+      { key: 'memberChangeQueue', label: 'Change Requests', icon: 'checkmark-done-outline' },
+    ],
+  },
+  { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline', activeIcon: 'file-tray-full' },
+  { key: 'settings', label: 'Settings', icon: 'settings-outline', activeIcon: 'settings' },
+];
+
 const MOBILE_TABS_BY_ROLE = {
   Moderator: MODERATOR_MOBILE_TABS,
+  Admin: ADMIN_MOBILE_TABS,
 };
 
 function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMessageCount, badgeCounts = {} }) {
