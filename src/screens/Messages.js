@@ -23,6 +23,11 @@ import { supabase } from '../../lib/supabase';
 const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
 const WIDE_BREAKPOINT = 820;
+// Android sits the compose row flush against the keyboard at the exact
+// measured height with no breathing room -- a bit more clearance reads
+// better there. iOS already looks right at the exact measurement, so this
+// stays 0 on iOS rather than pushing it too far up.
+const ANDROID_KEYBOARD_GAP = Platform.OS === 'android' ? 16 : 0;
 
 function showAlert(title, message) {
   if (Platform.OS === 'web') {
@@ -465,7 +470,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
 
   return (
-    <View style={[styles.container, { paddingBottom: Math.max(0, keyboardHeight - insets.bottom) }]}>
+    <View style={[styles.container, { paddingBottom: keyboardHeight > 0 ? Math.max(0, keyboardHeight - insets.bottom + ANDROID_KEYBOARD_GAP) : 0 }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
           {/* Messages runs full-screen on mobile with no bottom tab bar, so
