@@ -394,7 +394,9 @@ export default function PortalUsers({ onAccessChanged }) {
               });
               const areaLabel = topLevelAreas.length === 0
                 ? 'All Areas'
-                : topLevelAreas.map((a) => a.name).join(', ');
+                : topLevelAreas.length === 1
+                  ? topLevelAreas[0].name
+                  : 'Multiple Areas Assigned';
 
               // Presence (live) wins over the last recorded sign-in when an
               // account is online right now -- otherwise this is whenever
