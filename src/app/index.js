@@ -129,7 +129,7 @@ const MOBILE_TABS_BY_ROLE = {
   Admin: ADMIN_MOBILE_TABS,
 };
 
-function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMessageCount, badgeCounts = {} }) {
+function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, badgeCounts = {} }) {
   const [openGroupKey, setOpenGroupKey] = useState(null);
 
   const tabsForRole = MOBILE_TABS_BY_ROLE[roleName] || DEFAULT_MOBILE_TABS;
@@ -177,27 +177,6 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMes
         );
       })}
 
-      {/* Messages has no page-access gate anywhere else in the app (every
-          signed-in account can message regardless of role), so this button
-          is unconditional -- reusing canView here would hide it for everyone. */}
-      <TouchableOpacity style={styles.bottomNavMoreItem} onPress={() => onSelectTab('messages')}>
-        <View style={styles.bottomNavMoreCircleWrap}>
-          <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.bottomNavMoreCircle}>
-            <Ionicons name={currentTab === 'messages' ? 'chatbubbles' : 'chatbubbles-outline'} size={20} color="#ffffff" />
-          </LinearGradient>
-          {/* Sibling of LinearGradient, not a child -- LinearGradient clips
-              its children to its own rounded bounds, which was cutting this
-              badge down to a sliver instead of a full circle sitting on top
-              of the button's edge. */}
-          {unreadMessageCount > 0 && (
-            <View style={styles.bottomNavMoreDot}>
-              <Text style={styles.bottomNavMoreDotText}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</Text>
-            </View>
-          )}
-        </View>
-        <Text style={[styles.bottomNavItemText, currentTab === 'messages' && styles.bottomNavItemTextActive]}>Messages</Text>
-      </TouchableOpacity>
-
       <Modal visible={!!openGroup} transparent animationType="fade" onRequestClose={() => setOpenGroupKey(null)}>
         <View style={styles.bottomNavPopoverOverlay}>
           <View style={styles.bottomNavPopoverCard}>
@@ -226,6 +205,28 @@ function MobileBottomNav({ currentTab, onSelectTab, canView, roleName, unreadMes
         </View>
       </Modal>
     </View>
+  );
+}
+
+// Messages doesn't live inside the bottom tab bar (or any role's menu) at
+// all -- it's a standalone floating launcher over the bottom-right of the
+// screen instead, reachable from every mobile screen without taking up a
+// menu slot. Hidden on the Messages screen itself (see its render call in
+// Page()), since opening it from there would be redundant. Has no page-
+// access gate anywhere else in the app (every signed-in account can
+// message regardless of role), so it's unconditional.
+function MobileMessagesFab({ onPress, unreadCount, bottomOffset }) {
+  return (
+    <TouchableOpacity style={[styles.messagesFab, { bottom: bottomOffset }]} onPress={onPress} activeOpacity={0.85}>
+      <LinearGradient colors={['#1d3f9e', '#5b21b6']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.messagesFabGradient}>
+        <Ionicons name="chatbubbles" size={24} color="#ffffff" />
+      </LinearGradient>
+      {unreadCount > 0 && (
+        <View style={styles.messagesFabBadge}>
+          <Text style={styles.messagesFabBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -979,14 +980,20 @@ export default function Page() {
           same as opening a thread in Messenger. Every other mobile screen
           still just hides it while the keyboard is up. */}
       {!isLargeScreen && !isKeyboardVisible && effectiveTab !== 'messages' && (
-        <MobileBottomNav
-          currentTab={effectiveTab}
-          onSelectTab={handleSelectTab}
-          canView={canView}
-          roleName={access?.roleName}
-          unreadMessageCount={unreadMessageCount}
-          badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
-        />
+        <>
+          <MobileBottomNav
+            currentTab={effectiveTab}
+            onSelectTab={handleSelectTab}
+            canView={canView}
+            roleName={access?.roleName}
+            badgeCounts={{ memberChangeQueue: pendingChangeRequestCount }}
+          />
+          <MobileMessagesFab
+            onPress={() => handleSelectTab('messages')}
+            unreadCount={unreadMessageCount}
+            bottomOffset={88}
+          />
+        </>
       )}
 
       {messageToast && (
@@ -1275,21 +1282,21 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: '#ffffff',
   },
   bottomNavBadgeText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
-  bottomNavMoreItem: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', gap: 3 },
-  // Plain wrapper (no overflow clipping, unlike LinearGradient) so the
-  // unread badge below can be positioned relative to this same box without
-  // getting cut off by the circle's own rounded bounds.
-  bottomNavMoreCircleWrap: { width: 40, height: 40, marginTop: -18, position: 'relative' },
-  bottomNavMoreCircle: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 3, borderColor: '#ffffff',
+
+  // Floating Messages launcher -- not part of any menu, sits over the
+  // bottom-right corner of every mobile screen instead (see
+  // MobileMessagesFab). bottom is set inline per render call (it needs to
+  // sit above the bottom tab bar, which this component knows nothing about).
+  messagesFab: { position: 'absolute', right: 16, width: 56, height: 56, zIndex: 20 },
+  messagesFabGradient: {
+    width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
-      web: { boxShadow: '0 4px 10px rgba(29,63,158,0.4)' },
-      default: { shadowColor: '#1d3f9e', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
+      web: { boxShadow: '0 6px 16px rgba(29,63,158,0.45)' },
+      default: { shadowColor: '#1d3f9e', shadowOpacity: 0.45, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8 },
     }),
   },
-  bottomNavMoreDot: {
-    position: 'absolute', top: -7, right: -7, backgroundColor: '#ef4444', borderRadius: 10,
+  messagesFabBadge: {
+    position: 'absolute', top: -4, right: -4, backgroundColor: '#ef4444', borderRadius: 10,
     minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4,
     borderWidth: 2, borderColor: '#ffffff',
     ...Platform.select({
@@ -1297,7 +1304,8 @@ const styles = StyleSheet.create({
       default: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 4 },
     }),
   },
-  bottomNavMoreDotText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
+  messagesFabBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
+
   bottomNavPopoverOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)', justifyContent: 'flex-end' },
   bottomNavPopoverCard: {
     backgroundColor: '#ffffff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
