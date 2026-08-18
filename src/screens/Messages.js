@@ -93,6 +93,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
   const [startingConversation, setStartingConversation] = useState(false);
   const [startingModeratorGroup, setStartingModeratorGroup] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState(null);
 
   const scrollRef = useRef(null);
 
@@ -587,7 +588,9 @@ export default function Messages({ onConversationsChanged, initialConversationId
                             <Text style={styles.bubbleSenderName}>{sender.name}</Text>
                             <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs, !!m.image_url && styles.bubbleImageWrap]}>
                               {!!m.image_url && (
-                                <Image source={{ uri: m.image_url }} style={styles.bubbleImage} resizeMode="cover" />
+                                <TouchableOpacity activeOpacity={0.85} onPress={() => setPreviewImageUrl(m.image_url)}>
+                                  <Image source={{ uri: m.image_url }} style={styles.bubbleImage} resizeMode="cover" />
+                                </TouchableOpacity>
                               )}
                               {!!m.body && (
                                 <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine, !!m.image_url && styles.bubbleTextWithImage]}>{m.body}</Text>
@@ -639,6 +642,21 @@ export default function Messages({ onConversationsChanged, initialConversationId
           </View>
         )}
       </View>
+
+      <Modal visible={!!previewImageUrl} transparent animationType="fade" onRequestClose={() => setPreviewImageUrl(null)}>
+        <View style={styles.imagePreviewOverlay}>
+          <TouchableOpacity
+            style={[styles.imagePreviewCloseBtn, { top: insets.top + 12 }]}
+            onPress={() => setPreviewImageUrl(null)}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="close" size={26} color="#ffffff" />
+          </TouchableOpacity>
+          {!!previewImageUrl && (
+            <Image source={{ uri: previewImageUrl }} style={styles.imagePreviewFull} resizeMode="contain" />
+          )}
+        </View>
+      </Modal>
 
       <Modal visible={newMessageModalVisible} transparent animationType="fade" onRequestClose={() => setNewMessageModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -770,6 +788,13 @@ const styles = StyleSheet.create({
   bubbleTime: { fontSize: 9, color: '#94a3b8', marginTop: 3 },
   bubbleImageWrap: { padding: 4 },
   bubbleImage: { width: 200, height: 200, borderRadius: 10, backgroundColor: '#e2e8f0' },
+
+  imagePreviewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+  imagePreviewFull: { width: '100%', height: '100%' },
+  imagePreviewCloseBtn: {
+    position: 'absolute', right: 20, zIndex: 1, width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center',
+  },
 
   composeRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9', gap: 8 },
   attachBtn: { width: 40, height: 40, borderRadius: 10, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
