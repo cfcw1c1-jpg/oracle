@@ -320,6 +320,15 @@ export default function MembersList({ roleName }) {
     return true;
   }
 
+  // Gender is exempt from the change-request workflow -- it writes straight
+  // to `members` for every role, same as an Admin/Moderator's own edits,
+  // rather than ever being queued for approval.
+  async function applyGenderDirect(memberId, gender) {
+    const { error } = await supabase.from('members').update({ Gender: gender }).eq('MemberIDNo', memberId);
+    if (error) throw error;
+    setMembers((prev) => prev.map((m) => (m.MemberIDNo === memberId ? { ...m, Gender: gender } : m)));
+  }
+
   // Areas explicitly assigned to the signed-in account (Portal Users ->
   // Areas). When any are assigned, the Area filter is narrowed to just
   // those (matches what area-scoping RLS already limits this account's
@@ -355,14 +364,14 @@ export default function MembersList({ roleName }) {
     }
   }
 
-  // Handle Dynamic Gender Toggle updates to Supabase
+  // Handle Dynamic Gender Toggle updates to Supabase -- always direct, never
+  // queued (see applyGenderDirect above).
   async function toggleGender(memberId, currentGender, targetGender) {
     if (currentGender === targetGender) return; // Prevent unnecessary execution calls
 
     try {
       setUpdatingId(memberId);
-      const queued = await applyOrQueueChange(memberId, { Gender: targetGender }, { Gender: currentGender });
-      if (queued) showAlert('Submitted for Approval', 'This Gender change has been sent to an Admin/Moderator for review.');
+      await applyGenderDirect(memberId, targetGender);
     } catch (error) {
       const msg = `Failed updating gender status profile: ${error.message}`;
       Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
@@ -470,7 +479,19 @@ export default function MembersList({ roleName }) {
         return;
       }
 
-      const queued = await applyOrQueueChange(editForm.MemberIDNo, changes, previousValues);
+      // Gender is exempt from the change-request workflow -- split it out
+      // and apply it directly regardless of role, queuing only whatever
+      // else changed alongside it (if anything).
+      if ('Gender' in changes) {
+        await applyGenderDirect(editForm.MemberIDNo, changes.Gender);
+        delete changes.Gender;
+        delete previousValues.Gender;
+      }
+
+      let queued = false;
+      if (Object.keys(changes).length > 0) {
+        queued = await applyOrQueueChange(editForm.MemberIDNo, changes, previousValues);
+      }
       setEditModalVisible(false);
       if (queued) {
         showAlert('Submitted for Approval', `${Object.keys(changes).length} field(s) sent to an Admin/Moderator for review.`);
