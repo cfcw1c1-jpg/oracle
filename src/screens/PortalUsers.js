@@ -683,11 +683,12 @@ const styles = StyleSheet.create({
       default: { shadowColor: '#0f172a', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
     }),
   },
-  // Desktop: ~4 per row. Mobile: 2 per row (isNarrow, < NARROW_BREAKPOINT).
-  // gap on cardGrid already accounts for the space between cards, so these
-  // percentages don't need to subtract anything for it themselves.
+  // Desktop: ~4 per row. Mobile: 1 per row (isNarrow, < NARROW_BREAKPOINT)
+  // -- full width reads more clearly than a cramped 2-up grid at phone
+  // widths. gap on cardGrid already accounts for the space between cards,
+  // so these percentages don't need to subtract anything for it themselves.
   userCardWide: { flexBasis: '23%', minWidth: 220, flexGrow: 1 },
-  userCardNarrow: { flexBasis: '47%', minWidth: 150, flexGrow: 1 },
+  userCardNarrow: { flexBasis: '100%', flexGrow: 1 },
 
   cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   cardName: { fontSize: 14, fontWeight: '800', color: '#0f172a', marginTop: 10 },
