@@ -54,26 +54,33 @@ export default function ProfileScreen() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Drives the container's own bottom padding below (iOS only -- Android's
-  // window already resizes for the keyboard via windowSoftInputMode=
-  // adjustResize). Not a KeyboardAvoidingView: that pads itself based on
-  // measuring its own on-screen position, which comes up short once the
-  // mobile bottom tab bar (a sibling of this screen, not a child) occupies
-  // the bottom of the screen -- this screen's container no longer reaches
-  // the physical bottom, so the measurement undercounts. Tracking the
-  // keyboard's actual height directly sidesteps that measurement entirely.
+  // Drives the container's own bottom padding below, on BOTH platforms.
+  // Android was originally left to windowSoftInputMode=adjustResize alone
+  // (its window resizing natively), but that stopped being reliable once
+  // edge-to-edge became mandatory (Android 15+/SDK 35+): adjustResize is a
+  // pre-edge-to-edge mechanism, and apps drawing behind the system bars are
+  // expected to size themselves off the keyboard inset directly instead,
+  // same as this already does for iOS. Not a KeyboardAvoidingView: that
+  // pads itself based on measuring its own on-screen position, which comes
+  // up short once the mobile bottom tab bar (a sibling of this screen, not
+  // a child) occupies the bottom of the screen -- this screen's container
+  // no longer reaches the physical bottom, so the measurement undercounts.
+  // Tracking the keyboard's actual height directly sidesteps that
+  // measurement entirely.
   //
   // e.endCoordinates.height is measured from the true physical bottom of
   // the screen, but this container already sits insets.bottom above that
   // (the root SafeAreaView already reserved that strip for the home
-  // indicator) -- applying the raw keyboard height on top would double-count
-  // that strip and leave a gap below the fields, above the keyboard.
+  // indicator/nav bar) -- applying the raw keyboard height on top would
+  // double-count that strip and leave a gap below the fields, above the
+  // keyboard.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
-    if (Platform.OS !== 'ios') return undefined;
-    const showSub = Keyboard.addListener('keyboardWillShow', (e) => setKeyboardHeight(e.endCoordinates?.height || 0));
-    const hideSub = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates?.height || 0));
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
     return () => {
       showSub.remove();
       hideSub.remove();

@@ -268,11 +268,15 @@ export default function Messages({ onConversationsChanged, initialConversationId
   // compose row right below it) can still end up hidden above the keyboard
   // instead of sitting right on top of it, Messenger-style.
   //
-  // keyboardHeight drives the container's own bottom padding below (iOS
-  // only -- Android's window already resizes for the keyboard via
-  // windowSoftInputMode=adjustResize, so adding padding on top of that
-  // would double-compensate). This replaced a KeyboardAvoidingView here:
-  // that component pads itself based on measuring its own on-screen
+  // keyboardHeight drives the container's own bottom padding below, on
+  // BOTH platforms. Android was originally left to windowSoftInputMode=
+  // adjustResize alone (its window resizing natively), but that stopped
+  // being reliable once edge-to-edge became mandatory (Android 15+/SDK 35+
+  // -- see the SafeAreaView import note above): adjustResize is a pre-
+  // edge-to-edge mechanism, and apps drawing behind the system bars are
+  // expected to size themselves off the keyboard inset directly instead,
+  // same as this already does for iOS. This replaced a KeyboardAvoidingView
+  // here: that component pads itself based on measuring its own on-screen
   // position, which came up short once the mobile bottom tab bar (a sibling
   // of this screen, not a child) started occupying the bottom of the
   // screen -- this screen's container no longer reached the physical
@@ -282,15 +286,16 @@ export default function Messages({ onConversationsChanged, initialConversationId
   // e.endCoordinates.height is measured from the true physical bottom of
   // the screen, but this container already sits insets.bottom above that
   // (the root SafeAreaView already reserved that strip for the home
-  // indicator) -- applying the raw keyboard height on top would double-count
-  // that strip and leave a gap between the compose row and the keyboard.
+  // indicator/nav bar) -- applying the raw keyboard height on top would
+  // double-count that strip and leave a gap between the compose row and
+  // the keyboard.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const showSub = Keyboard.addListener(showEvent, (e) => {
-      if (Platform.OS === 'ios') setKeyboardHeight(e.endCoordinates?.height || 0);
+      setKeyboardHeight(e.endCoordinates?.height || 0);
       scrollRef.current?.scrollToEnd?.({ animated: true });
     });
     const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
