@@ -2,7 +2,7 @@
   "expo": {
     "name": "The Oracle App",
     "slug": "oracle-app",
-    "version": "1.3.35",
+    "version": "1.3.36",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "oracleapp",
@@ -67,6 +67,6 @@
         "projectId": "4aecbac1-125f-40ce-8abd-1c7d8944dcd0"
       }
     },
-    "owner": "cfc-west1-c1"
+    "owner": "the-oracle-member-portal"
   }
 }
