@@ -991,7 +991,7 @@ export default function Page() {
           <MobileMessagesFab
             onPress={() => handleSelectTab('messages')}
             unreadCount={unreadMessageCount}
-            bottomOffset={88}
+            bottomOffset={108}
           />
         </>
       )}
