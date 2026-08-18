@@ -152,12 +152,12 @@ export default function Messages({ onConversationsChanged, initialConversationId
     try {
       const { data, error } = await supabase
         .from('conversation_participants')
-        .select('profile_id, profiles ( full_name, email, avatar_url )')
+        .select('profile_id, last_read_at, profiles ( full_name, email, avatar_url )')
         .eq('conversation_id', conversationId);
       if (error) throw error;
       const map = {};
       (data || []).forEach((row) => {
-        map[row.profile_id] = row.profiles || {};
+        map[row.profile_id] = { ...(row.profiles || {}), last_read_at: row.last_read_at };
       });
       setParticipantsById(map);
     } catch (err) {
@@ -173,6 +173,24 @@ export default function Messages({ onConversationsChanged, initialConversationId
       email: p.email,
       avatarUrl: p.avatar_url || null,
     };
+  }
+
+  // Who (other than the sender) has read up to a given message, based on
+  // participantsById's last_read_at -- kept live by the conversation_
+  // participants realtime subscription above. Only ever computed for the
+  // sender's own newest message (see the render below), same convention as
+  // Messenger: the indicator tracks the latest read point, not every message.
+  function getSeenByLabel(message) {
+    if (!message) return null;
+    const seenNames = Object.keys(participantsById)
+      .filter((id) => id !== message.sender_id && id !== currentUserId)
+      .filter((id) => {
+        const lastReadAt = participantsById[id]?.last_read_at;
+        return lastReadAt && new Date(lastReadAt) >= new Date(message.created_at);
+      })
+      .map((id) => participantsById[id]?.full_name || participantsById[id]?.email || 'Portal User');
+
+    return seenNames.length > 0 ? `Seen by ${seenNames.join(', ')}` : null;
   }
 
   async function markAsRead(conversationId) {
@@ -231,6 +249,15 @@ export default function Messages({ onConversationsChanged, initialConversationId
             loadConversations();
           }
         }
+      )
+      // Drives the "Seen" indicator below the last message -- fires
+      // whenever any participant's last_read_at moves (their own
+      // markAsRead, or someone else's on their end), so it updates live
+      // instead of only after leaving and reopening the thread.
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'conversation_participants', filter: `conversation_id=eq.${selectedConversationId}` },
+        () => loadParticipants(selectedConversationId)
       )
       .subscribe();
 
@@ -583,9 +610,14 @@ export default function Messages({ onConversationsChanged, initialConversationId
                     {messages.length === 0 && (
                       <Text style={styles.emptyText}>No messages yet. Say hello!</Text>
                     )}
-                    {messages.map((m) => {
+                    {messages.map((m, index) => {
                       const isMine = m.sender_id === currentUserId;
                       const sender = getSenderInfo(m.sender_id);
+                      // Only the sender's own newest message ever shows a
+                      // "Seen by" line -- matches the render loop's one
+                      // pass over `messages`, so this doesn't need its own
+                      // separate scan to find "the last message I sent".
+                      const seenLabel = isMine && index === messages.length - 1 ? getSeenByLabel(m) : null;
                       return (
                         <View key={m.id} style={[styles.bubbleRow, isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                           <Avatar avatarUrl={sender.avatarUrl} name={sender.name} email={sender.email} size={26} />
@@ -602,6 +634,7 @@ export default function Messages({ onConversationsChanged, initialConversationId
                               )}
                             </View>
                             <Text style={styles.bubbleTime}>{formatTimestamp(m.created_at)}</Text>
+                            {!!seenLabel && <Text style={styles.seenText} numberOfLines={1}>{seenLabel}</Text>}
                           </View>
                         </View>
                       );
@@ -791,6 +824,7 @@ const styles = StyleSheet.create({
   bubbleTextMine: { color: '#ffffff' },
   bubbleTextWithImage: { marginTop: 6 },
   bubbleTime: { fontSize: 9, color: '#94a3b8', marginTop: 3 },
+  seenText: { fontSize: 9, color: '#94a3b8', fontStyle: 'italic', marginTop: 2 },
   bubbleImageWrap: { padding: 4 },
   bubbleImage: { width: 200, height: 200, borderRadius: 10, backgroundColor: '#e2e8f0' },
 
