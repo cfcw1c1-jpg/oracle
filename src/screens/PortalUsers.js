@@ -15,16 +15,13 @@ import {
   View,
 } from 'react-native';
 import {
-  ActionLink,
   EmptyRow,
   ExportButton,
   exportCsv,
   InitialsBadge,
   Pill,
   TableCard,
-  TableHeaderRow,
   TablePagination,
-  TableRow,
   usePagination,
 } from '../components/admin-table';
 import { supabase } from '../../lib/supabase';
@@ -35,15 +32,6 @@ const ACCENT_BLUE = '#2563eb';
 const NARROW_BREAKPOINT = 720;
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
-const AREA_PILL_LIMIT = 2;
-
-// Matches the Sector/Cluster/Chapter palette used on the Areas screen so a
-// badge reads the same way in both places.
-const AREA_TYPE_STYLES = {
-  Sector: { color: '#7c3aed', bg: '#ede9fe' },
-  Cluster: { color: '#2563eb', bg: '#dbeafe' },
-  Chapter: { color: '#16a34a', bg: '#dcfce7' },
-};
 
 function formatLastLogin(iso) {
   if (!iso) return 'Never';
@@ -379,110 +367,98 @@ export default function PortalUsers({ onAccessChanged }) {
             </View>
           }
         >
-          {!isNarrow && (
-            <TableHeaderRow
-              columns={[
-                { key: 'account', label: 'Account', style: styles.colAccount },
-                { key: 'role', label: 'Role', style: styles.colRole },
-                { key: 'areas', label: 'Areas', style: styles.colAreas },
-                { key: 'lastLogin', label: 'Last Login', style: styles.colLastLogin },
-                { key: 'actions', label: 'Actions', style: styles.colActions },
-              ]}
-            />
-          )}
-
           {loading ? (
             <ActivityIndicator size="large" color={NAVY} style={{ padding: 30 }} />
           ) : pageItems.length === 0 ? (
             <EmptyRow label="No portal accounts yet." />
           ) : (
             <ScrollView style={styles.rowsScroll}>
-            {pageItems.map((item, index) => {
+            <View style={styles.cardGrid}>
+            {pageItems.map((item) => {
               const assignedAreas = userAreasByProfile[item.id] || [];
               const initials = (item.full_name || item.email || '?').slice(0, 2).toUpperCase();
-              const isLast = index === pageItems.length - 1;
               const presence = onlineByProfile[item.id];
 
-              const avatar = (
-                <View style={styles.avatarWrap}>
-                  <InitialsBadge text={initials} imageUri={item.avatar_url} />
-                  {!!presence && <View style={styles.onlineDot} />}
-                </View>
-              );
-
-              const rolePill = item.roles
-                ? <Pill label={item.roles.name} color="#1d4ed8" bg="#dbeafe" />
-                : <Pill label="Unassigned" color="#64748b" bg="#f1f5f9" />;
-
-              // Capped to keep every row a fixed height -- an account scoped
-              // to a handful of Clusters/Chapters used to wrap into a wall
-              // of pills here. Tapping the cell (same as the "Areas" action
-              // link) opens the full list in the Assign Areas modal.
-              const visibleAreas = assignedAreas.slice(0, AREA_PILL_LIMIT);
-              const hiddenAreaCount = assignedAreas.length - visibleAreas.length;
-              const areaPills = assignedAreas.length === 0
-                ? <Pill label="All Areas" color="#64748b" bg="#f1f5f9" />
-                : (
-                  <TouchableOpacity style={styles.pillWrap} onPress={() => openAreasModal(item)} activeOpacity={0.6}>
-                    {visibleAreas.map((a) => (
-                      <Pill key={a.areaId} label={a.name} color={AREA_TYPE_STYLES[a.type]?.color} bg={AREA_TYPE_STYLES[a.type]?.bg} />
-                    ))}
-                    {hiddenAreaCount > 0 && <Pill label={`+${hiddenAreaCount} more`} color="#64748b" bg="#f1f5f9" />}
-                  </TouchableOpacity>
-                );
-
-              const actions = (
-                <View style={styles.actionsWrap}>
-                  <ActionLink label="Areas" icon="git-network-outline" onPress={() => openAreasModal(item)} />
-                  <ActionLink label="Change Role" icon="create-outline" onPress={() => openRoleModal(item)} />
-                </View>
-              );
+              // Assigning a parent Area (a Sector, say) cascades onto every
+              // Cluster/Chapter nested under it as its own user_areas row
+              // (see toggleProfileArea above), so an account granted just
+              // one Sector could genuinely hold dozens of rows. Showing all
+              // of those individually read as "wrong" -- keeping only rows
+              // whose OWN parent isn't also in the assigned set collapses
+              // that back down to what was actually granted (the Sector),
+              // instead of every leaf it cascaded onto.
+              const assignedIds = new Set(assignedAreas.map((a) => a.areaId));
+              const topLevelAreas = assignedAreas.filter((a) => {
+                const record = areas.find((ar) => ar.id === a.areaId);
+                return !record?.parent_id || !assignedIds.has(record.parent_id);
+              });
+              const areaLabel = topLevelAreas.length === 0
+                ? 'All Areas'
+                : topLevelAreas.map((a) => a.name).join(', ');
 
               // Presence (live) wins over the last recorded sign-in when an
               // account is online right now -- otherwise this is whenever
               // auth.users.last_sign_in_at last updated (see
               // scripts/sql/add-portal-users-last-sign-in.sql).
               const lastLoginLabel = presence ? 'Online now' : formatLastLogin(lastSignInByProfile[item.id]);
-              const lastLoginText = (
-                <Text style={[styles.plainCellText, presence && styles.onlineText]} numberOfLines={1}>{lastLoginLabel}</Text>
-              );
 
-              if (isNarrow) {
-                return (
-                  <TableRow key={item.id} last={isLast} style={styles.narrowRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
-                      {avatar}
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
-                        {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
-                        {!!presence && <Text style={styles.deviceText} numberOfLines={1}>Online · {formatPlatform(presence.platform)}</Text>}
-                      </View>
-                    </View>
-                    <View style={styles.narrowMetaRow}>{rolePill}</View>
-                    <View style={styles.narrowMetaRow}>{areaPills}</View>
-                    <View style={styles.narrowMetaRow}>{lastLoginText}</View>
-                    <View style={[styles.narrowMetaRow, { marginTop: 8 }]}>{actions}</View>
-                  </TableRow>
-                );
-              }
+              const status = presence
+                ? { label: 'ONLINE', color: '#15803d', bg: '#dcfce7' }
+                : !item.roles
+                  ? { label: 'UNASSIGNED', color: '#b45309', bg: '#fef3c7' }
+                  : { label: 'OFFLINE', color: '#64748b', bg: '#f1f5f9' };
 
               return (
-                <TableRow key={item.id} last={isLast}>
-                  <View style={[styles.colAccount, { flexDirection: 'row', alignItems: 'center' }]}>
-                    {avatar}
-                    <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={styles.mainText} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
-                      {!!item.full_name && <Text style={styles.subText} numberOfLines={1}>{item.email}</Text>}
-                      {!!presence && <Text style={styles.deviceText} numberOfLines={1}>Online · {formatPlatform(presence.platform)}</Text>}
+                <View key={item.id} style={[styles.userCard, isNarrow ? styles.userCardNarrow : styles.userCardWide]}>
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.avatarWrap}>
+                      <InitialsBadge text={initials} imageUri={item.avatar_url} size={44} />
+                      {!!presence && <View style={styles.onlineDot} />}
+                    </View>
+                    <Pill label={status.label} color={status.color} bg={status.bg} />
+                  </View>
+
+                  <Text style={styles.cardName} numberOfLines={1}>{item.full_name || item.email || item.id}</Text>
+                  <Text style={styles.cardRole} numberOfLines={1}>{item.roles?.name || 'Unassigned'}</Text>
+
+                  <View style={styles.cardDivider} />
+
+                  <View style={styles.cardMetaRow}>
+                    <TouchableOpacity style={styles.cardMetaCol} onPress={() => openAreasModal(item)} activeOpacity={0.6}>
+                      <Text style={styles.cardMetaLabel}>Areas</Text>
+                      <Text style={styles.cardMetaValue} numberOfLines={1}>{areaLabel}</Text>
+                    </TouchableOpacity>
+                    <View style={styles.cardMetaCol}>
+                      <Text style={styles.cardMetaLabel}>Last Login</Text>
+                      <Text style={[styles.cardMetaValue, presence && styles.onlineText]} numberOfLines={1}>{lastLoginLabel}</Text>
                     </View>
                   </View>
-                  <View style={styles.colRole}>{rolePill}</View>
-                  <View style={styles.colAreas}>{areaPills}</View>
-                  <View style={styles.colLastLogin}>{lastLoginText}</View>
-                  <View style={styles.colActions}>{actions}</View>
-                </TableRow>
+
+                  <View style={styles.cardEmailRow}>
+                    <Ionicons name="mail-outline" size={13} color="#94a3b8" style={{ marginRight: 6 }} />
+                    <Text style={styles.cardEmailText} numberOfLines={1}>{item.email}</Text>
+                  </View>
+                  {!!presence && (
+                    <View style={styles.cardEmailRow}>
+                      <Ionicons name="phone-portrait-outline" size={13} color="#94a3b8" style={{ marginRight: 6 }} />
+                      <Text style={[styles.cardEmailText, styles.onlineText]} numberOfLines={1}>
+                        Online · {formatPlatform(presence.platform)}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.cardActionsRow}>
+                    <TouchableOpacity style={styles.cardRoleBtn} onPress={() => openRoleModal(item)}>
+                      <Text style={styles.cardRoleBtnText}>Role</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.cardAreasBtn} onPress={() => openAreasModal(item)}>
+                      <Text style={styles.cardAreasBtnText}>Areas</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               );
             })}
+            </View>
             </ScrollView>
           )}
 
@@ -688,19 +664,7 @@ const styles = StyleSheet.create({
   fillCard: { flex: 1 },
   rowsScroll: { flex: 1 },
 
-  colAccount: { flex: 2.2, minWidth: 160 },
-  colRole: { flex: 1.1, minWidth: 100 },
-  colAreas: { flex: 1.8, minWidth: 140 },
-  colLastLogin: { flex: 1.5, minWidth: 140 },
-  colActions: { flex: 1.4, minWidth: 150 },
-
-  narrowRow: { flexDirection: 'column', alignItems: 'stretch' },
-  narrowMetaRow: { marginTop: 6 },
-
-  mainText: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
   subText: { fontSize: 11, color: '#64748b', marginTop: 2 },
-  deviceText: { fontSize: 11, color: '#16a34a', fontWeight: '600', marginTop: 2 },
-  plainCellText: { fontSize: 12, color: '#475569', fontWeight: '500' },
   onlineText: { color: '#16a34a', fontWeight: '700' },
 
   avatarWrap: { position: 'relative' },
@@ -709,8 +673,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#16a34a', borderWidth: 2, borderColor: '#ffffff',
   },
 
-  pillWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  actionsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, padding: 14 },
+  userCard: {
+    backgroundColor: '#ffffff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0', padding: 14,
+    ...Platform.select({
+      web: { boxShadow: '0 1px 3px rgba(15,23,42,0.06)' },
+      default: { shadowColor: '#0f172a', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+    }),
+  },
+  // Desktop: ~4 per row. Mobile: 2 per row (isNarrow, < NARROW_BREAKPOINT).
+  // gap on cardGrid already accounts for the space between cards, so these
+  // percentages don't need to subtract anything for it themselves.
+  userCardWide: { flexBasis: '23%', minWidth: 220, flexGrow: 1 },
+  userCardNarrow: { flexBasis: '47%', minWidth: 150, flexGrow: 1 },
+
+  cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardName: { fontSize: 14, fontWeight: '800', color: '#0f172a', marginTop: 10 },
+  cardRole: { fontSize: 12, color: '#64748b', marginTop: 1 },
+  cardDivider: { height: 1, backgroundColor: '#f1f5f9', marginVertical: 10 },
+
+  cardMetaRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  cardMetaCol: { flex: 1 },
+  cardMetaLabel: { fontSize: 9, fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 },
+  cardMetaValue: { fontSize: 12, fontWeight: '600', color: '#334155', marginTop: 2 },
+
+  cardEmailRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  cardEmailText: { fontSize: 11, color: '#64748b', flexShrink: 1 },
+
+  cardActionsRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  cardRoleBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 8, backgroundColor: '#eff6ff',
+  },
+  cardRoleBtnText: { fontSize: 12, fontWeight: '700', color: ACCENT_BLUE },
+  cardAreasBtn: {
+    flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 8, backgroundColor: NAVY,
+  },
+  cardAreasBtnText: { fontSize: 12, fontWeight: '700', color: '#ffffff' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'center', alignItems: 'center', padding: 16 },
   modalCard: { backgroundColor: '#ffffff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 420 },
