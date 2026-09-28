@@ -460,7 +460,10 @@ export default function PfoTrainingReports() {
         const val = item[t.id];
         return val === 'Y' || val === 'y' ? 'Y' : 'N';
       });
-      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', ...trackCells, item.attendedAll ? 'Attended' : 'Missing'];
+      const overallStatus = item.attendedAll
+        ? 'Attended all'
+        : item.attendedCount > 0 ? 'Attended but with missing' : 'Not Attended';
+      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', ...trackCells, overallStatus];
     });
 
     return [header, ...rows];
