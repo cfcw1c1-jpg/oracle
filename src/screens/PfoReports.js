@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
+import { getRoleLabel, normalizeRole } from './PfoStatGenerator';
 
 const NARROW_BREAKPOINT = 720;
 
@@ -264,7 +265,7 @@ export default function PfoTrainingReports() {
       const selectionColumns = selectedTrainings.map(t => `"${t.id}"`).join(', ');
       const { data, error } = await supabase
         .from('pfo_members')
-        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName)`);
+        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName, PastoralService)`);
 
       if (error) throw error;
 
@@ -449,24 +450,52 @@ export default function PfoTrainingReports() {
     }
   }
 
+  function getOverallStatus(item) {
+    if (item.attendedAll) return 'Attended all';
+    return item.attendedCount > 0 ? 'Attended but with missing' : 'Not Attended';
+  }
+
   // One column per selected track (Y/N) instead of the TXT export's combined
   // "Attended: ... | Not Attended: ..." string -- easier to filter/pivot in Excel.
   function buildReportRows() {
-    const header = ['#', 'Member Name', 'Member ID', 'Area', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
+    const header = ['#', 'Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
 
     const rows = filteredReportData.map((item, index) => {
       const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
+      const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
       const trackCells = selectedTrainings.map((t) => {
         const val = item[t.id];
         return val === 'Y' || val === 'y' ? 'Y' : 'N';
       });
-      const overallStatus = item.attendedAll
-        ? 'Attended all'
-        : item.attendedCount > 0 ? 'Attended but with missing' : 'Not Attended';
-      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', ...trackCells, overallStatus];
+      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', role, ...trackCells, getOverallStatus(item)];
     });
 
     return [header, ...rows];
+  }
+
+  // Second sheet: Overall Status counts per role, over the same filtered rows
+  // as the detail sheet.
+  function buildRoleSummaryRows() {
+    const statuses = ['Attended all', 'Attended but with missing', 'Not Attended'];
+    const counts = new Map();
+    filteredReportData.forEach((item) => {
+      const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
+      if (!counts.has(role)) counts.set(role, Object.fromEntries(statuses.map((s) => [s, 0])));
+      counts.get(role)[getOverallStatus(item)]++;
+    });
+
+    const totals = Object.fromEntries(statuses.map((s) => [s, 0]));
+    const rows = Array.from(counts.keys()).sort().map((role) => {
+      const c = counts.get(role);
+      statuses.forEach((s) => { totals[s] += c[s]; });
+      return [role, ...statuses.map((s) => c[s]), statuses.reduce((sum, s) => sum + c[s], 0)];
+    });
+
+    return [
+      ['Role', ...statuses, 'Total'],
+      ...rows,
+      ['TOTAL', ...statuses.map((s) => totals[s]), filteredReportData.length],
+    ];
   }
 
   async function handleExportXlsx() {
@@ -487,6 +516,7 @@ export default function PfoTrainingReports() {
       const worksheet = XLSX.utils.aoa_to_sheet(buildReportRows());
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'PFO Report');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildRoleSummaryRows()), 'Summary by Role');
       const base64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
 
       if (Platform.OS === 'web') {
