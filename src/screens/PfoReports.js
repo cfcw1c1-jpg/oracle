@@ -452,6 +452,8 @@ export default function PfoTrainingReports() {
     }
   }
 
+  const OVERALL_STATUSES = ['Attended all', 'Attended but with missing', 'Not Attended'];
+
   function getOverallStatus(item) {
     if (item.attendedAll) return 'Attended all';
     return item.attendedCount > 0 ? 'Attended but with missing' : 'Not Attended';
@@ -459,10 +461,12 @@ export default function PfoTrainingReports() {
 
   // One column per selected track (Y/N) instead of the TXT export's combined
   // "Attended: ... | Not Attended: ..." string -- easier to filter/pivot in Excel.
-  function buildReportRows() {
+  // Called once per Overall Status, so each worksheet holds only that status's
+  // rows (numbered from 1).
+  function buildReportRows(status) {
     const header = ['#', 'Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
 
-    const rows = filteredReportData.map((item, index) => {
+    const rows = filteredReportData.filter((item) => getOverallStatus(item) === status).map((item, index) => {
       const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
       const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
       const trackCells = selectedTrainings.map((t) => {
@@ -475,10 +479,10 @@ export default function PfoTrainingReports() {
     return [header, ...rows];
   }
 
-  // Second sheet: Overall Status counts per role, over the same filtered rows
-  // as the detail sheet.
+  // Last sheet: Overall Status counts per role, over the same filtered rows
+  // as the detail sheets.
   function buildRoleSummaryRows() {
-    const statuses = ['Attended all', 'Attended but with missing', 'Not Attended'];
+    const statuses = OVERALL_STATUSES;
     const counts = new Map();
     filteredReportData.forEach((item) => {
       const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
@@ -515,9 +519,12 @@ export default function PfoTrainingReports() {
       const safeFileName = `cfc-pfo-report-${makeFileTimestamp(new Date())}.xlsx`;
       const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-      const worksheet = XLSX.utils.aoa_to_sheet(buildReportRows());
+      // One detail sheet per Overall Status (header-only when a status has no
+      // members, so the workbook layout stays the same every time).
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'PFO Report');
+      OVERALL_STATUSES.forEach((status) => {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildReportRows(status)), status);
+      });
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildRoleSummaryRows()), 'Summary by Role');
       const base64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
 
