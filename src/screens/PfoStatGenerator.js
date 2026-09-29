@@ -140,7 +140,7 @@ export function getRoleLabel(code) {
 
 // A member with no Status yet (legacy rows) counts as Active; only an
 // explicit non-Active status (Inactive/Deceased/SOLD/HANDMAID) excludes them.
-function isActiveStatus(status) {
+export function isActiveStatus(status) {
   return !status || status === 'Active';
 }
 

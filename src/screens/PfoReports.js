@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
-import { getRoleLabel, normalizeRole } from './PfoStatGenerator';
+import { getRoleLabel, isActiveStatus, normalizeRole } from './PfoStatGenerator';
 
 const NARROW_BREAKPOINT = 720;
 
@@ -265,11 +265,13 @@ export default function PfoTrainingReports() {
       const selectionColumns = selectedTrainings.map(t => `"${t.id}"`).join(', ');
       const { data, error } = await supabase
         .from('pfo_members')
-        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName, PastoralService)`);
+        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName, PastoralService, Status)`);
 
       if (error) throw error;
 
-      const processedData = (data || []).map(item => {
+      // Only Active members are reported (same rule as Formation Stats and
+      // the dashboard: a blank Status counts as Active).
+      const processedData = (data || []).filter((item) => isActiveStatus(item.members?.Status)).map(item => {
         const attendedCount = selectedTrainings.filter(t => {
           const val = item[t.id];
           return val === 'Y' || val === 'y';
