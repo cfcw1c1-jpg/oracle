@@ -523,21 +523,53 @@ export default function PfoTrainingReports() {
     const header = [
       '#',
       ...(groupByHousehold ? ['Household Head'] : []),
-      'Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status',
+      ...buildMemberDetailHeader(),
     ];
 
-    const rows = filteredReportData.filter((item) => getOverallStatus(item) === status).map((item, index) => {
-      const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
-      const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
-      const trackCells = selectedTrainings.map((t) => {
-        const val = item[t.id];
-        return val === 'Y' || val === 'y' ? 'Y' : 'N';
-      });
-      return [
-        index + 1,
-        ...(groupByHousehold ? [getHouseholdHead(item)] : []),
-        name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', role, ...trackCells, getOverallStatus(item),
-      ];
+    const rows = filteredReportData.filter((item) => getOverallStatus(item) === status).map((item, index) => [
+      index + 1,
+      ...(groupByHousehold ? [getHouseholdHead(item)] : []),
+      ...buildMemberDetailCells(item),
+    ]);
+
+    return [header, ...rows];
+  }
+
+  function buildMemberDetailHeader() {
+    return ['Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
+  }
+
+  function buildMemberDetailCells(item) {
+    const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
+    const role = getRoleLabel(normalizeRole(item.members?.PastoralService));
+    const trackCells = selectedTrainings.map((t) => {
+      const val = item[t.id];
+      return val === 'Y' || val === 'y' ? 'Y' : 'N';
+    });
+    return [name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', role, ...trackCells, getOverallStatus(item)];
+  }
+
+  // Extra sheet when grouping by Household Head: every member listed under
+  // their household (all Overall Statuses together), each block opened by a
+  // household row with its member count and status breakdown, members
+  // numbered from 1 within the household.
+  function buildHouseholdDetailRows() {
+    const header = ['#', ...buildMemberDetailHeader()];
+    const groups = new Map();
+    filteredReportData.forEach((item) => {
+      const head = getHouseholdHead(item);
+      if (!groups.has(head)) groups.set(head, []);
+      groups.get(head).push(item);
+    });
+
+    const rows = [];
+    groups.forEach((members, head) => {
+      if (rows.length > 0) rows.push([]);
+      const breakdown = OVERALL_STATUSES
+        .map((s) => `${s}: ${members.filter((m) => getOverallStatus(m) === s).length}`)
+        .join(' | ');
+      rows.push([`HOUSEHOLD HEAD: ${head}`, `${members.length} member${members.length === 1 ? '' : 's'}`, breakdown]);
+      members.forEach((item, index) => rows.push([index + 1, ...buildMemberDetailCells(item)]));
     });
 
     return [header, ...rows];
@@ -615,6 +647,7 @@ export default function PfoTrainingReports() {
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildReportRows(status)), status);
       });
       if (groupByHousehold) {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildHouseholdDetailRows()), 'Members by Household');
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildHouseholdSummaryRows()), 'Summary by Household');
       }
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildRoleSummaryRows()), 'Summary by Role');
