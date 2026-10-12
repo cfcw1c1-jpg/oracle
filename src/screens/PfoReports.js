@@ -187,6 +187,19 @@ const TRAINING_COLUMNS = [
   { id: 'UM_1-', label: 'UM 1', group: 'Structural Status' }
 ];
 
+const NO_HOUSEHOLD_HEAD = 'No Household Head';
+
+const getHouseholdHead = (item) => (item.members?.NameOfHouseholdHead || '').trim() || NO_HOUSEHOLD_HEAD;
+
+// Household heads A-Z with the "No Household Head" bucket last; members keep
+// their existing (Lastname) order inside each group since sort is stable.
+const compareHouseholdHeads = (a, b) => {
+  if (a === b) return 0;
+  if (a === NO_HOUSEHOLD_HEAD) return 1;
+  if (b === NO_HOUSEHOLD_HEAD) return -1;
+  return a.toLowerCase().localeCompare(b.toLowerCase());
+};
+
 const getCleanTrackCode = (rawId) => {
   const segment = rawId.split('-')[0];
   return segment.replace('_', '.').replace(/\s+/g, '');
@@ -203,6 +216,7 @@ export default function PfoTrainingReports() {
   const [assignedAreaNames, setAssignedAreaNames] = useState([]);
   const [areaFilter, setAreaFilter] = useState('All');
   const [areaDropdownOpen, setAreaDropdownOpen] = useState(false);
+  const [groupByHousehold, setGroupByHousehold] = useState(false);
 
   useEffect(() => {
     generateReport();
@@ -265,7 +279,7 @@ export default function PfoTrainingReports() {
       const selectionColumns = selectedTrainings.map(t => `"${t.id}"`).join(', ');
       const { data, error } = await supabase
         .from('pfo_members')
-        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName, PastoralService, Status)`);
+        .select(`MemberIDNo, ${selectionColumns}, members (Firstname, Lastname, AreaName, PastoralService, NameOfHouseholdHead, Status)`);
 
       if (error) throw error;
 
@@ -321,13 +335,43 @@ export default function PfoTrainingReports() {
 
   // Prefix match (same convention used across the app) so an Area named
   // "West 1C2" also covers AreaName variants like "West 1C2B"/"West 1C2D".
+  // When grouping by Household Head, rows are re-sorted so each household's
+  // members sit together -- every view and export below reads this order.
   const filteredReportData = useMemo(() => {
-    if (areaFilter === 'All') return reportData;
-    return reportData.filter((row) => {
+    const rows = areaFilter === 'All' ? reportData : reportData.filter((row) => {
       const memberAreaName = (row.members?.AreaName || '').trim();
       return areaFilter === 'No Area' ? !memberAreaName : memberAreaName.toLowerCase().startsWith(areaFilter.toLowerCase());
     });
-  }, [reportData, areaFilter]);
+    if (!groupByHousehold) return rows;
+    return [...rows].sort((a, b) => compareHouseholdHeads(getHouseholdHead(a), getHouseholdHead(b)));
+  }, [reportData, areaFilter, groupByHousehold]);
+
+  // On-screen list: a header entry before each household's members, numbered
+  // from 1 within the household.
+  const displayListData = useMemo(() => {
+    if (!groupByHousehold) {
+      return filteredReportData.map((item, index) => ({ type: 'row', key: `row-${item.MemberIDNo}`, item, number: index + 1 }));
+    }
+    const counts = new Map();
+    filteredReportData.forEach((item) => {
+      const head = getHouseholdHead(item);
+      counts.set(head, (counts.get(head) || 0) + 1);
+    });
+    const entries = [];
+    let currentHead = null;
+    let number = 0;
+    filteredReportData.forEach((item) => {
+      const head = getHouseholdHead(item);
+      if (head !== currentHead) {
+        currentHead = head;
+        number = 0;
+        entries.push({ type: 'header', key: `hh-${head}`, head, count: counts.get(head) });
+      }
+      number++;
+      entries.push({ type: 'row', key: `row-${item.MemberIDNo}`, item, number });
+    });
+    return entries;
+  }, [filteredReportData, groupByHousehold]);
 
   // Shared by every export format so filenames never drift out of sync.
   function makeFileTimestamp(now) {
@@ -357,6 +401,8 @@ export default function PfoTrainingReports() {
     textContent += `=======================================================================\n`;
     textContent += `COMPILED DATE:     ${displayTimestamp} ${hours}:${minutes}:${seconds}\n`;
     textContent += `TOTAL DATA COUNT:  ${matrixRegistry.length} Registered Row Entries\n`;
+    textContent += `MEMBER STATUS:     Active members only\n`;
+    if (groupByHousehold) textContent += `GROUPED BY:        Household Head\n`;
     textContent += `STATUS KEY:        Y = Attended Already | N = Not Yet Attended\n`;
     textContent += `-----------------------------------------------------------------------\n`;
     textContent += `MANDATED TRACK FILTER TARGETS CHECKED:\n`;
@@ -371,8 +417,18 @@ export default function PfoTrainingReports() {
     let dividerLine    = `-------|------------------------------------------|-------------|------------------\n`;
     textContent += tableHeaderStr + dividerLine;
 
+    let currentHead = null;
+    let groupIndex = 0;
     matrixRegistry.forEach((item, index) => {
-      const num = String(index + 1).padEnd(4, ' ');
+      if (groupByHousehold) {
+        const head = getHouseholdHead(item);
+        if (head !== currentHead) {
+          currentHead = head;
+          groupIndex = 0;
+          textContent += `\n HOUSEHOLD HEAD: ${head}\n` + dividerLine;
+        }
+      }
+      const num = String((groupByHousehold ? ++groupIndex : index + 1)).padEnd(4, ' ');
       const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
       const paddedName = name.padEnd(40, ' ').substring(0, 40);
       const idNo = (item.MemberIDNo || 'N/A').padEnd(11, ' ');
@@ -422,7 +478,7 @@ export default function PfoTrainingReports() {
       setLoading(true);
 
       const { textContent, fileTimestamp } = buildReportContent();
-      const safeFileName = `cfc-pfo-report-${fileTimestamp}.txt`;
+      const safeFileName = `cfc-pfo-report${groupByHousehold ? '-by-household' : ''}-${fileTimestamp}.txt`;
 
       if (Platform.OS === 'web') {
         const element = document.createElement("a");
@@ -464,7 +520,11 @@ export default function PfoTrainingReports() {
   // Called once per Overall Status, so each worksheet holds only that status's
   // rows (numbered from 1).
   function buildReportRows(status) {
-    const header = ['#', 'Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status'];
+    const header = [
+      '#',
+      ...(groupByHousehold ? ['Household Head'] : []),
+      'Member Name', 'Member ID', 'Area', 'Role', ...selectedTrainings.map((t) => getCleanTrackCode(t.id)), 'Overall Status',
+    ];
 
     const rows = filteredReportData.filter((item) => getOverallStatus(item) === status).map((item, index) => {
       const name = `${item.members?.Lastname || ''}, ${item.members?.Firstname || ''}`;
@@ -473,10 +533,39 @@ export default function PfoTrainingReports() {
         const val = item[t.id];
         return val === 'Y' || val === 'y' ? 'Y' : 'N';
       });
-      return [index + 1, name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', role, ...trackCells, getOverallStatus(item)];
+      return [
+        index + 1,
+        ...(groupByHousehold ? [getHouseholdHead(item)] : []),
+        name, item.MemberIDNo || 'N/A', item.members?.AreaName || '', role, ...trackCells, getOverallStatus(item),
+      ];
     });
 
     return [header, ...rows];
+  }
+
+  // Extra sheet when grouping by Household Head: Overall Status counts per
+  // household, in the same household order as the detail sheets.
+  function buildHouseholdSummaryRows() {
+    const statuses = OVERALL_STATUSES;
+    const counts = new Map();
+    filteredReportData.forEach((item) => {
+      const head = getHouseholdHead(item);
+      if (!counts.has(head)) counts.set(head, Object.fromEntries(statuses.map((s) => [s, 0])));
+      counts.get(head)[getOverallStatus(item)]++;
+    });
+
+    const totals = Object.fromEntries(statuses.map((s) => [s, 0]));
+    const rows = Array.from(counts.keys()).map((head) => {
+      const c = counts.get(head);
+      statuses.forEach((s) => { totals[s] += c[s]; });
+      return [head, ...statuses.map((s) => c[s]), statuses.reduce((sum, s) => sum + c[s], 0)];
+    });
+
+    return [
+      ['Household Head', ...statuses, 'Total'],
+      ...rows,
+      ['TOTAL', ...statuses.map((s) => totals[s]), filteredReportData.length],
+    ];
   }
 
   // Last sheet: Overall Status counts per role, over the same filtered rows
@@ -516,7 +605,7 @@ export default function PfoTrainingReports() {
     try {
       setLoading(true);
 
-      const safeFileName = `cfc-pfo-report-${makeFileTimestamp(new Date())}.xlsx`;
+      const safeFileName = `cfc-pfo-report${groupByHousehold ? '-by-household' : ''}-${makeFileTimestamp(new Date())}.xlsx`;
       const mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
       // One detail sheet per Overall Status (header-only when a status has no
@@ -525,6 +614,9 @@ export default function PfoTrainingReports() {
       OVERALL_STATUSES.forEach((status) => {
         XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildReportRows(status)), status);
       });
+      if (groupByHousehold) {
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildHouseholdSummaryRows()), 'Summary by Household');
+      }
       XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(buildRoleSummaryRows()), 'Summary by Role');
       const base64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
 
@@ -561,14 +653,25 @@ export default function PfoTrainingReports() {
     }
   }
 
-  const renderReportItem = ({ item, index }) => {
+  const renderReportItem = ({ item: entry }) => {
+    if (entry.type === 'header') {
+      return (
+        <View style={styles.householdHeaderRow}>
+          <Ionicons name="home-outline" size={13} color="#002060" style={styles.householdHeaderIcon} />
+          <Text style={styles.householdHeaderText} numberOfLines={1}>{entry.head}</Text>
+          <Text style={styles.householdHeaderCount}>{entry.count}</Text>
+        </View>
+      );
+    }
+    const { item, number } = entry;
+    const index = number - 1;
     const fullName = item.members 
       ? `${item.members.Lastname}, ${item.members.Firstname}` 
       : `ID: ${item.MemberIDNo}`;
 
     return (
       <View style={[styles.reportRow, index % 2 === 1 && styles.rowAlternate]}>
-        <View style={styles.numberCell}><Text style={styles.numberText}>{index + 1}</Text></View>
+        <View style={styles.numberCell}><Text style={styles.numberText}>{number}</Text></View>
         <View style={styles.nameCell}><Text style={styles.nameText} numberOfLines={1}>{fullName}</Text></View>
         <View style={styles.idCell}><Text style={styles.idText}>{item.MemberIDNo}</Text></View>
         <View style={styles.tagCell}>
@@ -725,6 +828,25 @@ export default function PfoTrainingReports() {
           </View>
         )}
       </View>
+
+      <View style={styles.groupToggleWrapper}>
+        <Text style={styles.fieldLabel}>Group By:</Text>
+        <TouchableOpacity
+          style={[styles.dropdownHeader, groupByHousehold && styles.groupToggleActive]}
+          activeOpacity={0.8}
+          onPress={() => setGroupByHousehold((v) => !v)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: groupByHousehold }}
+        >
+          <Ionicons
+            name={groupByHousehold ? 'checkbox' : 'square-outline'}
+            size={16}
+            color={groupByHousehold ? '#2563eb' : '#94a3b8'}
+            style={styles.checkboxIcon}
+          />
+          <Text style={styles.dropdownHeaderText} numberOfLines={1}>Household Head</Text>
+        </TouchableOpacity>
+      </View>
       </View>
 
       <View style={styles.actionRowContainer}>
@@ -798,9 +920,9 @@ export default function PfoTrainingReports() {
           </View>
         ) : (
           <FlatList
-            data={filteredReportData}
+            data={displayListData}
             renderItem={renderReportItem}
-            keyExtractor={(item) => item.MemberIDNo?.toString()}
+            keyExtractor={(entry) => entry.key}
             removeClippedSubviews={Platform.OS === 'android'}
             maxToRenderPerBatch={25}
             windowSize={5}
@@ -832,6 +954,8 @@ const styles = StyleSheet.create({
   filtersRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 12, marginBottom: 14, zIndex: 10 },
   dropdownWrapper: { zIndex: 10, flex: 2, minWidth: 260 },
   areaDropdownWrapper: { zIndex: 9, flex: 1, minWidth: 180, maxWidth: 280 },
+  groupToggleWrapper: { flex: 1, minWidth: 180, maxWidth: 240 },
+  groupToggleActive: { borderColor: '#93c5fd', backgroundColor: '#eff6ff' },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 6, textTransform: 'uppercase' },
   dropdownHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -903,6 +1027,13 @@ const styles = StyleSheet.create({
   headerText: { fontSize: 11, fontWeight: '700', color: '#64748b', textTransform: 'uppercase' },
   reportRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingHorizontal: 12 },
   rowAlternate: { backgroundColor: '#f8fafc' },
+  householdHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12,
+    backgroundColor: '#eef2ff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+  },
+  householdHeaderIcon: { marginRight: 6 },
+  householdHeaderText: { flex: 1, fontSize: 12, fontWeight: '800', color: '#002060', textTransform: 'uppercase' },
+  householdHeaderCount: { fontSize: 11, fontWeight: '700', color: '#475569' },
   numberCellHeader: { width: 30 },
   numberCell: { width: 30 },
   numberText: { fontSize: 12, color: '#94a3b8', fontWeight: '500' },
