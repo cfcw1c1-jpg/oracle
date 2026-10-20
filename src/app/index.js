@@ -34,6 +34,7 @@ import ClpMaintenance from '../screens/ClpMaintenance'; // Imported the new CLP 
 import DashboardHome from '../screens/DashboardHome';
 import Logs from '../screens/Logs';
 import ManageMembers from '../screens/ManageMembers';
+import Materials from '../screens/Materials';
 import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
@@ -58,6 +59,7 @@ const NAV_ITEMS = [
   { key: 'pfoReports', label: 'PFO Reports', icon: 'trending-up-outline' },
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
+  { key: 'materials', label: 'Materials', icon: 'folder-open-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
@@ -93,6 +95,7 @@ const DEFAULT_MOBILE_TABS = [
   { key: 'members', label: 'Directory', icon: 'people-outline', activeIcon: 'people' },
   { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
   { key: 'clp', label: 'CLP', icon: 'construct-outline', activeIcon: 'construct' },
+  { key: 'materials', label: 'Materials', icon: 'folder-open-outline', activeIcon: 'folder-open' },
 ];
 
 const MODERATOR_MOBILE_TABS = [
@@ -107,6 +110,7 @@ const MODERATOR_MOBILE_TABS = [
   },
   { key: 'memberChangeQueue', label: 'Change Request', icon: 'checkmark-done-outline', activeIcon: 'checkmark-done', badgeKey: 'memberChangeQueue' },
   { key: 'pfoGroup', label: 'PFO', icon: 'layers-outline', activeIcon: 'layers', children: PFO_CHILD_TABS },
+  { key: 'materials', label: 'Materials', icon: 'folder-open-outline', activeIcon: 'folder-open' },
 ];
 
 const ADMIN_MOBILE_TABS = [
@@ -120,6 +124,7 @@ const ADMIN_MOBILE_TABS = [
       { key: 'memberChangeQueue', label: 'Change Requests', icon: 'checkmark-done-outline' },
     ],
   },
+  { key: 'materials', label: 'Materials', icon: 'folder-open-outline', activeIcon: 'folder-open' },
   { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline', activeIcon: 'file-tray-full' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline', activeIcon: 'settings' },
 ];
@@ -942,6 +947,7 @@ export default function Page() {
           {effectiveTab === 'pfoReports' && canView('pfoReports') && <PfoReport />}
           {effectiveTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
           {effectiveTab === 'clp' && canView('clp') && <ClpMaintenance />}
+          {effectiveTab === 'materials' && canView('materials') && <Materials isAdmin={!!access?.isAdmin} />}
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}

@@ -13,6 +13,7 @@ export const ALL_PAGE_KEYS = [
   'pfoReports',
   'pfoStats',
   'clp',
+  'materials',
   'portalUsers',
   'logs',
   'memberChangeQueue',
