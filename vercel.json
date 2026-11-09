@@ -4,6 +4,10 @@
     "api/ogd/test-login.mjs": {
       "maxDuration": 240,
       "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "api/ogd/check-report.mjs": {
+      "maxDuration": 240,
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
     }
   }
 }

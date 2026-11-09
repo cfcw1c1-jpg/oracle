@@ -42,13 +42,14 @@ function snapshotPage(page) {
     const inputs = [...document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio])')]
       .filter(isVisible)
       .map((el) => ({ id: el.id, name: el.name, type: el.type, placeholder: el.placeholder }));
-    return { path: location.pathname, title: document.title, inputs, text: (document.body?.innerText || '').slice(0, 4000) };
+    const loginError = (document.getElementById('lblError')?.innerText || '').trim().slice(0, 200);
+    return { path: location.pathname, title: document.title, inputs, text: (document.body?.innerText || '').slice(0, 4000), loginError };
   });
 }
 
 // Waits for the page load a submit causes. A postback that does not navigate
 // simply runs out the timeout and is then inspected as-is.
-async function submitAndSettle(page, submit) {
+export async function submitAndSettle(page, submit) {
   const loaded = page.waitForEvent('load', { timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
   await submit();
   await loaded;
@@ -73,9 +74,10 @@ async function findOtpSubmitButton(page) {
   return fallback;
 }
 
-// Resolves to { otpRequired } when OGD reaches its signed-in page and throws
-// AutomationFailure otherwise. readOtp({ sinceEpochSeconds }) supplies the OTP.
-export async function loginToOgd({ browser, username, password, readOtp, loginUrl = OGD_LOGIN_URL }) {
+// Resolves to { otpRequired, afterLoginResult } when OGD reaches its signed-in
+// page and throws AutomationFailure otherwise. readOtp({ sinceEpochSeconds })
+// supplies the OTP; the optional afterLogin(page) runs on the signed-in page.
+export async function loginToOgd({ browser, username, password, readOtp, afterLogin, loginUrl = OGD_LOGIN_URL }) {
   const context = await browser.newContext();
   const page = await context.newPage();
   let dialogMessage = null;
@@ -101,9 +103,10 @@ export async function loginToOgd({ browser, username, password, readOtp, loginUr
   const afterPassword = await snapshotPage(page);
   const firstStep = classifyPage(afterPassword);
 
-  if (firstStep.state === 'connected') return { otpRequired: false };
+  if (firstStep.state === 'connected') return { otpRequired: false, afterLoginResult: await afterLogin?.(page) };
   if (firstStep.state === 'login') {
-    throw new AutomationFailure('ogd_bad_credentials', dialogMessage || 'OGD returned to its login form after the username and password were submitted.');
+    const reason = afterPassword.loginError || dialogMessage;
+    throw new AutomationFailure('ogd_bad_credentials', reason ? `OGD says: ${reason}` : 'OGD returned to its login form without giving a reason.');
   }
   if (firstStep.state === 'unexpected') throw new AutomationFailure('unexpected_page', describePage(afterPassword));
 
@@ -117,7 +120,7 @@ export async function loginToOgd({ browser, username, password, readOtp, loginUr
 
   const afterOtp = await snapshotPage(page);
   const finalStep = classifyPage(afterOtp);
-  if (finalStep.state === 'connected') return { otpRequired: true };
+  if (finalStep.state === 'connected') return { otpRequired: true, afterLoginResult: await afterLogin?.(page) };
   if (finalStep.state === 'otp' || finalStep.state === 'login') {
     throw new AutomationFailure('otp_rejected', dialogMessage || 'OGD did not accept the code from the email.');
   }

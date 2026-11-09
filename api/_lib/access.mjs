@@ -6,6 +6,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://efelttlcyjfsvpxwmwjd.s
 export const SCOPES = {
   accounts: { pageKey: 'ogdAccounts', credential: 'ogd' },
   sector: { pageKey: 'ogdChapters', credential: 'gmail' },
+  reports: { pageKey: 'monthlyPastoralReports', credential: null },
 };
 
 export class HttpError extends Error {

@@ -16,6 +16,7 @@ export const POST = route(async (request) => {
   if (!chapters.some((chapter) => chapter.areaId === areaId)) throw new HttpError(403, 'You cannot manage this chapter.');
 
   const kind = scope.credential;
+  if (!kind) throw new HttpError(400, 'Unknown scope.');
   const identifier = typeof body.identifier === 'string' ? body.identifier.trim() : '';
   const rawPassword = typeof body.password === 'string' ? body.password : '';
   const password = kind === 'gmail' ? rawPassword.replace(/\s/g, '') : rawPassword;

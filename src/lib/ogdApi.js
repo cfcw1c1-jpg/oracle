@@ -32,6 +32,14 @@ export function saveOgdCredential({ scope, areaId, identifier, password }) {
   return request('/api/ogd/credentials', { method: 'POST', body: JSON.stringify({ scope, areaId, identifier, password }) });
 }
 
+export function fetchPastoralReports() {
+  return request('/api/ogd/reports');
+}
+
+export function checkPastoralReport({ areaId }) {
+  return request('/api/ogd/check-report', { method: 'POST', body: JSON.stringify({ areaId }) });
+}
+
 export function runOgdTestLogin({ scope, areaId }) {
   return request('/api/ogd/test-login', { method: 'POST', body: JSON.stringify({ scope, areaId }) });
 }

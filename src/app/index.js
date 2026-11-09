@@ -38,8 +38,9 @@ import Materials from '../screens/Materials';
 import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
+import MonthlyPastoralReports from '../screens/MonthlyPastoralReports';
 import MyChangeRequests from '../screens/MyChangeRequests';
-import OgdConnections from '../screens/OgdConnections';
+import { OgdAccountsPage } from '../screens/OgdConnections';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
@@ -62,7 +63,8 @@ const NAV_ITEMS = [
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
   { key: 'materials', label: 'Materials', icon: 'folder-open-outline' },
   { key: 'ogdAccounts', label: 'OGD Accounts', icon: 'key-outline' },
-  { key: 'ogdChapters', label: 'Sector', icon: 'mail-outline' },
+  { key: 'ogdChapters', label: 'OGD Accounts', icon: 'key-outline' },
+  { key: 'monthlyPastoralReports', label: 'Monthly Pastoral Reports', icon: 'document-text-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
@@ -810,7 +812,11 @@ export default function Page() {
   const isLargeScreen = screenWidth >= 768; // Desktop / Tablet breakpoint
 
   const allowedPageKeys = new Set(access?.allowedPages || []);
-  const visibleNavItems = NAV_ITEMS.filter((item) => allowedPageKeys.has(item.key));
+  // ogdAccounts and ogdChapters are one screen, so a role holding both
+  // sees a single OGD Accounts menu item.
+  const visibleNavItems = NAV_ITEMS.filter((item) => (
+    allowedPageKeys.has(item.key) && !(item.key === 'ogdChapters' && allowedPageKeys.has('ogdAccounts'))
+  ));
   const canView = (pageKey) => allowedPageKeys.has(pageKey);
   const headerPortalLabel = access?.roleName ? `${access.roleName.toUpperCase()} PORTAL` : 'MEMBERS PORTAL';
 
@@ -951,8 +957,10 @@ export default function Page() {
           {effectiveTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
           {effectiveTab === 'clp' && canView('clp') && <ClpMaintenance />}
           {effectiveTab === 'materials' && canView('materials') && <Materials isAdmin={!!access?.isAdmin} />}
-          {effectiveTab === 'ogdAccounts' && canView('ogdAccounts') && <OgdConnections key="accounts" scope="accounts" />}
-          {effectiveTab === 'ogdChapters' && canView('ogdChapters') && <OgdConnections key="sector" scope="sector" />}
+          {(effectiveTab === 'ogdAccounts' || effectiveTab === 'ogdChapters') && canView(effectiveTab) && (
+            <OgdAccountsPage scopes={[canView('ogdAccounts') && 'accounts', canView('ogdChapters') && 'sector'].filter(Boolean)} />
+          )}
+          {effectiveTab === 'monthlyPastoralReports' && canView('monthlyPastoralReports') && <MonthlyPastoralReports />}
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}

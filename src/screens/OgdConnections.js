@@ -33,7 +33,7 @@ const MODE_COPY = {
     maxPassword: 50,
   },
   sector: {
-    title: 'Sector',
+    title: 'OGD Accounts',
     subtitle: "Assign each chapter's Gmail account and check whether it can sign in to OGD.",
     identifierColumn: 'Gmail',
     identifierLabel: 'Gmail address',
@@ -54,8 +54,8 @@ const STATUS_STYLES = {
   idle: { label: 'Not tested', color: '#475569', bg: '#f1f5f9' },
 };
 
-const FAILURE_MESSAGES = {
-  ogd_bad_credentials: 'OGD rejected the username or password.',
+export const FAILURE_MESSAGES = {
+  ogd_bad_credentials: 'OGD did not accept this login.',
   otp_rejected: 'OGD did not accept the emailed code.',
   otp_not_found: 'No OTP email reached this Gmail in time.',
   gmail_bad_password: 'Google rejected this Gmail address and App Password. Check them, or create a new App Password.',
@@ -63,9 +63,10 @@ const FAILURE_MESSAGES = {
   unexpected_page: 'OGD showed a page the automation does not recognize.',
   run_interrupted: 'The last login did not finish. Please try again.',
   automation_error: 'The automated browser hit an error.',
+  report_page_unexpected: 'Signed in, but could not read the Pastoral Report page.',
 };
 
-function formatDateTime(value) {
+export function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : 'Never';
 }
 
@@ -74,7 +75,7 @@ function setupLabel(row, copy) {
   return row.otherConfigured ? 'Ready' : copy.missingOther;
 }
 
-function compareValues(a, b) {
+export function compareValues(a, b) {
   return String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
 }
 
@@ -151,7 +152,7 @@ function AppPasswordGuide() {
   );
 }
 
-function SortHeader({ columns, sort, onSort, isWide }) {
+export function SortHeader({ columns, sort, onSort, isWide, actionsWidth = 170 }) {
   return (
     <View style={isWide ? styles.headerRow : styles.sortChipRow}>
       {columns.map((column) => {
@@ -169,7 +170,7 @@ function SortHeader({ columns, sort, onSort, isWide }) {
           </TouchableOpacity>
         );
       })}
-      {isWide && <View style={styles.actionsHeader}><Text style={styles.headerText}>Actions</Text></View>}
+      {isWide && <View style={{ width: actionsWidth }}><Text style={styles.headerText}>Actions</Text></View>}
     </View>
   );
 }
@@ -284,6 +285,34 @@ function CredentialModal({ row, scope, copy, onClose, onSaved }) {
         </View>
       </View>
     </Modal>
+  );
+}
+
+const TAB_LABELS = { accounts: 'OGD Login', sector: 'Gmail' };
+
+// One menu item for every role. A role holding both pages, such as Admin,
+// switches between them here; other roles see just their own.
+export function OgdAccountsPage({ scopes }) {
+  const [activeScope, setActiveScope] = useState(scopes[0]);
+  return (
+    <View style={styles.screen}>
+      {scopes.length > 1 && (
+        <View style={styles.tabRow}>
+          {scopes.map((scope) => (
+            <TouchableOpacity
+              key={scope}
+              onPress={() => setActiveScope(scope)}
+              style={[styles.tab, scope === activeScope && styles.tabActive]}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: scope === activeScope }}
+            >
+              <Text style={[styles.tabText, scope === activeScope && styles.tabTextActive]}>{TAB_LABELS[scope]}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      <OgdConnections key={activeScope} scope={activeScope} />
+    </View>
   );
 }
 
@@ -454,6 +483,11 @@ export default function OgdConnections({ scope }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  tabRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 16 },
+  tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#f1f5f9' },
+  tabActive: { backgroundColor: '#2563eb' },
+  tabText: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  tabTextActive: { color: '#fff' },
   content: { padding: 16, paddingBottom: 40 },
   title: { fontSize: 22, fontWeight: '800', color: '#002060' },
   subtitle: { fontSize: 13, color: '#64748b', marginTop: 4, marginBottom: 14 },
@@ -474,7 +508,6 @@ const styles = StyleSheet.create({
   headerCell: { flexDirection: 'row', alignItems: 'center' },
   headerText: { fontSize: 11, fontWeight: '700', color: '#475569' },
   sortIcon: { marginLeft: 3 },
-  actionsHeader: { width: 170 },
   sortChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 12 },
   sortChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: '#f1f5f9' },
   sortChipActive: { backgroundColor: '#dbeafe' },

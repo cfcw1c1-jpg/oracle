@@ -16,6 +16,7 @@ export const ALL_PAGE_KEYS = [
   'materials',
   'ogdAccounts',
   'ogdChapters',
+  'monthlyPastoralReports',
   'portalUsers',
   'logs',
   'memberChangeQueue',

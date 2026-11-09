@@ -1,4 +1,4 @@
-import { authorize, fetchAllRows, route } from '../_lib/access.mjs';
+import { authorize, fetchAllRows, HttpError, route } from '../_lib/access.mjs';
 
 // A run this old has outlived the function that started it.
 const STALE_RUN_MS = 5 * 60 * 1000;
@@ -8,6 +8,7 @@ const STALE_RUN_MS = 5 * 60 * 1000;
 export const GET = route(async (request) => {
   const scopeName = new URL(request.url).searchParams.get('scope');
   const { db, scope, chapters } = await authorize(request, scopeName);
+  if (!scope.credential) throw new HttpError(400, 'Unknown scope.');
 
   const rows = await fetchAllRows(() =>
     db
