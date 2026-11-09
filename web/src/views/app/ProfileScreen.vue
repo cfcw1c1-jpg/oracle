@@ -136,5 +136,5 @@ onMounted(loadUser);
 .info { margin: 0; }
 .info div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .info dt { color: var(--muted); }
-.info dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.info dd { margin: 0; font-weight: var(--fw-medium); text-align: right; overflow-wrap: anywhere; }
 </style>

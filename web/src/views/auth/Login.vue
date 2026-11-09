@@ -82,15 +82,15 @@ async function handleForgotPassword() {
 .auth-mark { width: 84px; height: 84px; border-radius: 22px; background: var(--primary); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
 .auth-mark img { width: 48px; height: 42px; object-fit: contain; }
 .auth-title { font-size: 34px; font-weight: 700; letter-spacing: 0.1em; }
-.auth-sub { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; color: var(--muted); margin-top: 6px; }
+.auth-sub { font-size: 12px; font-weight: var(--fw-medium); letter-spacing: 0.16em; color: var(--muted); margin-top: 6px; }
 .auth-divider { width: 1px; align-self: stretch; background: var(--line); margin: 0 48px; }
 .auth-form { flex: 1; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.auth-heading { font-size: 24px; font-weight: 650; margin-bottom: 6px; }
+.auth-heading { font-size: 24px; font-weight: var(--fw-heading); margin-bottom: 6px; }
 .auth-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
 .auth-forgot { border: 0; background: none; padding: 0; font-size: 13px; color: var(--muted); }
-.auth-go { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 80px; border: 0; background: var(--primary); color: var(--primary-ink); border-radius: var(--radius-sm); padding: 9px 14px; font-weight: 650; }
+.auth-go { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 80px; border: 0; background: var(--primary); color: var(--primary-ink); border-radius: var(--radius-sm); padding: 9px 14px; font-weight: var(--fw-heading); }
 .spinner.on-go { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; }
-.auth-privacy { margin-top: 24px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.auth-privacy { margin-top: 24px; font-size: 12px; font-weight: var(--fw-medium); color: var(--muted); }
 
 /* Phones keep the existing navy sign-in screen. */
 @media (max-width: 767.98px) {

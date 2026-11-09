@@ -67,7 +67,7 @@ const SECTIONS = [
 <style scoped>
 .back { border: 0; background: none; color: inherit; padding: 2px; display: flex; }
 .policy { display: flex; flex-direction: column; gap: 14px; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
-h2 { font-size: 14.5px; font-weight: 650; color: var(--ink); margin-bottom: 6px; }
+h2 { font-size: 14.5px; font-weight: var(--fw-heading); color: var(--ink); margin-bottom: 6px; }
 ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 .email { padding: 3px 0; }
 </style>

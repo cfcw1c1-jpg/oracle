@@ -20,7 +20,7 @@ defineProps({ diff: { type: Array, required: true } });
 <style scoped>
 .diff { display: grid; gap: 6px; font-size: 12px; }
 .diff-row { display: grid; grid-template-columns: minmax(90px, 200px) 1fr auto 1fr; gap: 8px; align-items: center; }
-.diff-key { font-weight: 600; color: var(--ink); }
+.diff-key { font-weight: var(--fw-medium); color: var(--ink); }
 .diff-from { color: var(--danger); overflow-wrap: anywhere; }
 .diff-to { color: var(--success); overflow-wrap: anywhere; }
 @media (max-width: 560px) { .diff-row { grid-template-columns: 1fr auto 1fr; } .diff-key { grid-column: 1 / -1; } }

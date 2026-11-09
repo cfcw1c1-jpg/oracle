@@ -206,10 +206,10 @@ onMounted(load);
 
 <style scoped>
 .guide { background: var(--accent-soft); box-shadow: none; }
-.guide-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 16px; border: 0; background: none; font-size: 13.5px; font-weight: 650; text-align: left; }
+.guide-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 16px; border: 0; background: none; font-size: 13.5px; font-weight: var(--fw-heading); text-align: left; }
 .guide-body { padding: 0 16px 14px; font-size: 13px; color: var(--ink-2); display: grid; gap: 8px; }
 ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
-.guide-body a { display: block; font-weight: 600; }
+.guide-body a { display: block; font-weight: var(--fw-medium); }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
 .actions { justify-content: flex-end; }

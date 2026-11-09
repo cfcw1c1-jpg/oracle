@@ -136,7 +136,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.summary { font-size: 15px; font-weight: 650; }
+.summary { font-size: 15px; font-weight: var(--fw-heading); }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
 </style>

@@ -150,10 +150,10 @@ table { border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
 th, td { border-bottom: 1px solid var(--line); background: var(--surface); }
 thead th { position: sticky; top: 0; z-index: 2; }
 thead tr:nth-child(2) th { top: 31px; }
-.group { height: 31px; padding: 0 8px; background: var(--surface-soft); font-size: 11px; font-weight: 600; text-align: left; max-width: 0; }
+.group { height: 31px; padding: 0 8px; background: var(--surface-soft); font-size: 11px; font-weight: var(--fw-medium); text-align: left; max-width: 0; }
 .group.alt { background: var(--accent-soft); }
 .module { width: 106px; min-width: 106px; padding: 6px; text-align: center; font-weight: 500; vertical-align: top; }
-.module-code { display: block; font-weight: 600; font-size: 11.5px; }
+.module-code { display: block; font-weight: var(--fw-medium); font-size: 11.5px; }
 .module-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 10px; color: var(--muted); }
 .sticky { position: sticky; z-index: 3; }
 thead .sticky { z-index: 5; }

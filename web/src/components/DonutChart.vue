@@ -67,7 +67,7 @@ const arcs = computed(() => {
 .donut-track { fill: none; stroke: var(--surface-soft); stroke-width: 12; }
 .donut-arc { fill: none; stroke-width: 12; }
 .donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.donut-value { font-size: 22px; font-weight: 600; }
+.donut-value { font-size: 22px; font-weight: var(--fw-medium); }
 .donut-label { font-size: 10.5px; color: var(--muted); max-width: 90px; }
 .legend { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
 .legend li { display: flex; align-items: center; gap: 9px; }

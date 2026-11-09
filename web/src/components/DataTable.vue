@@ -151,7 +151,7 @@ tr.expanded td { background: var(--surface-hover); }
 .dt-sizes, .dt-pages { gap: 3px; }
 .dt-sizes { margin-right: 6px; }
 .dt-sizes .muted { margin-right: 4px; }
-.chip { display: inline-flex; align-items: center; justify-content: center; min-width: 27px; height: 27px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; justify-content: center; min-width: 27px; height: 27px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: var(--fw-medium); }
 .chip:hover:not(:disabled) { background: var(--surface-soft); }
 .chip.on { background: var(--primary); color: var(--primary-ink); }
 

@@ -25,6 +25,6 @@ defineEmits(['select']);
 button.stat:hover { border-color: var(--accent); }
 .stat.active { border-color: var(--primary); }
 .stat-label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
-.stat-value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; }
+.stat-value { font-size: 26px; font-weight: var(--fw-medium); letter-spacing: -0.02em; margin-top: 8px; }
 .stat-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
 </style>

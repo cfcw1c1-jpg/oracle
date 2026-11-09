@@ -242,7 +242,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 
 <style scoped>
 .summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
-.summary-value { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+.summary-value { font-size: 30px; font-weight: var(--fw-medium); letter-spacing: -0.02em; }
 .filters { align-items: flex-start; }
 .filters .select { min-width: 190px; }
 .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }

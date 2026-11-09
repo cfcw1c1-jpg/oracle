@@ -239,7 +239,7 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 <style scoped>
 .hero { display: flex; align-items: center; gap: 14px; background: var(--accent-soft); border-radius: var(--radius-lg); padding: 24px; }
 .hero-date { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
-.hero-title { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin-top: 8px; }
+.hero-title { font-size: 24px; font-weight: var(--fw-medium); letter-spacing: -0.02em; margin-top: 8px; }
 .hero-sub { color: var(--ink-2); font-size: 13px; margin-top: 3px; }
 .hero-mark { width: 52px; height: 52px; border-radius: 14px; background: var(--primary); flex: none; display: flex; align-items: center; justify-content: center; }
 .hero-mark img { width: 31px; height: 27px; object-fit: contain; }
@@ -253,7 +253,7 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 .avatar.lg { width: 54px; height: 54px; font-size: 16px; }
 .facts { display: flex; gap: 30px; margin: 16px 0 0; }
 .facts dt { font-size: 11.5px; color: var(--muted); }
-.facts dd { margin: 2px 0 0; font-weight: 600; font-size: 13px; }
+.facts dd { margin: 2px 0 0; font-weight: var(--fw-medium); font-size: 13px; }
 .gospel { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
 .agenda { display: flex; align-items: flex-start; gap: 11px; }
 .agenda-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex: none; }

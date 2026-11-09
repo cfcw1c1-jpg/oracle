@@ -39,7 +39,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKey));
 .backdrop { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(30, 26, 20, 0.42); }
 .modal { width: 100%; max-height: 90vh; display: flex; flex-direction: column; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); }
 .modal-head { display: flex; align-items: flex-start; gap: 8px; padding: 18px 20px 6px; }
-.modal-title { font-size: 16px; font-weight: 650; }
+.modal-title { font-size: 16px; font-weight: var(--fw-heading); }
 .modal-body { padding: 12px 20px 18px; overflow-y: auto; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px 18px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 </style>
