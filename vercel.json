@@ -1,3 +1,9 @@
 {
-  "cleanUrls": true
+  "cleanUrls": true,
+  "functions": {
+    "api/ogd/test-login.mjs": {
+      "maxDuration": 240,
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    }
+  }
 }

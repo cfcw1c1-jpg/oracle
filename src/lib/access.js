@@ -14,6 +14,8 @@ export const ALL_PAGE_KEYS = [
   'pfoStats',
   'clp',
   'materials',
+  'ogdAccounts',
+  'ogdChapters',
   'portalUsers',
   'logs',
   'memberChangeQueue',

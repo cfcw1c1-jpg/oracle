@@ -39,6 +39,7 @@ import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
 import MyChangeRequests from '../screens/MyChangeRequests';
+import OgdConnections from '../screens/OgdConnections';
 import PfoList from '../screens/PfoList';
 import PfoReport from '../screens/PfoReports';
 import PfoStatGenerator from '../screens/PfoStatGenerator';
@@ -60,6 +61,8 @@ const NAV_ITEMS = [
   { key: 'pfoStats', label: 'Formation Stats', icon: 'analytics-outline' },
   { key: 'clp', label: 'CLP Maintenance', icon: 'construct-outline' },
   { key: 'materials', label: 'Materials', icon: 'folder-open-outline' },
+  { key: 'ogdAccounts', label: 'OGD Accounts', icon: 'key-outline' },
+  { key: 'ogdChapters', label: 'Sector', icon: 'mail-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
@@ -948,6 +951,8 @@ export default function Page() {
           {effectiveTab === 'pfoStats' && canView('pfoStats') && <PfoStatGenerator />}
           {effectiveTab === 'clp' && canView('clp') && <ClpMaintenance />}
           {effectiveTab === 'materials' && canView('materials') && <Materials isAdmin={!!access?.isAdmin} />}
+          {effectiveTab === 'ogdAccounts' && canView('ogdAccounts') && <OgdConnections key="accounts" scope="accounts" />}
+          {effectiveTab === 'ogdChapters' && canView('ogdChapters') && <OgdConnections key="sector" scope="sector" />}
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}
