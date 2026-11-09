@@ -7,9 +7,9 @@ const OTP_WAIT_MS = 90000;
 const OTP_POLL_MS = 5000;
 const MAX_MESSAGES_PER_POLL = 5;
 
-// Only messages whose subject or sender match are downloaded, so unrelated
-// mail in the account is never read.
-const OTP_MESSAGE_PATTERN = /\bOTP\b|one[\s-]?time|verif|\bcode\b|passcode|\blog\s?in\b|\bOGD\b|global data|\bCFC\b|couples for christ/i;
+// OGD sends its OTP emails from this address. Only its messages are opened,
+// so unrelated mail in the account is never read.
+const OTP_SENDER = 'postmaster@cfcglobaldata.com';
 const DIGIT_CODE = String.raw`(?<![\d-])(?!(?:19|20)\d{2}(?!\d))(\d{4,8})(?![\d-])`;
 const LABELLED_CODE_PATTERNS = [
   new RegExp(String.raw`(?:\bOTP\b|one[\s-]?time\s+(?:pass\s?code|password|pin|code))[\s\S]{0,80}?${DIGIT_CODE}`, 'i'),
@@ -33,9 +33,8 @@ function createGmailClient({ address, password }) {
   return new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: address, pass: password }, logger: false });
 }
 
-function describeMessage({ envelope }) {
-  const sender = (envelope?.from ?? []).map((party) => `${party.name ?? ''} ${party.address ?? ''}`).join(' ');
-  return `${envelope?.subject ?? ''} ${sender}`;
+function isFromOtpSender({ envelope }) {
+  return (envelope?.from ?? []).some((party) => party.address?.toLowerCase() === OTP_SENDER);
 }
 
 // All Mail covers the inbox and any label; Spam is separate in Gmail and is
@@ -51,13 +50,13 @@ async function readOtpFromMailbox(client, path, sinceEpochSeconds) {
   try {
     // Gmail's after: operator takes epoch seconds, so an older OTP still in
     // the mailbox is ignored regardless of the account's timezone.
-    const uids = await client.search({ gmraw: `after:${sinceEpochSeconds}` }, { uid: true });
+    const uids = await client.search({ gmraw: `from:${OTP_SENDER} after:${sinceEpochSeconds}` }, { uid: true });
     if (!uids || uids.length === 0) return null;
 
     const headers = await client.fetchAll(uids.slice(-MAX_MESSAGES_PER_POLL).join(','), { uid: true, envelope: true, internalDate: true }, { uid: true });
     const candidates = headers
       .filter((message) => new Date(message.internalDate).getTime() / 1000 >= sinceEpochSeconds)
-      .filter((message) => OTP_MESSAGE_PATTERN.test(describeMessage(message)))
+      .filter(isFromOtpSender)
       .sort((a, b) => new Date(b.internalDate) - new Date(a.internalDate));
 
     for (const candidate of candidates) {
