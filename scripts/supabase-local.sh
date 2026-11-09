@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the Supabase CLI with this project's own credentials from
-# .env.supabase.local, without touching the global `supabase login`.
+# supabase/.env.cli, without touching the global `supabase login`.
 #
 #   ./scripts/supabase-local.sh projects list
 #   ./scripts/supabase-local.sh functions deploy send-message-notification
@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${SUPABASE_ENV_FILE:-$ROOT/.env.supabase.local}"
+ENV_FILE="${SUPABASE_ENV_FILE:-$ROOT/supabase/.env.cli}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing $ENV_FILE" >&2

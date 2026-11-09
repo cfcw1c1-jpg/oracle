@@ -123,8 +123,13 @@ async function fetchEvangelizoField(dateStr, type, content) {
 // Shared by the gender and pastoral-service breakdown cards below.
 function DonutChart({ segments, size = 132, thickness = 16 }) {
   const total = segments.reduce((sum, s) => sum + s.count, 0);
-  const dominant = segments.reduce((a, b) => (b.count > a.count ? b : a), segments[0]);
-  const dominantPct = total > 0 ? Math.round((dominant.count / total) * 100) : 0;
+  // With no data (e.g. an area whose members were all removed, or a filter
+  // that drops every zero-count segment) there's no dominant segment to
+  // read -- show a neutral empty ring instead of crashing on segments[0].
+  const hasData = total > 0;
+  const dominant = hasData ? segments.reduce((a, b) => (b.count > a.count ? b : a)) : null;
+  const centerValue = hasData ? `${Math.round((dominant.count / total) * 100)}%` : '—';
+  const centerLabel = hasData ? (dominant.label || '').toUpperCase() : 'NO DATA';
 
   const center = size / 2;
   const radius = (size - thickness) / 2;
@@ -136,7 +141,7 @@ function DonutChart({ segments, size = 132, thickness = 16 }) {
     <View style={{ width: size, height: size }}>
       <Svg width={size} height={size}>
         <Circle cx={center} cy={center} r={radius} stroke="#eef2f7" strokeWidth={thickness} fill="none" />
-        {total > 0 &&
+        {hasData &&
           segments.map((segment) => {
             const share = segment.count / total;
             const arcLength = share * circumference;
@@ -160,8 +165,8 @@ function DonutChart({ segments, size = 132, thickness = 16 }) {
           })}
       </Svg>
       <View style={styles.donutCenterOverlay} pointerEvents="none">
-        <Text style={styles.donutPercent}>{dominantPct}%</Text>
-        <Text style={styles.donutLabel}>{(dominant.label || '').toUpperCase()}</Text>
+        <Text style={styles.donutPercent}>{centerValue}</Text>
+        <Text style={styles.donutLabel}>{centerLabel}</Text>
       </View>
     </View>
   );
@@ -440,6 +445,9 @@ export default function DashboardHome({ onNavigate, roleName }) {
             <View style={styles.donutSection}>
               <DonutChart segments={pastoralSegments} />
               <View style={styles.donutBreakdown}>
+                {pastoralSegments.length === 0 && (
+                  <Text style={styles.searchEmptyText}>No active members yet.</Text>
+                )}
                 {pastoralSegments.map((segment) => (
                   <View key={segment.label} style={styles.donutBreakdownRow}>
                     <View style={[styles.donutDot, { backgroundColor: segment.color }]} />

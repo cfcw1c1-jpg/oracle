@@ -82,6 +82,10 @@ function emptyForm() {
     AreaName: '',
     NameOfHouseholdHead: '',
     PastoralService: '',
+    SpouseName: '',
+    Phone: '',
+    MobileNo: '',
+    Email: '',
   };
 }
 
@@ -95,7 +99,43 @@ function formFromMember(m) {
     AreaName: m.AreaName || '',
     NameOfHouseholdHead: m.NameOfHouseholdHead || '',
     PastoralService: m.PastoralService || '',
+    SpouseName: m.SpouseName || '',
+    Phone: m.Phone || '',
+    MobileNo: m.MobileNo || '',
+    Email: m.Email || '',
   };
+}
+
+function TextField({ label, value, onChangeText, placeholder, keyboardType, autoCapitalize }) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#94a3b8"
+        autoCorrect={false}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+      />
+    </View>
+  );
+}
+
+function ContactLines({ member }) {
+  const phone = member.MobileNo || member.Phone;
+  if (!phone && !member.Email && !member.SpouseName) {
+    return <Text style={styles.idText}>No contact info</Text>;
+  }
+  return (
+    <View>
+      {phone ? <Text style={styles.householdText} numberOfLines={1}>{phone}</Text> : null}
+      {member.Email ? <Text style={styles.idText} numberOfLines={1}>{member.Email}</Text> : null}
+      {member.SpouseName ? <Text style={styles.idText} numberOfLines={1}>Spouse: {member.SpouseName}</Text> : null}
+    </View>
+  );
 }
 
 function getInitials(firstName, lastName) {
@@ -241,11 +281,12 @@ export default function ManageMembers() {
       const last = (m.Lastname || '').toLowerCase();
       const id = (m.MemberIDNo || '').toString().toLowerCase();
       const area = (m.AreaName || '').toLowerCase();
+      const contact = [m.Email, m.MobileNo, m.Phone, m.SpouseName].filter(Boolean).join(' ').toLowerCase();
       // Matches the raw code (e.g. "CL") and its spelled-out label (e.g.
       // "Chapter Leader") -- getServiceLabel returns "CODE — Label", so
       // one .includes() check covers both.
       const pastoralService = getServiceLabel(m.PastoralService || 'MEMBER').toLowerCase();
-      return first.includes(q) || last.includes(q) || id.includes(q) || area.includes(q) || pastoralService.includes(q);
+      return first.includes(q) || last.includes(q) || id.includes(q) || area.includes(q) || pastoralService.includes(q) || contact.includes(q);
     });
   }, [members, searchQuery]);
 
@@ -303,6 +344,10 @@ export default function ManageMembers() {
         AreaName: form.AreaName.trim() || null,
         NameOfHouseholdHead: form.NameOfHouseholdHead.trim() || null,
         PastoralService: form.PastoralService.trim() || null,
+        SpouseName: form.SpouseName.trim() || null,
+        Phone: form.Phone.trim() || null,
+        MobileNo: form.MobileNo.trim() || null,
+        Email: form.Email.trim() || null,
       };
 
       if (modalMode === 'create') {
@@ -373,6 +418,11 @@ export default function ManageMembers() {
         { key: 'AreaName', label: 'Area' },
         { key: 'NameOfHouseholdHead', label: 'Household Head' },
         { key: 'PastoralService', label: 'Pastoral Service' },
+        { key: 'SpouseName', label: 'Spouse' },
+        { key: 'MobileNo', label: 'Mobile' },
+        { key: 'Phone', label: 'Phone' },
+        { key: 'Email', label: 'Email' },
+        { key: 'SiteStatus', label: 'CFC Global Data Status' },
       ],
       filteredMembers
     );
@@ -417,6 +467,7 @@ export default function ManageMembers() {
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.headerText, styles.nameCol]}>NAME</Text>
             <Text style={[styles.headerText, styles.householdCol]}>HOUSEHOLD HEAD</Text>
+            <Text style={[styles.headerText, styles.contactCol]}>CONTACT</Text>
             <Text style={[styles.headerText, styles.genderCol]}>GENDER</Text>
             <Text style={[styles.headerText, styles.statusCol]}>STATUS</Text>
             <Text style={[styles.headerText, styles.roleCol]}>ROLE & AREA</Text>
@@ -460,6 +511,7 @@ export default function ManageMembers() {
                   </View>
 
                   <Text style={styles.householdText}>{item.NameOfHouseholdHead || 'N/A'} · {item.Gender || 'Gender N/A'}</Text>
+                  <ContactLines member={item} />
 
                   <View style={styles.narrowBadgeRow}>
                     <View style={[styles.statusBadge, { backgroundColor: getStatusColors(item.Status).bg, borderColor: getStatusColors(item.Status).border }]}>
@@ -486,6 +538,10 @@ export default function ManageMembers() {
 
                 <View style={[styles.cell, styles.householdCol]}>
                   <Text style={styles.householdText} numberOfLines={2}>{item.NameOfHouseholdHead || 'N/A'}</Text>
+                </View>
+
+                <View style={[styles.cell, styles.contactCol]}>
+                  <ContactLines member={item} />
                 </View>
 
                 <View style={[styles.cell, styles.genderCol]}>
@@ -629,6 +685,16 @@ export default function ManageMembers() {
                 />
               </View>
 
+              <View style={[styles.row, { zIndex: 10 }]}>
+                <TextField label="Spouse" value={form.SpouseName} onChangeText={(v) => setField('SpouseName', v)} placeholder="Dela Cruz, Maria" />
+                <TextField label="Email" value={form.Email} onChangeText={(v) => setField('Email', v)} placeholder="name@example.com" keyboardType="email-address" autoCapitalize="none" />
+              </View>
+
+              <View style={[styles.row, { zIndex: 5 }]}>
+                <TextField label="Mobile #" value={form.MobileNo} onChangeText={(v) => setField('MobileNo', v)} placeholder="09XXXXXXXXX" keyboardType="phone-pad" />
+                <TextField label="Phone" value={form.Phone} onChangeText={(v) => setField('Phone', v)} placeholder="Landline" keyboardType="phone-pad" />
+              </View>
+
               <View style={styles.modalActions}>
                 <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={closeModal} disabled={saving}>
                   <Text style={styles.btnTextCancel}>Cancel</Text>
@@ -682,6 +748,7 @@ const styles = StyleSheet.create({
 
   nameCol: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 160 },
   householdCol: { flexGrow: 1.4, flexShrink: 1, flexBasis: 0, minWidth: 140 },
+  contactCol: { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 170 },
   genderCol: { width: 80 },
   statusCol: { width: 110 },
   roleCol: { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 },

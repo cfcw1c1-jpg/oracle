@@ -29,11 +29,12 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
 const CHECKBOX_COL = { width: 44 };
 const NAME_COL = { flexGrow: 2.2, flexShrink: 1, flexBasis: 0, minWidth: 200 };
 const HOUSEHOLD_COL = { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 };
+const CONTACT_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 190 };
 const GENDER_COL = { width: 120 };
 const STATUS_COL = { width: 130 };
 const ROLE_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 180 };
 const ACTIONS_COL = { width: 60 };
-const TABLE_MIN_WIDTH = 44 + 200 + 160 + 120 + 130 + 180 + 60;
+const TABLE_MIN_WIDTH = 44 + 200 + 160 + 190 + 120 + 130 + 180 + 60;
 
 function getInitials(firstName, lastName) {
   const first = (firstName || '').trim().charAt(0);
@@ -101,7 +102,43 @@ function formFromMember(m) {
     NameOfHouseholdHead: m.NameOfHouseholdHead || '',
     PastoralService: m.PastoralService || '',
     YearRegistered: m.YearRegistered != null ? String(m.YearRegistered) : '',
+    SpouseName: m.SpouseName || '',
+    MobileNo: m.MobileNo || '',
+    Phone: m.Phone || '',
+    Email: m.Email || '',
   };
+}
+
+function ContactLines({ member }) {
+  const phone = member.MobileNo || member.Phone;
+  if (!phone && !member.Email && !member.SpouseName) {
+    return <Text style={styles.idText}>No contact info</Text>;
+  }
+  return (
+    <View>
+      {phone ? <Text style={styles.householdText} numberOfLines={1}>{phone}</Text> : null}
+      {member.Email ? <Text style={styles.idText} numberOfLines={1}>{member.Email}</Text> : null}
+      {member.SpouseName ? <Text style={styles.idText} numberOfLines={1}>Spouse: {member.SpouseName}</Text> : null}
+    </View>
+  );
+}
+
+function TextField({ label, value, onChangeText, placeholder, keyboardType, autoCapitalize }) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#94a3b8"
+        autoCorrect={false}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+      />
+    </View>
+  );
 }
 
 // A small "value: X ▾" pressable that opens a single-select list of options.
@@ -458,6 +495,10 @@ export default function MembersList({ roleName }) {
         NameOfHouseholdHead: editForm.NameOfHouseholdHead.trim() || null,
         PastoralService: editForm.PastoralService || null,
         YearRegistered: yearRegistered,
+        SpouseName: editForm.SpouseName.trim() || null,
+        MobileNo: editForm.MobileNo.trim() || null,
+        Phone: editForm.Phone.trim() || null,
+        Email: editForm.Email.trim() || null,
       };
 
       // Only the fields that actually changed go into the request -- both so
@@ -540,7 +581,8 @@ export default function MembersList({ roleName }) {
       const first = member.Firstname?.toLowerCase() || '';
       const last = member.Lastname?.toLowerCase() || '';
       const idStr = member.MemberIDNo?.toString().toLowerCase() || '';
-      const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery);
+      const contact = [member.Email, member.MobileNo, member.Phone, member.SpouseName].filter(Boolean).join(' ').toLowerCase();
+      const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery) || contact.includes(cleanQuery);
       const matchesGender = genderFilter === 'All' || member.Gender === genderFilter;
       const matchesRole = roleFilter === 'All' || (member.PastoralService || 'MEMBER').trim() === roleFilter;
       // Prefix match (same convention as the Areas screen's member count and
@@ -803,6 +845,9 @@ export default function MembersList({ roleName }) {
               <View style={[styles.headerCell, HOUSEHOLD_COL]}>
                 <Text style={styles.headerText}>HOUSEHOLD HEAD</Text>
               </View>
+              <View style={[styles.headerCell, CONTACT_COL]}>
+                <Text style={styles.headerText}>CONTACT</Text>
+              </View>
               <View style={[styles.headerCell, GENDER_COL]}>
                 <Text style={styles.headerText}>GENDER</Text>
               </View>
@@ -855,6 +900,10 @@ export default function MembersList({ roleName }) {
 
                     <View style={[styles.cell, HOUSEHOLD_COL]}>
                       <Text style={styles.householdText} numberOfLines={2}>{item.NameOfHouseholdHead || 'N/A'}</Text>
+                    </View>
+
+                    <View style={[styles.cell, CONTACT_COL]}>
+                      <ContactLines member={item} />
                     </View>
 
                     <View style={[styles.cell, GENDER_COL]}>
@@ -1234,6 +1283,16 @@ export default function MembersList({ roleName }) {
                         maxLength={4}
                       />
                     </View>
+                  </View>
+
+                  <View style={styles.row}>
+                    <TextField label="Spouse" value={editForm.SpouseName} onChangeText={(v) => setEditField('SpouseName', v)} placeholder="Dela Cruz, Maria" />
+                    <TextField label="Email" value={editForm.Email} onChangeText={(v) => setEditField('Email', v)} placeholder="name@example.com" keyboardType="email-address" autoCapitalize="none" />
+                  </View>
+
+                  <View style={styles.row}>
+                    <TextField label="Mobile #" value={editForm.MobileNo} onChangeText={(v) => setEditField('MobileNo', v)} placeholder="09XXXXXXXXX" keyboardType="phone-pad" />
+                    <TextField label="Phone" value={editForm.Phone} onChangeText={(v) => setEditField('Phone', v)} placeholder="Landline" keyboardType="phone-pad" />
                   </View>
                 </>
               )}
