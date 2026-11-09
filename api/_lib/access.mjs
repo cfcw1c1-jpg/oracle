@@ -75,6 +75,15 @@ export function resolveChapters(areas, assignedAreaIds, isAdmin) {
     }));
 }
 
+// For routes open to every signed-in portal account.
+export async function requireUser(request) {
+  const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!token) throw new HttpError(401, 'Please sign in again.');
+  const { data, error } = await createAdminClient().auth.getUser(token);
+  if (error || !data?.user) throw new HttpError(401, 'Please sign in again.');
+  return data.user;
+}
+
 // Authenticates the bearer token and confirms the caller's role holds the
 // scope's page, then returns the chapters that caller can act on.
 export async function authorize(request, scopeName) {
