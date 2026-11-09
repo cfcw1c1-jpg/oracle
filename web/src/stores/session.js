@@ -174,9 +174,12 @@ export function startSession() {
   });
 
   const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    // The auth library also reports SIGNED_IN when a browser tab regains focus,
+    // so a sign-in only counts when nobody was signed in a moment ago.
+    const isNewSignIn = event === 'SIGNED_IN' && !sessionState.session;
     sessionState.session = session;
     sessionState.authChecked = true;
-    if (event === 'SIGNED_IN' && readyForSignIn && !sessionState.passwordRecovery) {
+    if (isNewSignIn && readyForSignIn && !sessionState.passwordRecovery) {
       sessionState.disclaimerVisible = true;
       sessionState.landOnAdminDashboard = true;
     }

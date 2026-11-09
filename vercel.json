@@ -7,6 +7,9 @@
       "destination": "/index.html"
     }
   ],
+  "regions": [
+    "sin1"
+  ],
   "functions": {
     "api/ogd/test-login.mjs": {
       "maxDuration": 240,
