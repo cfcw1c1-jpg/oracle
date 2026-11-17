@@ -1,6 +1,6 @@
 import { ROLE_LABELS } from './formation';
 
-export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, Gender, YearRegistered, Status, SpouseName, Phone, MobileNo, Email';
+export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, YearRegistered, Status, SpouseName, Phone, MobileNo, Email';
 export const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
 export const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
 export const STATUS_TONE = { Active: 'success', SOLD: 'warning', HANDMAID: 'accent' };
@@ -19,7 +19,6 @@ export function formFromMember(member = {}) {
     MemberIDNo: member.MemberIDNo || '',
     Lastname: member.Lastname || '',
     Firstname: member.Firstname || '',
-    Gender: member.Gender || '',
     Status: member.Status || 'Active',
     AreaName: member.AreaName || '',
     NameOfHouseholdHead: member.NameOfHouseholdHead || '',
@@ -46,7 +45,6 @@ export function payloadFromForm(form) {
     payload: {
       Lastname: lastname,
       Firstname: firstname,
-      Gender: form.Gender || null,
       Status: form.Status || 'Active',
       AreaName: form.AreaName.trim() || null,
       NameOfHouseholdHead: form.NameOfHouseholdHead.trim() || null,

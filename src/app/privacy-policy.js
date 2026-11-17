@@ -88,7 +88,7 @@ export default function PrivacyPolicy() {
               accounts, plus an optional profile photo.
             </Bullet>
             <Bullet>
-              <Text style={styles.bulletBold}>Membership records</Text> — name, Member ID, gender, status,
+              <Text style={styles.bulletBold}>Membership records</Text> — name, Member ID, status,
               Area/Chapter assignment, household head, year registered, and Pastoral Service role, as
               encoded by your Area's authorized portal accounts.
             </Bullet>

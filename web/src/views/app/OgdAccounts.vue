@@ -259,7 +259,7 @@ function progressLabel(row) {
 // old value in Oracle.
 
 const FIELD_LABELS = {
-  Lastname: 'Last name', Firstname: 'First name', Gender: 'Gender', Status: 'Status', SpouseName: 'Spouse',
+  Lastname: 'Last name', Firstname: 'First name', Status: 'Status', SpouseName: 'Spouse',
   Phone: 'Phone', MobileNo: 'Mobile #', Email: 'Email', PastoralService: 'Pastoral service', AreaName: 'Area',
   NameOfHouseholdHead: 'Household head', YearRegistered: 'Year registered',
 };

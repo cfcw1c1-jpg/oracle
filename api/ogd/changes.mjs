@@ -6,7 +6,7 @@ import { loadOpenChanges } from '../_lib/ogdChanges.mjs';
 //   discard  removes the change from the queue; Oracle keeps the new value
 //   revert   puts the old value back in Oracle and removes the change
 
-const REVERTIBLE = new Set(['Lastname', 'Firstname', 'Gender', 'Status', 'SpouseName', 'Phone', 'MobileNo', 'Email', 'PastoralService', 'AreaName', 'NameOfHouseholdHead', 'YearRegistered']);
+const REVERTIBLE = new Set(['Lastname', 'Firstname', 'Status', 'SpouseName', 'Phone', 'MobileNo', 'Email', 'PastoralService', 'AreaName', 'NameOfHouseholdHead', 'YearRegistered']);
 
 function missingTable(error) {
   return error?.code === 'PGRST205' || error?.code === '42P01';

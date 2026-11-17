@@ -23,7 +23,6 @@ const ACCENT_BLUE = '#2563eb';
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
 const NARROW_BREAKPOINT = 720;
 
-const GENDER_OPTIONS = ['Male', 'Female'];
 const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
 
 const STATUS_COLORS = {
@@ -77,7 +76,6 @@ function emptyForm() {
     MemberIDNo: '',
     Lastname: '',
     Firstname: '',
-    Gender: '',
     Status: 'Active',
     AreaName: '',
     NameOfHouseholdHead: '',
@@ -94,7 +92,6 @@ function formFromMember(m) {
     MemberIDNo: m.MemberIDNo || '',
     Lastname: m.Lastname || '',
     Firstname: m.Firstname || '',
-    Gender: m.Gender || '',
     Status: m.Status || 'Active',
     AreaName: m.AreaName || '',
     NameOfHouseholdHead: m.NameOfHouseholdHead || '',
@@ -339,7 +336,6 @@ export default function ManageMembers() {
       const payload = {
         Lastname: lastname,
         Firstname: firstname,
-        Gender: form.Gender || null,
         Status: form.Status || 'Active',
         AreaName: form.AreaName.trim() || null,
         NameOfHouseholdHead: form.NameOfHouseholdHead.trim() || null,
@@ -413,7 +409,6 @@ export default function ManageMembers() {
         { key: 'MemberIDNo', label: 'Member ID' },
         { key: 'Lastname', label: 'Last Name' },
         { key: 'Firstname', label: 'First Name' },
-        { key: 'Gender', label: 'Gender' },
         { key: 'Status', label: 'Status' },
         { key: 'AreaName', label: 'Area' },
         { key: 'NameOfHouseholdHead', label: 'Household Head' },
@@ -468,7 +463,6 @@ export default function ManageMembers() {
             <Text style={[styles.headerText, styles.nameCol]}>NAME</Text>
             <Text style={[styles.headerText, styles.householdCol]}>HOUSEHOLD HEAD</Text>
             <Text style={[styles.headerText, styles.contactCol]}>CONTACT</Text>
-            <Text style={[styles.headerText, styles.genderCol]}>GENDER</Text>
             <Text style={[styles.headerText, styles.statusCol]}>STATUS</Text>
             <Text style={[styles.headerText, styles.roleCol]}>ROLE & AREA</Text>
             <Text style={[styles.headerText, styles.actionsCol]}>ACTIONS</Text>
@@ -510,7 +504,7 @@ export default function ManageMembers() {
                     <View style={{ flexDirection: 'row', gap: 14 }}>{actions}</View>
                   </View>
 
-                  <Text style={styles.householdText}>{item.NameOfHouseholdHead || 'N/A'} · {item.Gender || 'Gender N/A'}</Text>
+                  <Text style={styles.householdText}>{item.NameOfHouseholdHead || 'N/A'}</Text>
                   <ContactLines member={item} />
 
                   <View style={styles.narrowBadgeRow}>
@@ -542,10 +536,6 @@ export default function ManageMembers() {
 
                 <View style={[styles.cell, styles.contactCol]}>
                   <ContactLines member={item} />
-                </View>
-
-                <View style={[styles.cell, styles.genderCol]}>
-                  <Text style={styles.plainCellText}>{item.Gender || 'N/A'}</Text>
                 </View>
 
                 <View style={[styles.cell, styles.statusCol]}>
@@ -637,24 +627,6 @@ export default function ManageMembers() {
               </View>
 
               <View style={[styles.row, { zIndex: 30 }]}>
-                <View style={styles.fieldWrap}>
-                  <Text style={styles.fieldLabel}>Gender</Text>
-                  <View style={styles.genderToggleRow}>
-                    {GENDER_OPTIONS.map((g) => {
-                      const active = form.Gender === g;
-                      return (
-                        <TouchableOpacity
-                          key={g}
-                          style={[styles.genderToggle, active && styles.genderToggleActive]}
-                          onPress={() => setField('Gender', active ? '' : g)}
-                        >
-                          <Text style={[styles.genderToggleText, active && styles.genderToggleTextActive]}>{g}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-
                 <SelectField label="Status" value={form.Status} options={STATUS_OPTIONS} onChange={(v) => setField('Status', v)} />
 
                 <AutocompleteField
@@ -749,7 +721,6 @@ const styles = StyleSheet.create({
   nameCol: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 160 },
   householdCol: { flexGrow: 1.4, flexShrink: 1, flexBasis: 0, minWidth: 140 },
   contactCol: { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 170 },
-  genderCol: { width: 80 },
   statusCol: { width: 110 },
   roleCol: { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 },
   actionsCol: { width: 80 },
@@ -767,7 +738,6 @@ const styles = StyleSheet.create({
   nameText: { fontSize: 14, fontWeight: '700', color: '#1e293b' },
   idText: { fontSize: 11, color: '#94a3b8', marginTop: 2 },
   householdText: { fontSize: 13, color: '#475569' },
-  plainCellText: { fontSize: 13, color: '#475569', fontWeight: '600' },
 
   statusBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1, alignSelf: 'flex-start' },
   statusBadgeText: { fontSize: 11, fontWeight: '700' },
@@ -822,11 +792,6 @@ const styles = StyleSheet.create({
   suggestionText: { fontSize: 13, color: '#334155', fontWeight: '500' },
   suggestionTextActive: { color: '#002060', fontWeight: '700' },
 
-  genderToggleRow: { flexDirection: 'row', gap: 8 },
-  genderToggle: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#ffffff' },
-  genderToggleActive: { backgroundColor: NAVY, borderColor: NAVY },
-  genderToggleText: { fontSize: 13, fontWeight: '700', color: '#334155' },
-  genderToggleTextActive: { color: '#ffffff' },
 
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, zIndex: 10 },
   btn: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 11, borderRadius: 8, minWidth: 110, alignItems: 'center', justifyContent: 'center' },

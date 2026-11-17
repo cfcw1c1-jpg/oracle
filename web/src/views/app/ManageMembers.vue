@@ -31,7 +31,6 @@ const columns = [
   { key: 'name', label: 'Name', value: (member) => `${member.Lastname}, ${member.Firstname}` },
   { key: 'NameOfHouseholdHead', label: 'Household Head' },
   { key: 'contact', label: 'Contact', value: (member) => member.MobileNo || member.Phone || member.Email || '' },
-  { key: 'Gender', label: 'Gender' },
   { key: 'Status', label: 'Status', value: (member) => member.Status || 'Active' },
   { key: 'PastoralService', label: 'Role', value: (member) => member.PastoralService || 'MEMBER' },
   { key: 'AreaName', label: 'Area' },
@@ -114,7 +113,7 @@ async function remove(member) {
 function handleExport() {
   exportCsv('members', [
     { key: 'MemberIDNo', label: 'Member ID' }, { key: 'Lastname', label: 'Last Name' }, { key: 'Firstname', label: 'First Name' },
-    { key: 'Gender', label: 'Gender' }, { key: 'Status', label: 'Status' }, { key: 'AreaName', label: 'Area' },
+    { key: 'Status', label: 'Status' }, { key: 'AreaName', label: 'Area' },
     { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'PastoralService', label: 'Pastoral Service' }, { key: 'SpouseName', label: 'Spouse' },
     { key: 'MobileNo', label: 'Mobile' }, { key: 'Phone', label: 'Phone' }, { key: 'Email', label: 'Email' }, { key: 'SiteStatus', label: 'CFC Global Data Status' },
   ], filtered.value);
@@ -146,7 +145,6 @@ onMounted(fetchMembers);
           <p v-if="row.SpouseName" class="muted small">Spouse: {{ row.SpouseName }}</p>
           <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName" class="muted small">No contact info</p>
         </template>
-        <template #cell-Gender="{ value }">{{ value || 'N/A' }}</template>
         <template #cell-Status="{ row }"><span class="pill" :class="STATUS_TONE[row.Status || 'Active']">{{ row.Status || 'Active' }}</span></template>
         <template #cell-PastoralService="{ value }"><span class="pill">{{ value }}</span></template>
         <template #cell-AreaName="{ value }"><span class="pill accent">{{ value || 'No Area' }}</span></template>

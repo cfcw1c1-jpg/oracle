@@ -14,7 +14,7 @@ const SECTIONS = [
     intro: 'Depending on how you use Oracle, we collect:',
     items: [
       ['Account information', ' — your email address and password (managed securely by our authentication provider, never stored in plain text) for portal accounts, plus an optional profile photo.'],
-      ['Membership records', " — name, Member ID, gender, status, Area/Chapter assignment, household head, year registered, and Pastoral Service role, as encoded by your Area's authorized portal accounts."],
+      ['Membership records', " — name, Member ID, status, Area/Chapter assignment, household head, year registered, and Pastoral Service role, as encoded by your Area's authorized portal accounts."],
       ['Formation and training history', ' — Pastoral Formation (PFO) and Christian Life Program (CLP) module completion records used to track your formation progress.'],
       ['Messages', ' — direct messages exchanged between portal accounts within Oracle (e.g. between a moderator and a member submitting a record change).'],
       ['Device push notification tokens', ' — if you enable notifications on the mobile app, a token identifying your device so we can deliver notifications to it. No message content is stored by the notification service itself.'],

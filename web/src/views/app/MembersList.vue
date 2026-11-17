@@ -1,5 +1,5 @@
 <script setup>
-import { ArrowLeftRight, CircleX, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
+import { CircleX, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -24,7 +24,7 @@ const members = ref([]);
 const isLoading = ref(true);
 const search = ref('');
 const assignedAreaNames = ref([]);
-const filters = ref({ gender: 'All', role: 'All', area: 'All', status: 'All' });
+const filters = ref({ role: 'All', area: 'All', status: 'All' });
 const selectedIds = ref(new Set());
 const busyId = ref(null);
 const editForm = ref(null);
@@ -42,11 +42,10 @@ const areaOptions = computed(() => buildAreaOptions(assignedAreaNames.value, mem
 // cards show the breakdown of what the other filters leave.
 const membersBeforeStatus = computed(() => {
   const query = search.value.trim().toLowerCase();
-  const { gender, role, area } = filters.value;
+  const { role, area } = filters.value;
   return members.value.filter((member) => {
     const haystack = [member.Firstname, member.Lastname, member.MemberIDNo, member.Email, member.MobileNo, member.Phone, member.SpouseName].filter(Boolean).join(' ').toLowerCase();
     return (!query || haystack.includes(query))
-      && (gender === 'All' || member.Gender === gender)
       && (role === 'All' || (member.PastoralService || 'MEMBER').trim() === role)
       && matchesArea(area, member.AreaName);
   });
@@ -90,7 +89,6 @@ const columns = [
   { key: 'name', label: 'Name', value: (member) => `${member.Lastname}, ${member.Firstname}` },
   { key: 'NameOfHouseholdHead', label: 'Household Head' },
   { key: 'contact', label: 'Contact', value: (member) => member.MobileNo || member.Phone || member.Email || '' },
-  { key: 'Gender', label: 'Gender' },
   { key: 'status', label: 'Status', value: statusOf },
   { key: 'role', label: 'Role', value: (member) => memberRoleLabel(member.PastoralService) },
   { key: 'AreaName', label: 'Area' },
@@ -113,24 +111,6 @@ async function applyOrQueue(memberId, changes, previousValues) {
   const { error } = await supabase.from('member_change_requests').insert([{ member_id: memberId, requested_by: data?.user?.id || null, requested_by_email: data?.user?.email || null, changes, previous_values: previousValues }]);
   if (error) throw error;
   return true;
-}
-
-// Gender writes straight to the record for every role.
-async function applyGender(memberId, gender) {
-  const { error } = await supabase.from('members').update({ Gender: gender }).eq('MemberIDNo', memberId);
-  if (error) throw error;
-  patchMember(memberId, { Gender: gender });
-}
-
-async function toggleGender(member) {
-  busyId.value = member.MemberIDNo;
-  try {
-    await applyGender(member.MemberIDNo, member.Gender === 'Male' ? 'Female' : 'Male');
-  } catch (error) {
-    showAlert('Database Exception', `Failed updating gender: ${error.message}`);
-  } finally {
-    busyId.value = null;
-  }
 }
 
 async function changeField(member, field, value, label, event) {
@@ -176,13 +156,8 @@ async function saveEdit() {
   isSavingEdit.value = true;
   try {
     const memberId = editForm.value.MemberIDNo;
-    if ('Gender' in changes) {
-      await applyGender(memberId, changes.Gender);
-      delete changes.Gender;
-      delete previous.Gender;
-    }
     const count = Object.keys(changes).length;
-    const queued = count > 0 ? await applyOrQueue(memberId, changes, previous) : false;
+    const queued = await applyOrQueue(memberId, changes, previous);
     editForm.value = null;
     if (queued) showAlert('Submitted for Approval', `${count} field(s) sent to an Admin/Moderator for review.`);
   } catch (error) {
@@ -313,7 +288,6 @@ onMounted(async () => {
 
     <div class="row row-wrap">
       <SearchInput v-model="search" placeholder="Search name or ID..." class="grow" />
-      <select v-model="filters.gender" class="select filter" aria-label="Gender"><option value="All">Gender: All</option><option>Male</option><option>Female</option></select>
       <select v-model="filters.role" class="select filter" aria-label="Role"><option v-for="role in roleOptions" :key="role" :value="role">{{ role === 'All' ? 'Role: All' : memberRoleLabel(role) }}</option></select>
       <select v-model="filters.area" class="select filter" aria-label="Area"><option v-for="area in areaOptions" :key="area" :value="area">{{ area === 'All' ? 'Area: All' : area }}</option></select>
       <select v-model="filters.status" class="select filter" aria-label="Status"><option value="All">Status: All</option><option v-for="status in STATUS_OPTIONS" :key="status">{{ status }}</option></select>
@@ -335,9 +309,6 @@ onMounted(async () => {
           <p v-if="row.Email" class="muted small">{{ row.Email }}</p>
           <p v-if="row.SpouseName" class="muted small">Spouse: {{ row.SpouseName }}</p>
           <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName" class="muted small">No contact info</p>
-        </template>
-        <template #cell-Gender="{ row }">
-          <button class="pill gender" :disabled="busyId === row.MemberIDNo" :aria-label="`Change gender, currently ${row.Gender || 'not set'}`" @click="toggleGender(row)">{{ row.Gender || 'N/A' }}<ArrowLeftRight :size="11" /></button>
         </template>
         <template #cell-status="{ row }">
           <select class="pill pill-select" :class="STATUS_TONE[statusOf(row)]" :value="statusOf(row)" :disabled="busyId === row.MemberIDNo" aria-label="Status" @change="changeField(row, 'Status', $event.target.value, 'Status', $event)">
@@ -407,7 +378,6 @@ onMounted(async () => {
 .filter { width: auto; max-width: 180px; }
 .who { min-width: 180px; }
 .tick { width: 16px; height: 16px; accent-color: var(--primary); }
-.gender { border: 0; }
 .pill-select { border: 0; appearance: auto; cursor: pointer; max-width: 170px; }
 .x { border: 0; background: none; padding: 0; display: inline-flex; color: inherit; }
 .checklist { max-height: 200px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 4px 8px; }

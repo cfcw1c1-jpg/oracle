@@ -14,6 +14,9 @@ import {
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
 
+// Head roles, which CFC gives to men; only these are roster candidates.
+const MEN_ROLES = new Set(['HH', 'UH', 'CH', 'FMHH', 'SECTOR HEAD']);
+
 export default function PredictorScreen() {
   // Animation states
   const spinValue = useRef(new Animated.Value(0)).current;
@@ -87,7 +90,6 @@ export default function PredictorScreen() {
             Firstname,
             Lastname,
             PastoralService,
-            Gender,
             NameOfHouseholdHead
           ),
           clp_trainings (
@@ -104,11 +106,11 @@ export default function PredictorScreen() {
       participants.forEach(p => {
         if (!p.members) return;
         
-        // DATABASE EXTRA PROTECTION LAYER:
-        // Double-check string value matches to catch any edge cases or alternative casing configurations
-        const rawGender = p.members.Gender ? p.members.Gender.trim().toLowerCase() : '';
-        if (rawGender === 'female' || rawGender === 'f') {
-          return; // Skip and exclude this record completely from the data pool sent to the AI
+        // Service team roles go to brothers. Oracle no longer keeps gender, so
+        // only head roles count, which CFC gives to men; their wives hold the
+        // matching leader roles (HHL, UL, CL, FMHHL).
+        if (!MEN_ROLES.has((p.members.PastoralService || '').trim().toUpperCase())) {
+          return;
         }
 
         const id = p.MemberIDNo;
@@ -122,7 +124,7 @@ export default function PredictorScreen() {
             name: `${p.members.Firstname} ${p.members.Lastname}`.trim(),
             pastoralRole: cleanPastoralRole,
             pastRoles: [],
-            gender: 'male', // Explicitly typed because females are fully pruned out
+            gender: 'male', // Only head roles get this far
             dateGraduated: recordDate || '2026-01-01', 
             nameOfHouseholdHead: p.members.NameOfHouseholdHead ? p.members.NameOfHouseholdHead.trim() : ''
           };
@@ -148,7 +150,7 @@ export default function PredictorScreen() {
       const candidatesList = Object.values(memberHistoryMap);
 
       if (candidatesList.length === 0) {
-        throw new Error("No qualified historical male candidates found to evaluate.");
+        throw new Error("No past CLP participants with a head role (HH, UH, CH, FMHH or Sector Head) were found to evaluate.");
       }
 
       console.log(candidatesList);

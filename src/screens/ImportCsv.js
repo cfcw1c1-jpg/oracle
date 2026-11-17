@@ -18,7 +18,7 @@ const NAVY = '#002060';
 const ACCENT_BLUE = '#2563eb';
 
 // The only members columns a roster CSV is expected to carry. MemberIDNo is
-// the match key, handled separately. Gender/YearRegistered/Status aren't
+// the match key, handled separately. YearRegistered/Status aren't
 // exported by the usual roster sheet, so they're never touched here.
 const MEMBERS_FIELDS = ['Lastname', 'Firstname', 'PastoralService', 'AreaName', 'NameOfHouseholdHead'];
 

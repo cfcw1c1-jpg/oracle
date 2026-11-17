@@ -7,10 +7,6 @@ defineProps({
   areas: { type: Array, default: () => [] },
   households: { type: Array, default: () => [] },
 });
-
-function toggleGender(form, gender) {
-  form.Gender = form.Gender === gender ? '' : gender;
-}
 </script>
 
 <template>
@@ -18,10 +14,6 @@ function toggleGender(form, gender) {
     <label class="field"><span class="field-label">Member ID{{ idLocked ? '' : ' *' }}</span><input v-model="form.MemberIDNo" class="input" :disabled="idLocked" autocapitalize="none" /></label>
     <label class="field"><span class="field-label">Last Name *</span><input v-model="form.Lastname" class="input" placeholder="Dela Cruz" /></label>
     <label class="field"><span class="field-label">First Name *</span><input v-model="form.Firstname" class="input" placeholder="Juan" /></label>
-    <div class="field">
-      <span class="field-label">Gender</span>
-      <div class="tabs"><button v-for="gender in ['Male', 'Female']" :key="gender" type="button" class="tab" :class="{ active: form.Gender === gender }" @click="toggleGender(form, gender)">{{ gender }}</button></div>
-    </div>
     <label class="field"><span class="field-label">Status</span><select v-model="form.Status" class="select"><option v-for="status in STATUS_OPTIONS" :key="status">{{ status }}</option></select></label>
     <label class="field"><span class="field-label">Pastoral Service</span>
       <select v-model="form.PastoralService" class="select">

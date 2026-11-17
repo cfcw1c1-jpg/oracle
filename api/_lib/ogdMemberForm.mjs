@@ -16,7 +16,6 @@ const POLL_MS = 500;
 export const PUSH_FIELDS = {
   Lastname: { label: 'Last name', match: /^(last\s*name|surname|family\s*name)\b/i },
   Firstname: { label: 'First name', match: /^(first\s*name|given\s*name)\b/i },
-  Gender: { label: 'Gender', match: /^(gender|sex)\b/i },
   Status: { label: 'Status', match: /^(member(ship)?\s*)?status\b/i },
   SpouseName: { label: 'Spouse', match: /^spouse/i },
   MobileNo: { label: 'Mobile #', match: /^(mobile|cell)/i },

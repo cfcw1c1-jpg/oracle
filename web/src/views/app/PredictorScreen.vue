@@ -16,12 +16,16 @@ const rows = computed(() => (roster.value ? [
   ['Music Ministry', 'Talent Track', roster.value.musicMinistry],
 ] : []));
 
+// Service team roles go to brothers. Oracle no longer keeps gender, so a
+// candidate must hold a head role, which CFC gives to men; their wives hold
+// the matching leader roles (HHL, UL, CL, FMHHL).
+const MEN_ROLES = new Set(['HH', 'UH', 'CH', 'FMHH', 'SECTOR HEAD']);
+
 function buildCandidates(participants) {
   const history = {};
   participants.forEach((participant) => {
     if (!participant.members) return;
-    const gender = (participant.members.Gender || '').trim().toLowerCase();
-    if (gender === 'female' || gender === 'f') return;
+    if (!MEN_ROLES.has((participant.members.PastoralService || '').trim().toUpperCase())) return;
 
     const id = participant.MemberIDNo;
     const endDate = participant.clp_trainings?.end_date ? String(participant.clp_trainings.end_date) : null;
@@ -48,10 +52,10 @@ async function generate() {
   isPredicting.value = true;
   roster.value = null;
   try {
-    const { data, error } = await supabase.from('clp_training_participants').select('MemberIDNo, type, sub_type, clp_training_id, members!inner ( Firstname, Lastname, PastoralService, Gender, NameOfHouseholdHead ), clp_trainings ( start_date, end_date )');
+    const { data, error } = await supabase.from('clp_training_participants').select('MemberIDNo, type, sub_type, clp_training_id, members!inner ( Firstname, Lastname, PastoralService, NameOfHouseholdHead ), clp_trainings ( start_date, end_date )');
     if (error) throw error;
     const candidates = buildCandidates(data || []);
-    if (!candidates.length) throw new Error('No qualified historical male candidates found to evaluate.');
+    if (!candidates.length) throw new Error('No past CLP participants with a head role (HH, UH, CH, FMHH or Sector Head) were found to evaluate.');
 
     const { data: sessionData } = await supabase.auth.getSession();
     const response = await fetch('/api/predict-roster', {

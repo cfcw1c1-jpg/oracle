@@ -16,21 +16,20 @@ import { fetchAllRows } from '../../lib/fetchAllRows';
 import { supabase } from '../../lib/supabase';
 import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole } from './PfoStatGenerator';
 
-// Palette reused from the rest of the app (app/index.js header, MembersList.js
-// gender chips, ClpMaintenance.js badges) so this screen matches the others.
+// Palette reused from the rest of the app (app/index.js header,
+// ClpMaintenance.js badges) so this screen matches the others.
 const NAVY = '#002060';
 const NAVY_DARK = '#001540';
 const ACCENT_BLUE = '#2563eb';
 const ACCENT_BLUE_BG = '#eff6ff';
-const MALE_BLUE = '#0284c7';
-const FEMALE_PINK = '#db2777';
+// Member status donut, same colors as the website's dashboard.
+const STATUS_COLORS = { Active: '#16a34a', Inactive: '#94a3b8', Deceased: '#475569', SOLD: '#d97706', HANDMAID: '#7c3aed' };
 const AMBER_BG = '#fef3c7';
 const AMBER_TEXT = '#b45309';
 
 // Fixed hue order for the pastoral-service donut so a code's color never
 // shifts as other segments come and go. "MEMBER" (the no-role default) is
-// always last and neutral, same treatment "Unspecified" gets in the gender
-// donut below.
+// always last and neutral.
 const PASTORAL_ROLE_ORDER = ['CL', 'UL', 'UH', 'HH', 'CH', 'FMHHL', 'HHL', 'FMHH'];
 const PASTORAL_COLORS = {
   CL: '#2a78d6',
@@ -120,7 +119,7 @@ async function fetchEvangelizoField(dateStr, type, content) {
 
 // A donut ring built with react-native-svg: one stacked arc per segment, each
 // rotated to start where the previous one ended, sweeping clockwise from 12 o'clock.
-// Shared by the gender and pastoral-service breakdown cards below.
+// Shared by the status and pastoral-service breakdown cards below.
 function DonutChart({ segments, size = 132, thickness = 16 }) {
   const total = segments.reduce((sum, s) => sum + s.count, 0);
   // With no data (e.g. an area whose members were all removed, or a filter
@@ -179,7 +178,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
   const [sessionUser, setSessionUser] = useState(null);
-  const [memberGenders, setMemberGenders] = useState([]);
+  const [memberRows, setMemberRows] = useState([]);
   const [pfoRows, setPfoRows] = useState([]);
   const [clpTrainings, setClpTrainings] = useState([]);
   const [gospel, setGospel] = useState({
@@ -236,7 +235,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
 
       const [{ data: sessionData }, membersData, pfoData, clpRes] = await Promise.all([
         supabase.auth.getSession(),
-        fetchAllRows('members', 'Gender, Status, PastoralService'),
+        fetchAllRows('members', 'Status, PastoralService'),
         fetchAllRows('pfo_members', '*, members (Status)'),
         supabase.from('clp_trainings').select('*').order('start_date', { ascending: false }),
       ]);
@@ -244,7 +243,7 @@ export default function DashboardHome({ onNavigate, roleName }) {
       if (clpRes.error) throw clpRes.error;
 
       setSessionUser(sessionData?.session?.user || null);
-      setMemberGenders(membersData);
+      setMemberRows(membersData);
       setPfoRows(pfoData);
       setClpTrainings(clpRes.data || []);
     } catch (err) {
@@ -255,8 +254,8 @@ export default function DashboardHome({ onNavigate, roleName }) {
   }
 
   const activeMembers = useMemo(
-    () => memberGenders.filter((m) => isActiveStatus(m.Status)),
-    [memberGenders]
+    () => memberRows.filter((m) => isActiveStatus(m.Status)),
+    [memberRows]
   );
   const totalMembers = activeMembers.length;
 
@@ -267,18 +266,17 @@ export default function DashboardHome({ onNavigate, roleName }) {
     [pfoRows]
   );
 
-  const genderSegments = useMemo(() => {
-    const male = activeMembers.filter((m) => m.Gender === 'Male').length;
-    const female = activeMembers.filter((m) => m.Gender === 'Female').length;
-    const other = totalMembers - male - female;
-
-    const segments = [
-      { label: 'Male', count: male, color: MALE_BLUE },
-      { label: 'Female', count: female, color: FEMALE_PINK },
-    ];
-    if (other > 0) segments.push({ label: 'Unspecified', count: other, color: '#e2e8f0' });
-    return segments;
-  }, [activeMembers, totalMembers]);
+  // Every member by status; a blank status counts as Active.
+  const statusSegments = useMemo(() => {
+    const counts = new Map();
+    memberRows.forEach((m) => {
+      const status = m.Status || 'Active';
+      counts.set(status, (counts.get(status) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, count]) => ({ label, count, color: STATUS_COLORS[label] || '#e2e8f0' }));
+  }, [memberRows]);
 
   // Any code outside the known leadership set (including blank/legacy rows)
   // normalizes to "MEMBER" -- matches the convention PfoStatGenerator.js and
@@ -402,11 +400,11 @@ export default function DashboardHome({ onNavigate, roleName }) {
         const donutAndProgress = (
           <View style={[styles.cardRow, isWideScreen && styles.cardRowWide]}>
             <View style={[styles.card, styles.donutCard, isWideScreen && styles.cardHalfWide]}>
-              <Text style={styles.cardTitle}>Member Gender Overview</Text>
+              <Text style={styles.cardTitle}>Member Status Overview</Text>
               <View style={styles.donutSection}>
-                <DonutChart segments={genderSegments} />
+                <DonutChart segments={statusSegments} />
                 <View style={styles.donutBreakdown}>
-                  {genderSegments.map((segment) => (
+                  {statusSegments.map((segment) => (
                     <View key={segment.label} style={styles.donutBreakdownRow}>
                       <View style={[styles.donutDot, { backgroundColor: segment.color }]} />
                       <Text style={styles.donutBreakdownLabel}>{segment.label}</Text>

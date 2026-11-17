@@ -57,15 +57,17 @@ function donutCenter(segments) {
   return { centerValue: `${Math.round((dominant.count / total) * 100)}%`, centerLabel: dominant.label.toUpperCase() };
 }
 
-const genderSegments = computed(() => {
-  const male = activeMembers.value.filter((member) => member.Gender === 'Male').length;
-  const female = activeMembers.value.filter((member) => member.Gender === 'Female').length;
-  const other = totalMembers.value - male - female;
-  return [
-    { label: 'Male', count: male, color: '#0284c7' },
-    { label: 'Female', count: female, color: '#db2777' },
-    ...(other > 0 ? [{ label: 'Unspecified', count: other, color: '#e2e8f0' }] : []),
-  ];
+// Every member by status; a blank status counts as Active, as in the Directory.
+const STATUS_COLORS = { Active: '#16a34a', Inactive: '#94a3b8', Deceased: '#475569', SOLD: '#d97706', HANDMAID: '#7c3aed' };
+const statusSegments = computed(() => {
+  const counts = new Map();
+  members.value.forEach((member) => {
+    const status = member.Status || 'Active';
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, count]) => ({ label, count, color: STATUS_COLORS[label] ?? '#e2e8f0' }));
 });
 
 const pastoralSegments = computed(() => {
@@ -96,7 +98,7 @@ async function loadDashboard() {
   isLoading.value = true;
   try {
     const [memberRows, pfoData, clpResult] = await Promise.all([
-      fetchAllRows('members', 'Gender, Status, PastoralService, MemberIDNo', { orderBy: 'MemberIDNo' }),
+      fetchAllRows('members', 'Status, PastoralService, MemberIDNo', { orderBy: 'MemberIDNo' }),
       fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (Status)`, { orderBy: 'MemberIDNo' }),
       supabase.from('clp_trainings').select('id, start_date, end_date, venue').order('start_date', { ascending: false }),
     ]);
@@ -174,8 +176,8 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 
     <section class="grid grid-2">
       <article class="card card-pad">
-        <h2 class="card-title mb">Member Gender Overview</h2>
-        <DonutChart :segments="genderSegments" v-bind="donutCenter(genderSegments)" />
+        <h2 class="card-title mb">Member Status Overview</h2>
+        <DonutChart :segments="statusSegments" v-bind="donutCenter(statusSegments)" />
       </article>
 
       <article class="card card-pad stack">

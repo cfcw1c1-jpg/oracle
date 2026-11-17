@@ -22,7 +22,7 @@ import { parseTrainingName, TRAINING_COLUMNS } from './PfoList';
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100, 200];
 
-// Checkbox/Gender stay a fixed width (their content is compact and
+// Checkbox/Status/Actions stay a fixed width (their content is compact and
 // fixed-size); Name/Household/Role grow to fill the row on wide screens but
 // won't shrink below their minWidth, so the table scrolls horizontally instead
 // of squeezing text on narrow ones.
@@ -30,24 +30,15 @@ const CHECKBOX_COL = { width: 44 };
 const NAME_COL = { flexGrow: 2.2, flexShrink: 1, flexBasis: 0, minWidth: 200 };
 const HOUSEHOLD_COL = { flexGrow: 1.6, flexShrink: 1, flexBasis: 0, minWidth: 160 };
 const CONTACT_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 190 };
-const GENDER_COL = { width: 120 };
 const STATUS_COL = { width: 130 };
 const ROLE_COL = { flexGrow: 1.8, flexShrink: 1, flexBasis: 0, minWidth: 180 };
 const ACTIONS_COL = { width: 60 };
-const TABLE_MIN_WIDTH = 44 + 200 + 160 + 190 + 120 + 130 + 180 + 60;
+const TABLE_MIN_WIDTH = 44 + 200 + 160 + 190 + 130 + 180 + 60;
 
 function getInitials(firstName, lastName) {
   const first = (firstName || '').trim().charAt(0);
   const last = (lastName || '').trim().charAt(0);
   return (first + last).toUpperCase() || '?';
-}
-
-// One tap flips Male<->Female directly; an unset gender defaults to Male on
-// first tap so there's always a next value to switch to.
-function getNextGender(currentGender) {
-  if (currentGender === 'Male') return 'Female';
-  if (currentGender === 'Female') return 'Male';
-  return 'Male';
 }
 
 // PastoralService is stored as a short code; spell it out for display.
@@ -96,7 +87,6 @@ function formFromMember(m) {
     MemberIDNo: m.MemberIDNo || '',
     Lastname: m.Lastname || '',
     Firstname: m.Firstname || '',
-    Gender: m.Gender || '',
     Status: m.Status || 'Active',
     AreaName: m.AreaName || '',
     NameOfHouseholdHead: m.NameOfHouseholdHead || '',
@@ -142,7 +132,7 @@ function TextField({ label, value, onChangeText, placeholder, keyboardType, auto
 }
 
 // A small "value: X ▾" pressable that opens a single-select list of options.
-// Used three times below (Gender / Role / Area) so it's factored out once.
+// Used for the Role, Area and Status filters below, so it's factored out once.
 function FilterDropdown({ label, value, options, onChange, getLabel = (v) => v }) {
   const [open, setOpen] = useState(false);
 
@@ -275,10 +265,8 @@ export default function MembersList({ roleName }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [updatingId, setUpdatingId] = useState(null); // Tracks network load per row toggle
   const [assignedAreaNames, setAssignedAreaNames] = useState([]);
 
-  const [genderFilter, setGenderFilter] = useState('All');
   const [roleFilter, setRoleFilter] = useState('All');
   const [areaFilter, setAreaFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -357,15 +345,6 @@ export default function MembersList({ roleName }) {
     return true;
   }
 
-  // Gender is exempt from the change-request workflow -- it writes straight
-  // to `members` for every role, same as an Admin/Moderator's own edits,
-  // rather than ever being queued for approval.
-  async function applyGenderDirect(memberId, gender) {
-    const { error } = await supabase.from('members').update({ Gender: gender }).eq('MemberIDNo', memberId);
-    if (error) throw error;
-    setMembers((prev) => prev.map((m) => (m.MemberIDNo === memberId ? { ...m, Gender: gender } : m)));
-  }
-
   // Areas explicitly assigned to the signed-in account (Portal Users ->
   // Areas). When any are assigned, the Area filter is narrowed to just
   // those (matches what area-scoping RLS already limits this account's
@@ -398,22 +377,6 @@ export default function MembersList({ roleName }) {
       console.error(error.message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  // Handle Dynamic Gender Toggle updates to Supabase -- always direct, never
-  // queued (see applyGenderDirect above).
-  async function toggleGender(memberId, currentGender, targetGender) {
-    if (currentGender === targetGender) return; // Prevent unnecessary execution calls
-
-    try {
-      setUpdatingId(memberId);
-      await applyGenderDirect(memberId, targetGender);
-    } catch (error) {
-      const msg = `Failed updating gender status profile: ${error.message}`;
-      Platform.OS === 'web' ? window.alert(msg) : Alert.alert('Database Exception', msg);
-    } finally {
-      setUpdatingId(null);
     }
   }
 
@@ -489,7 +452,6 @@ export default function MembersList({ roleName }) {
       const payload = {
         Lastname: lastname,
         Firstname: firstname,
-        Gender: editForm.Gender || null,
         Status: editForm.Status || 'Active',
         AreaName: editForm.AreaName.trim() || null,
         NameOfHouseholdHead: editForm.NameOfHouseholdHead.trim() || null,
@@ -520,19 +482,7 @@ export default function MembersList({ roleName }) {
         return;
       }
 
-      // Gender is exempt from the change-request workflow -- split it out
-      // and apply it directly regardless of role, queuing only whatever
-      // else changed alongside it (if anything).
-      if ('Gender' in changes) {
-        await applyGenderDirect(editForm.MemberIDNo, changes.Gender);
-        delete changes.Gender;
-        delete previousValues.Gender;
-      }
-
-      let queued = false;
-      if (Object.keys(changes).length > 0) {
-        queued = await applyOrQueueChange(editForm.MemberIDNo, changes, previousValues);
-      }
+      const queued = await applyOrQueueChange(editForm.MemberIDNo, changes, previousValues);
       setEditModalVisible(false);
       if (queued) {
         showAlert('Submitted for Approval', `${Object.keys(changes).length} field(s) sent to an Admin/Moderator for review.`);
@@ -583,7 +533,6 @@ export default function MembersList({ roleName }) {
       const idStr = member.MemberIDNo?.toString().toLowerCase() || '';
       const contact = [member.Email, member.MobileNo, member.Phone, member.SpouseName].filter(Boolean).join(' ').toLowerCase();
       const matchesSearch = !cleanQuery || first.includes(cleanQuery) || last.includes(cleanQuery) || idStr.includes(cleanQuery) || contact.includes(cleanQuery);
-      const matchesGender = genderFilter === 'All' || member.Gender === genderFilter;
       const matchesRole = roleFilter === 'All' || (member.PastoralService || 'MEMBER').trim() === roleFilter;
       // Prefix match (same convention as the Areas screen's member count and
       // the area-scoping RLS) so an Area named "West 1C2" also covers
@@ -592,14 +541,14 @@ export default function MembersList({ roleName }) {
       const matchesArea = areaFilter === 'All'
         || (areaFilter === 'No Area' ? !memberAreaName : memberAreaName.toLowerCase().startsWith(areaFilter.trim().toLowerCase()));
       const matchesStatus = statusFilter === 'All' || getStatusLabel(member.Status) === statusFilter;
-      return matchesSearch && matchesGender && matchesRole && matchesArea && matchesStatus;
+      return matchesSearch && matchesRole && matchesArea && matchesStatus;
     });
 
     return result.sort((a, b) => {
       const cmp = (a.Lastname || '').localeCompare(b.Lastname || '');
       return sortAsc ? cmp : -cmp;
     });
-  }, [searchQuery, members, genderFilter, roleFilter, areaFilter, statusFilter, sortAsc]);
+  }, [searchQuery, members, roleFilter, areaFilter, statusFilter, sortAsc]);
 
   const { page, pageCount, pageItems, setPage } = usePagination(filteredMembers, pageSize);
 
@@ -803,7 +752,6 @@ export default function MembersList({ roleName }) {
 
         <View style={styles.filterGroup}>
           <Ionicons name="filter-outline" size={14} color="#64748b" style={{ marginRight: 2 }} />
-          <FilterDropdown label="Gender" value={genderFilter} options={['All', 'Male', 'Female']} onChange={setGenderFilter} />
           <FilterDropdown label="Role" value={roleFilter} options={roleOptions} onChange={setRoleFilter} getLabel={getRoleLabel} />
           <FilterDropdown label="Area" value={areaFilter} options={areaOptions} onChange={setAreaFilter} />
           <FilterDropdown label="Status" value={statusFilter} options={['All', ...STATUS_OPTIONS]} onChange={setStatusFilter} />
@@ -848,9 +796,6 @@ export default function MembersList({ roleName }) {
               <View style={[styles.headerCell, CONTACT_COL]}>
                 <Text style={styles.headerText}>CONTACT</Text>
               </View>
-              <View style={[styles.headerCell, GENDER_COL]}>
-                <Text style={styles.headerText}>GENDER</Text>
-              </View>
               <View style={[styles.headerCell, STATUS_COL]}>
                 <Text style={styles.headerText}>STATUS</Text>
               </View>
@@ -867,9 +812,7 @@ export default function MembersList({ roleName }) {
               keyExtractor={(item) => item.MemberIDNo?.toString()}
               CellRendererComponent={RoleMenuAwareRow}
               renderItem={({ item }) => {
-                const currentGender = item.Gender;
                 const currentStatus = getStatusLabel(item.Status);
-                const isRowUpdating = updatingId === item.MemberIDNo;
                 const isSelected = selectedIds.has(item.MemberIDNo);
                 const isRoleMenuOpen = roleMenuOpenFor === item.MemberIDNo;
                 const isChangingRole = changingRoleId === item.MemberIDNo;
@@ -904,27 +847,6 @@ export default function MembersList({ roleName }) {
 
                     <View style={[styles.cell, CONTACT_COL]}>
                       <ContactLines member={item} />
-                    </View>
-
-                    <View style={[styles.cell, GENDER_COL]}>
-                      {isRowUpdating ? (
-                        <ActivityIndicator size="small" color="#002060" />
-                      ) : (
-                        <TouchableOpacity
-                          style={[styles.genderBadge, currentGender === 'Male' ? styles.maleBadge : currentGender === 'Female' ? styles.femaleBadge : styles.unknownBadge]}
-                          onPress={() => toggleGender(item.MemberIDNo, currentGender, getNextGender(currentGender))}
-                        >
-                          <Text style={[styles.genderBadgeText, currentGender === 'Male' ? styles.maleBadgeText : currentGender === 'Female' ? styles.femaleBadgeText : styles.unknownBadgeText]}>
-                            {currentGender || 'N/A'}
-                          </Text>
-                          <Ionicons
-                            name="swap-horizontal"
-                            size={12}
-                            color={currentGender === 'Male' ? '#0369a1' : currentGender === 'Female' ? '#be185d' : '#64748b'}
-                            style={styles.genderBadgeIcon}
-                          />
-                        </TouchableOpacity>
-                      )}
                     </View>
 
                     <View style={[styles.cell, STATUS_COL]}>
@@ -1024,7 +946,7 @@ export default function MembersList({ roleName }) {
               }}
               ListEmptyComponent={
                 <Text style={styles.empty}>
-                  {searchQuery || genderFilter !== 'All' || roleFilter !== 'All' || areaFilter !== 'All' || statusFilter !== 'All'
+                  {searchQuery || roleFilter !== 'All' || areaFilter !== 'All' || statusFilter !== 'All'
                     ? 'No members matched your search and filters.'
                     : 'No members found.'}
                 </Text>
@@ -1224,24 +1146,6 @@ export default function MembersList({ roleName }) {
                   </View>
 
                   <View style={[styles.row, { zIndex: 30 }]}>
-                    <View style={styles.fieldWrap}>
-                      <Text style={styles.fieldLabel}>Gender</Text>
-                      <View style={styles.genderToggleRow}>
-                        {['Male', 'Female'].map((g) => {
-                          const active = editForm.Gender === g;
-                          return (
-                            <TouchableOpacity
-                              key={g}
-                              style={[styles.genderToggle, active && styles.genderToggleActive]}
-                              onPress={() => setEditField('Gender', active ? '' : g)}
-                            >
-                              <Text style={[styles.genderToggleText, active && styles.genderToggleTextActive]}>{g}</Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    </View>
-
                     <SelectField label="Status" value={editForm.Status} options={STATUS_OPTIONS} onChange={(v) => setEditField('Status', v)} />
 
                     <SelectField
@@ -1403,19 +1307,6 @@ const styles = StyleSheet.create({
 
   householdText: { fontSize: 13, color: '#475569' },
 
-  genderBadge: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 20, borderWidth: 1, alignSelf: 'flex-start',
-  },
-  genderBadgeIcon: { marginLeft: 5 },
-  genderBadgeText: { fontSize: 11, fontWeight: '700' },
-  maleBadge: { backgroundColor: '#e0f2fe', borderColor: '#0284c7' },
-  maleBadgeText: { color: '#0369a1' },
-  femaleBadge: { backgroundColor: '#fce7f3', borderColor: '#db2777' },
-  femaleBadgeText: { color: '#be185d' },
-  unknownBadge: { backgroundColor: '#f1f5f9', borderColor: '#cbd5e1' },
-  unknownBadgeText: { color: '#64748b' },
-
   roleBadgeWrapper: { position: 'relative' },
   roleBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#eff6ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   roleBadgeText: { fontSize: 11, fontWeight: '700', color: '#002060' },
@@ -1496,11 +1387,6 @@ const styles = StyleSheet.create({
   suggestionText: { fontSize: 13, color: '#334155', fontWeight: '500' },
   suggestionTextActive: { color: '#002060', fontWeight: '700' },
 
-  genderToggleRow: { flexDirection: 'row', gap: 8 },
-  genderToggle: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#ffffff' },
-  genderToggleActive: { backgroundColor: '#002060', borderColor: '#002060' },
-  genderToggleText: { fontSize: 13, fontWeight: '700', color: '#334155' },
-  genderToggleTextActive: { color: '#ffffff' },
 
   stagedContainer: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: '#f8fafc',
