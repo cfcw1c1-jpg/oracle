@@ -3,6 +3,10 @@
 export const OGD_LOGIN_URL = 'https://cfcglobaldata.com/login.aspx?ReturnUrl=%2fdefault.aspx';
 
 const NAVIGATION_TIMEOUT_MS = 30000;
+// How long a blank or in-between page may take to turn into a known step.
+const SETTLE_TIMEOUT_MS = 20000;
+const SETTLE_POLL_MS = 1000;
+const SIGNED_IN_TEXT_PATTERN = /log\s?out|sign\s?out|members database/i;
 const OTP_FIELD_PATTERN = /otp|one.?time|passcode|verif|token|code|\bpin\b/i;
 const OTP_TEXT_PATTERN = /\bOTP\b|one[\s-]?time|verification code|security code|authentication code/i;
 const SKIPPED_BUTTON_PATTERN = /resend|cancel|back|forgot/i;
@@ -28,12 +32,15 @@ export function classifyPage({ path, inputs, text }) {
   if (otpInput) return { state: 'otp', otpInput };
 
   if (/\/default\.aspx$/i.test(path)) return { state: 'connected' };
+  // The site root serves the same signed-in page when OGD redirects there.
+  if (path === '/' && SIGNED_IN_TEXT_PATTERN.test(text)) return { state: 'connected' };
   return { state: 'unexpected' };
 }
 
-function describePage({ path, title, inputs }) {
+function describePage({ path, title, inputs, text }) {
   const fields = inputs.map((input) => input.id || input.name || input.type).join(', ') || 'none';
-  return `Page ${path} titled "${title}", fields: ${fields}`;
+  const shown = text.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `Page ${path} titled "${title}", fields: ${fields}, text: "${shown}"`;
 }
 
 function snapshotPage(page) {
@@ -74,6 +81,21 @@ async function findOtpSubmitButton(page) {
   return fallback;
 }
 
+// OGD sometimes passes through a blank page (or redirects by script) after a
+// submit, so an unrecognized page is looked at again until it settles.
+async function settledStep(page) {
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  for (;;) {
+    const snapshot = await snapshotPage(page).catch(() => null);
+    const step = snapshot ? classifyPage(snapshot) : { state: 'unexpected' };
+    if ((snapshot && step.state !== 'unexpected') || Date.now() >= deadline) {
+      return { snapshot: snapshot ?? (await snapshotPage(page)), step };
+    }
+    await page.waitForLoadState('load', { timeout: SETTLE_POLL_MS }).catch(() => null);
+    await page.waitForTimeout(SETTLE_POLL_MS);
+  }
+}
+
 // Resolves to { otpRequired, afterLoginResult } when OGD reaches its signed-in
 // page and throws AutomationFailure otherwise. readOtp({ sinceEpochSeconds })
 // supplies the OTP; the optional afterLogin(page) runs on the signed-in page.
@@ -100,8 +122,7 @@ export async function loginToOgd({ browser, username, password, readOtp, afterLo
   const sinceEpochSeconds = Math.floor(Date.now() / 1000) - 15;
   await submitAndSettle(page, () => page.locator('#btnLogin').click());
 
-  const afterPassword = await snapshotPage(page);
-  const firstStep = classifyPage(afterPassword);
+  const { snapshot: afterPassword, step: firstStep } = await settledStep(page);
 
   if (firstStep.state === 'connected') return { otpRequired: false, afterLoginResult: await afterLogin?.(page) };
   if (firstStep.state === 'login') {
@@ -118,8 +139,7 @@ export async function loginToOgd({ browser, username, password, readOtp, afterLo
   const button = await findOtpSubmitButton(page);
   await submitAndSettle(page, () => (button ? button.click() : field.press('Enter')));
 
-  const afterOtp = await snapshotPage(page);
-  const finalStep = classifyPage(afterOtp);
+  const { snapshot: afterOtp, step: finalStep } = await settledStep(page);
   if (finalStep.state === 'connected') return { otpRequired: true, afterLoginResult: await afterLogin?.(page) };
   if (finalStep.state === 'otp' || finalStep.state === 'login') {
     throw new AutomationFailure('otp_rejected', dialogMessage || 'OGD did not accept the code from the email.');
