@@ -1,6 +1,6 @@
 -- =========================================================================
 -- OGD Member Sync: one row per Chapter recording the latest copy of its OGD
--- Members Database list into public.members (api/ogd/sync-members.mjs).
+-- Members Database list into public.members (api/_lib/tasks/sync-members.mjs).
 --
 --   status        synced (every page read), partial (stopped early; what was
 --                 read is saved), failed (nothing saved)

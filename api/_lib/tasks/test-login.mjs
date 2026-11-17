@@ -1,5 +1,5 @@
-import { authorize, HttpError, route } from '../_lib/access.mjs';
-import { runChapterLogin } from '../_lib/ogdRun.mjs';
+import { authorize, HttpError, route } from '../access.mjs';
+import { runChapterLogin } from '../ogdRun.mjs';
 
 export const POST = route(async (request) => {
   const body = await request.json().catch(() => null);

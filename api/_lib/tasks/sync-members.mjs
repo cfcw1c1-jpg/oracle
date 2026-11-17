@@ -1,8 +1,8 @@
-import { TRAINING_COLUMNS } from '../../web/src/lib/formation.js';
-import { authorize, HttpError, route } from '../_lib/access.mjs';
-import { keepPendingFields } from '../_lib/ogdChanges.mjs';
-import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../_lib/ogdMembers.mjs';
-import { runChapterLogin } from '../_lib/ogdRun.mjs';
+import { TRAINING_COLUMNS } from '../../../web/src/lib/formation.js';
+import { authorize, HttpError, route } from '../access.mjs';
+import { keepPendingFields } from '../ogdChanges.mjs';
+import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../ogdMembers.mjs';
+import { runChapterLogin } from '../ogdRun.mjs';
 
 // Reading stops by this point so the save and status update still fit inside
 // the function's maxDuration (vercel.json), after the login and OTP wait.

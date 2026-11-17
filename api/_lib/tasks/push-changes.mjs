@@ -1,8 +1,8 @@
-import { authorize, HttpError, route } from '../_lib/access.mjs';
-import { loadOpenChanges } from '../_lib/ogdChanges.mjs';
-import { pushMemberChanges } from '../_lib/ogdMemberForm.mjs';
-import { createMemberListReader } from '../_lib/ogdMembers.mjs';
-import { runChapterLogin } from '../_lib/ogdRun.mjs';
+import { authorize, HttpError, route } from '../access.mjs';
+import { loadOpenChanges } from '../ogdChanges.mjs';
+import { pushMemberChanges } from '../ogdMemberForm.mjs';
+import { createMemberListReader } from '../ogdMembers.mjs';
+import { runChapterLogin } from '../ogdRun.mjs';
 
 // Work stops by this point so saving the results still fits inside the
 // function's maxDuration (vercel.json), after the login and OTP wait.

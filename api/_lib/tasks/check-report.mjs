@@ -1,6 +1,6 @@
-import { authorize, HttpError, route } from '../_lib/access.mjs';
-import { runChapterLogin } from '../_lib/ogdRun.mjs';
-import { createPastoralReportCheck, currentReportMonth } from '../_lib/pastoralReport.mjs';
+import { authorize, HttpError, route } from '../access.mjs';
+import { runChapterLogin } from '../ogdRun.mjs';
+import { createPastoralReportCheck, currentReportMonth } from '../pastoralReport.mjs';
 
 // Checks one chapter per request. Each needs its own login and possibly an
 // OTP, so the whole set would not fit inside a single function's time limit.

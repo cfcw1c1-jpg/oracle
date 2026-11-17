@@ -22,11 +22,11 @@ export function saveOgdCredential(values) {
 }
 
 export function runOgdTestLogin(values) {
-  return request('/api/ogd/test-login', { method: 'POST', body: JSON.stringify(values) });
+  return request('/api/ogd/browser?task=test-login', { method: 'POST', body: JSON.stringify(values) });
 }
 
 export function syncOgdMembers(values) {
-  return request('/api/ogd/sync-members', { method: 'POST', body: JSON.stringify(values) });
+  return request('/api/ogd/browser?task=sync-members', { method: 'POST', body: JSON.stringify(values) });
 }
 
 export async function fetchOgdChanges(scope) {
@@ -39,7 +39,7 @@ export function updateOgdChanges(values) {
 }
 
 export function pushOgdChanges(values) {
-  return request('/api/ogd/push-changes', { method: 'POST', body: JSON.stringify(values) });
+  return request('/api/ogd/browser?task=push-changes', { method: 'POST', body: JSON.stringify(values) });
 }
 
 export function fetchPastoralReports() {
@@ -47,7 +47,7 @@ export function fetchPastoralReports() {
 }
 
 export function checkPastoralReport(values) {
-  return request('/api/ogd/check-report', { method: 'POST', body: JSON.stringify(values) });
+  return request('/api/ogd/browser?task=check-report', { method: 'POST', body: JSON.stringify(values) });
 }
 
 export const FAILURE_MESSAGES = {
