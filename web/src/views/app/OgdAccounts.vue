@@ -380,7 +380,10 @@ async function loadChanges() {
   if (scope.value !== 'accounts') return;
   if (changesState.status === 'idle') changesState.status = 'loading';
   try {
-    changes.value = await fetchOgdChanges(scope.value);
+    const result = await fetchOgdChanges(scope.value);
+    changes.value = result.changes;
+    pushProgress.value = Object.fromEntries(result.pushProgress.map((item) => [item.areaId, item]));
+    result.pushProgress.forEach(trackPushEta);
     const open = new Set(changes.value.map((change) => change.id));
     selectedChanges.value = new Set([...selectedChanges.value].filter((id) => open.has(id)));
     Object.assign(changesState, { status: 'success', message: '' });
@@ -425,6 +428,70 @@ function setPushing(areaId, isPushing) {
   if (isPushing) next.add(areaId);
   else next.delete(areaId);
   pushingIds.value = next;
+  if (next.size && !pushPollTimer) pushPollTimer = setInterval(loadChanges, PROGRESS_POLL_MS);
+  if (!next.size && pushPollTimer) {
+    clearInterval(pushPollTimer);
+    pushPollTimer = null;
+  }
+}
+
+// ---------- Push progress ----------
+// Each push run writes how many of its members it has pushed and how far it
+// has paged through OGD's member list; this page polls it every few seconds.
+// The percentage counts members pushed out of all members the push started
+// with. The time left is an upper bound: it assumes the run pages to the end
+// of the list, but a run stops as soon as every member is found.
+const PUSH_RUN_BUDGET_MS = 230 * 1000;
+const PUSH_GAP_MS = 90 * 1000;
+const MIN_PUSH_SAMPLE_MS = 15 * 1000;
+const pushProgress = ref({});
+const pushRuns = ref({});
+const pushEta = new Map();
+let pushPollTimer = null;
+
+function trackPushEta(item) {
+  const run = pushRuns.value[item.areaId];
+  if (!run || item.startedAt === run.staleStartedAt) return;
+  // Between runs there is no progress row, so the last count is kept here.
+  const done = Math.min(run.members, Math.max(run.lastDone, run.members - item.membersTotal + item.membersDone));
+  if (done !== run.lastDone) pushRuns.value = { ...pushRuns.value, [item.areaId]: { ...run, lastDone: done } };
+  if (item.stage !== 'pushing') return;
+  const at = Date.parse(item.at);
+  const sample = pushEta.get(item.areaId);
+  if (!sample || sample.runStartedAt !== item.startedAt) {
+    pushEta.set(item.areaId, { runStartedAt: item.startedAt, firstAt: at, firstDone: item.listDone, lastAt: at, lastDone: item.listDone });
+    return;
+  }
+  if (at > sample.lastAt) Object.assign(sample, { lastAt: at, lastDone: item.listDone });
+}
+
+function pushTimeLeft(item) {
+  const sample = pushEta.get(item.areaId);
+  if (!sample || sample.runStartedAt !== item.startedAt) return '';
+  const elapsed = sample.lastAt - sample.firstAt;
+  const walked = sample.lastDone - sample.firstDone;
+  if (elapsed < MIN_PUSH_SAMPLE_MS || walked < 2) return '';
+  const left = Math.max(0, item.listTotal - item.listDone);
+  if (!left) return 'almost done';
+  let ms = left * (elapsed / walked);
+  const leftInRun = Math.max(0, PUSH_RUN_BUDGET_MS - (sample.lastAt - Date.parse(item.startedAt)));
+  if (ms > leftInRun) ms += Math.ceil((ms - leftInRun) / (PUSH_RUN_BUDGET_MS - PUSH_GAP_MS)) * PUSH_GAP_MS;
+  return `up to ${formatTimeLeft(ms)}`;
+}
+
+function pushStatus(row) {
+  const run = pushRuns.value[row.areaId];
+  const item = pushProgress.value[row.areaId];
+  if (!run) return 'Pushing to OGD…';
+  const current = item && item.startedAt !== run.staleStartedAt;
+  const done = run.lastDone;
+  const percent = run.members ? Math.round((done / run.members) * 100) : 0;
+  const head = `Pushing to OGD · ${percent}% (${done} of ${run.members} member${run.members === 1 ? '' : 's'})`;
+  if (!current || item.stage === 'signing_in') return `${head} · signing in…`;
+  if (item.stage === 'skipping') return `${head} · going back to page ${item.page ?? 1}…`;
+  if (item.stage === 'saving') return `${head} · saving…`;
+  const left = pushTimeLeft(item);
+  return `${head} · ${left ? `${left[0].toUpperCase()}${left.slice(1)}` : 'working out the time left…'}`;
 }
 
 // Each run signs in once and pushes as many members as fit; the server says
@@ -434,13 +501,17 @@ async function pushChanges(row) {
   if (!count || !confirmAction(`Push ${count} change${count === 1 ? '' : 's'} to OGD?`, `This signs in to OGD as ${row.chapter} and saves the changes on each member's record there.`)) return;
   notice.value = '';
   pushNotice.value = '';
+  const members = new Set(changes.value.filter((change) => change.areaId === row.areaId).map((change) => change.memberId)).size;
+  pushRuns.value = { ...pushRuns.value, [row.areaId]: { members, lastDone: 0, staleStartedAt: pushProgress.value[row.areaId]?.startedAt ?? null } };
+  pushEta.delete(row.areaId);
   setPushing(row.areaId, true);
   try {
     let retries = 0;
+    let fromPage = null;
     for (let run = 1; run <= MAX_PUSH_RUNS && isMounted; run += 1) {
       let result;
       try {
-        result = await pushOgdChanges({ scope: scope.value, areaId: row.areaId });
+        result = await pushOgdChanges({ scope: scope.value, areaId: row.areaId, fromPage });
       } catch (error) {
         if (error.status !== 429 || retries >= MAX_SIGN_IN_RETRIES) throw error;
         result = { status: 'failed', failureCode: 'cooldown' };
@@ -453,11 +524,15 @@ async function pushChanges(row) {
       pushNotice.value = `${row.chapter}: ${result.status === 'failed' ? (FAILURE_MESSAGES[result.failureCode] ?? result.statusDetail ?? 'The push failed.') : result.statusDetail}`;
       await loadChanges();
       if (!result.more) break;
+      fromPage = result.nextPage ?? null;
     }
   } catch (error) {
     pushNotice.value = `${row.chapter}: ${error.message}`;
   } finally {
     setPushing(row.areaId, false);
+    const { [row.areaId]: _, ...rest } = pushRuns.value;
+    pushRuns.value = rest;
+    pushEta.delete(row.areaId);
     if (isMounted) {
       load();
       loadChanges();
@@ -476,6 +551,7 @@ onMounted(load);
 onBeforeUnmount(() => {
   isMounted = false;
   clearInterval(pollTimer);
+  clearInterval(pushPollTimer);
 });
 </script>
 
@@ -558,7 +634,7 @@ onBeforeUnmount(() => {
           <div class="row">
             <button class="link-btn" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
             <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId) || pushingIds.has(row.areaId)" class="spinner sm" role="status" :aria-label="pushingIds.has(row.areaId) ? 'Pushing to OGD' : 'Working'" />
-            <span v-if="pushingIds.has(row.areaId)" class="muted small">Pushing to OGD…</span>
+            <span v-if="pushingIds.has(row.areaId)" class="muted small" aria-live="polite">{{ pushStatus(row) }}</span>
             <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
               <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
               <button class="link-btn" @click="syncMembers(row)"><RefreshCw :size="13" />Sync Members</button>

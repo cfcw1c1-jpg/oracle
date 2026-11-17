@@ -1,6 +1,6 @@
 import { TRAINING_COLUMNS } from '../../../web/src/lib/formation.js';
 import { authorize, HttpError, route } from '../access.mjs';
-import { keepPendingFields } from '../ogdChanges.mjs';
+import { countChapterMembers, keepPendingFields } from '../ogdChanges.mjs';
 import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../ogdMembers.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 
@@ -54,15 +54,6 @@ async function upsertGrouped(db, table, rows) {
   }
 }
 
-// The bar's total is how many of the chapter's members Oracle already has;
-// OGD's list doesn't say how many it holds until the last page.
-async function estimateMemberCount(db, chapterName) {
-  const pattern = `${chapterName.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
-  const { count, error } = await db.from('members').select('MemberIDNo', { count: 'exact', head: true }).ilike('AreaName', pattern);
-  if (error) throw error;
-  return count ?? 0;
-}
-
 // Writes the running sync's progress for the OGD Accounts page to poll. The
 // row's last result stays as it is until the run finishes.
 function createProgressWriter(db, areaId, previousStatus) {
@@ -99,7 +90,7 @@ export const POST = route(async (request) => {
   const part = previous?.sync_part === 'formations' ? 'formations' : 'info';
   const startPage = (part === 'info' ? previous?.hh_next_page : previous?.fm_next_page) ?? 1;
 
-  const total = await estimateMemberCount(db, chapter.chapter);
+  const total = await countChapterMembers(db, chapter.chapter);
   const writeProgress = createProgressWriter(db, areaId, previous?.status);
   await writeProgress({ progress_part: part, progress_stage: 'signing_in', progress_done: 0, progress_total: total, progress_page: null }, { force: true });
 

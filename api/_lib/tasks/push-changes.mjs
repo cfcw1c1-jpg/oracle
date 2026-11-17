@@ -1,5 +1,5 @@
 import { authorize, HttpError, route } from '../access.mjs';
-import { loadOpenChanges } from '../ogdChanges.mjs';
+import { countChapterMembers, createPushProgress, loadOpenChanges } from '../ogdChanges.mjs';
 import { pushMemberChanges } from '../ogdMemberForm.mjs';
 import { createMemberListReader } from '../ogdMembers.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
@@ -14,7 +14,9 @@ function plural(count, word) {
 
 // Signs one chapter in to OGD and writes its queued Oracle changes into each
 // member's details there. Answers more: true when time ran out with changes
-// left, and the OGD Accounts page calls again.
+// left, with nextPage for the OGD Accounts page to send back as fromPage, so
+// the next run pages past what this one already walked without stopping.
+// While it works it writes its progress to ogd_push_progress.
 export const POST = route(async (request) => {
   const startedAt = Date.now();
   const body = await request.json().catch(() => null);
@@ -28,26 +30,46 @@ export const POST = route(async (request) => {
   const open = await loadOpenChanges(db, [chapter]);
   if (!open.length) return { status: 'idle', more: false, pushed: 0, failed: 0, remaining: 0, statusDetail: 'Nothing is waiting to be pushed.' };
 
+  // Pages before fromPage were walked by earlier runs of this push.
+  const fromPage = Number(body.fromPage);
+  const startPage = Number.isInteger(fromPage) && fromPage > 1 ? fromPage : 1;
+
   const byMember = new Map();
   for (const change of open) byMember.set(change.memberId, [...(byMember.get(change.memberId) ?? []), { id: change.id, field: change.field, new_value: change.newValue }]);
   const outcomes = [];
+  const membersTotal = byMember.size;
+  let membersDone = 0;
+  const listTotal = await countChapterMembers(db, chapter.chapter).catch(() => 0);
+  const progress = createPushProgress(db, areaId);
+  await progress.write({ stage: 'signing_in', members_total: membersTotal, members_done: 0, list_total: listTotal, list_done: 0, page: null }, { force: true });
 
   const reader = createMemberListReader({
     deadline: startedAt + WORK_BUDGET_MS,
     chapterName: chapter.chapter,
+    startPage,
     shouldStop: () => byMember.size === 0,
+    onProgress: ({ done, page, skipping }) => progress.write({ stage: skipping ? 'skipping' : 'pushing', members_done: membersDone, list_total: Math.max(listTotal, done), list_done: done, page }),
     perMember: async (page, member) => {
       const changes = byMember.get(member.memberId);
       if (!changes) return undefined;
       byMember.delete(member.memberId);
       outcomes.push(...(await pushMemberChanges(page, member, changes)));
+      membersDone += 1;
+      await progress.write({ stage: 'pushing', members_done: membersDone }, { force: true });
       return true;
     },
   });
-  const run = await runChapterLogin({ db, areaId, userId, afterLogin: reader });
+  let run;
+  try {
+    run = await runChapterLogin({ db, areaId, userId, afterLogin: reader });
+  } catch (error) {
+    await progress.clear();
+    throw error;
+  }
   const list = run.afterLoginResult;
 
   if (!list) {
+    await progress.clear();
     return { status: 'failed', more: false, pushed: 0, failed: 0, remaining: open.length, failureCode: run.failure_code, statusDetail: run.status_detail };
   }
 
@@ -59,14 +81,19 @@ export const POST = route(async (request) => {
     byMember.clear();
   }
 
+  await progress.write({ stage: 'saving', members_done: membersDone }, { force: true });
   const now = new Date().toISOString();
   for (const outcome of outcomes) {
     const { error } = await db
       .from('ogd_pending_changes')
       .update({ status: outcome.status, detail: outcome.detail, attempted_at: now, ...(outcome.status === 'pushed' ? { pushed_at: now } : {}) })
       .eq('id', outcome.id);
-    if (error) throw error;
+    if (error) {
+      await progress.clear();
+      throw error;
+    }
   }
+  await progress.clear();
 
   const pushed = outcomes.filter((outcome) => outcome.status === 'pushed').length;
   const failed = outcomes.length - pushed;
@@ -77,5 +104,5 @@ export const POST = route(async (request) => {
   if (more) parts.push(`${plural(remaining, 'change')} left; continuing.`);
   else if (!list.complete && list.stopReason) parts.push(`Stopped early: ${list.stopReason}`);
 
-  return { status: failed ? 'partial' : 'pushed', more, pushed, failed, remaining, statusDetail: parts.join(' ') };
+  return { status: failed ? 'partial' : 'pushed', more, nextPage: more ? list.nextPage : null, pushed, failed, remaining, statusDetail: parts.join(' ') };
 });

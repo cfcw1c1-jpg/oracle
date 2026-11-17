@@ -25,6 +25,15 @@ async function membersById(db, memberIds) {
   return byId;
 }
 
+// A progress bar's total is how many of the chapter's members Oracle already has;
+// OGD's list doesn't say how many it holds until the last page.
+export async function countChapterMembers(db, chapterName) {
+  const pattern = `${chapterName.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  const { count, error } = await db.from('members').select('MemberIDNo', { count: 'exact', head: true }).ilike('AreaName', pattern);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 // Open (pending or failed) changes for the given chapters, each labelled with
 // its member and chapter. Members outside those chapters are left out.
 export async function loadOpenChanges(db, chapters) {
@@ -108,4 +117,58 @@ export async function keepPendingFields(db, members) {
     if (error) throw error;
   }
   return result;
+}
+
+// ---------- Push progress (ogd_push_progress) ----------
+// One row per chapter while a push run is working, for the OGD Accounts page
+// to show a percentage and the time left. The row is removed when the run
+// ends. A missing table only turns progress off; the push still works.
+
+const PUSH_PROGRESS_EVERY_MS = 3000;
+
+function missingTable(error) {
+  return error?.code === 'PGRST205' || error?.code === '42P01';
+}
+
+export function createPushProgress(db, areaId) {
+  let lastWrite = 0;
+  let disabled = false;
+  const startedAt = new Date().toISOString();
+  const write = async (fields, { force = false } = {}) => {
+    if (disabled || (!force && Date.now() - lastWrite < PUSH_PROGRESS_EVERY_MS)) return;
+    lastWrite = Date.now();
+    const { error } = await db
+      .from('ogd_push_progress')
+      .upsert({ area_id: areaId, started_at: startedAt, ...fields, updated_at: new Date().toISOString() }, { onConflict: 'area_id' });
+    if (missingTable(error)) disabled = true;
+    else if (error) console.error('[ogd] push progress write failed:', error.message);
+  };
+  const clear = async () => {
+    if (disabled) return;
+    const { error } = await db.from('ogd_push_progress').delete().eq('area_id', areaId);
+    if (error && !missingTable(error)) console.error('[ogd] push progress clear failed:', error.message);
+  };
+  return { write, clear };
+}
+
+export async function loadPushProgress(db, chapters) {
+  const ids = chapters.map((chapter) => chapter.areaId);
+  if (!ids.length) return [];
+  const { data, error } = await db
+    .from('ogd_push_progress')
+    .select('area_id, stage, members_total, members_done, list_total, list_done, page, started_at, updated_at')
+    .in('area_id', ids);
+  if (missingTable(error)) return [];
+  if (error) throw error;
+  return data.map((row) => ({
+    areaId: row.area_id,
+    stage: row.stage,
+    membersTotal: row.members_total,
+    membersDone: row.members_done,
+    listTotal: row.list_total,
+    listDone: row.list_done,
+    page: row.page,
+    startedAt: row.started_at,
+    at: row.updated_at,
+  }));
 }

@@ -1,7 +1,8 @@
 import { authorize, HttpError, route } from '../_lib/access.mjs';
-import { loadOpenChanges } from '../_lib/ogdChanges.mjs';
+import { loadOpenChanges, loadPushProgress } from '../_lib/ogdChanges.mjs';
 
-// Lists the Oracle member changes waiting for OGD in the caller's chapters,
+// Lists the Oracle member changes waiting for OGD in the caller's chapters
+// (with the progress of any push that is running),
 // and lets the caller drop them before a push:
 //   discard  removes the change from the queue; Oracle keeps the new value
 //   revert   puts the old value back in Oracle and removes the change
@@ -15,10 +16,11 @@ function missingTable(error) {
 export const GET = route(async (request) => {
   const scopeName = new URL(request.url).searchParams.get('scope');
   const { db, chapters } = await authorize(request, scopeName);
+  const pushProgress = await loadPushProgress(db, chapters);
   try {
-    return { changes: await loadOpenChanges(db, chapters) };
+    return { changes: await loadOpenChanges(db, chapters), pushProgress };
   } catch (error) {
-    if (missingTable(error)) return { changes: [] };
+    if (missingTable(error)) return { changes: [], pushProgress };
     throw error;
   }
 });

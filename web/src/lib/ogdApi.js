@@ -29,8 +29,10 @@ export function syncOgdMembers(values) {
   return request('/api/ogd/browser?task=sync-members', { method: 'POST', body: JSON.stringify(values) });
 }
 
+// Returns { changes, pushProgress }.
 export async function fetchOgdChanges(scope) {
-  return (await request(`/api/ogd/changes?scope=${encodeURIComponent(scope)}`)).changes;
+  const { changes, pushProgress } = await request(`/api/ogd/changes?scope=${encodeURIComponent(scope)}`);
+  return { changes, pushProgress: pushProgress ?? [] };
 }
 
 // action: 'discard' (drop from the queue) or 'revert' (also restore Oracle's old value).
