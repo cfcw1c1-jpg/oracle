@@ -10,5 +10,6 @@ export default defineConfig({
   plugins: [vue()],
   define: { __APP_VERSION__: JSON.stringify(version) },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  server: { port: 5173 },
+  // The /api functions run under `vercel dev`; set VITE_API_PROXY to point elsewhere.
+  server: { port: 5173, proxy: { '/api': process.env.VITE_API_PROXY || 'http://127.0.0.1:3001' } },
 });
