@@ -108,7 +108,7 @@ export const POST = route(async (request) => {
     chapterName: chapter.chapter,
     startPage,
     perMember: part === 'info' ? readHouseholdHead : readFormations,
-    onProgress: ({ done, page }) => writeProgress({ progress_stage: 'reading', progress_done: done, progress_total: Math.max(total, done), progress_page: page }),
+    onProgress: ({ done, page, skipping }) => writeProgress({ progress_stage: skipping ? 'skipping' : 'reading', progress_done: done, progress_total: Math.max(total, done), progress_page: page }),
   });
   const run = await runChapterLogin({ db, areaId, userId, afterLogin: reader });
   const list = run.afterLoginResult;

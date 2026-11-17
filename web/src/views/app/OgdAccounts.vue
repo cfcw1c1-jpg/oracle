@@ -84,6 +84,7 @@ async function load() {
     const chapters = await fetchOgdChapters(scope.value);
     if (token !== loadToken) return;
     rows.value = chapters;
+    chapters.forEach(trackEta);
     Object.assign(loadState, { status: 'success', message: '' });
   } catch (error) {
     if (token === loadToken) Object.assign(loadState, { status: 'error', message: error.message });
@@ -168,6 +169,7 @@ function updatePolling() {
 
 async function syncMembers(row) {
   notice.value = '';
+  resetEta(row.areaId);
   setSyncing(row.areaId, true);
   try {
     let retries = 0;
@@ -197,8 +199,93 @@ async function syncMembers(row) {
     const { [row.areaId]: __, ...waiting } = syncWaiting.value;
     syncWaiting.value = waiting;
     setSyncing(row.areaId, false);
+    resetEta(row.areaId);
     if (isMounted) load();
   }
+}
+
+// ---------- Time left ----------
+// Measured from the progress the server writes while a sync runs: how long
+// reading takes per member, how long each run reads before it stops for the
+// time limit, and the gap between runs (saving, signing in, the OTP email and
+// paging back to where it stopped). Until there is enough to go on, the
+// defaults below fill in.
+const DEFAULT_GAP_MS = 75 * 1000;
+const DEFAULT_READ_PER_RUN_MS = 150 * 1000;
+const MIN_SAMPLE_MS = 20 * 1000;
+const MIN_SAMPLE_MEMBERS = 3;
+const etaStats = new Map();
+const etaText = ref({});
+
+function resetEta(areaId) {
+  etaStats.delete(areaId);
+  const { [areaId]: _, ...rest } = etaText.value;
+  etaText.value = rest;
+}
+
+const average = (list, fallback) => (list.length ? list.reduce((sum, value) => sum + value, 0) / list.length : fallback);
+
+function formatTimeLeft(ms) {
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return 'less than a minute left';
+  if (minutes < 60) return `about ${minutes} min left`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return `about ${hours} h${rest ? ` ${rest} min` : ''} left`;
+}
+
+function estimateTimeLeft(stats, progress) {
+  if (stats.readDone < MIN_SAMPLE_MEMBERS || stats.readMs < MIN_SAMPLE_MS || !progress.total) return '';
+  const remaining = Math.max(0, progress.total - (progress.done ?? 0));
+  if (!remaining) return 'almost done';
+  const readLeft = remaining * (stats.readMs / stats.readDone);
+  const readPerRun = Math.max(60000, average(stats.runReadMs, DEFAULT_READ_PER_RUN_MS));
+  const leftInThisRun = stats.runStartAt ? Math.max(0, readPerRun - (stats.last.at - stats.runStartAt)) : 0;
+  const moreRuns = Math.max(0, Math.ceil((readLeft - leftInThisRun) / readPerRun));
+  return formatTimeLeft(readLeft + moreRuns * average(stats.gapMs, DEFAULT_GAP_MS));
+}
+
+// Called with every fresh copy of the chapter rows (polled while syncing).
+function trackEta(row) {
+  const progress = row.memberSync?.progress;
+  if (!syncingIds.value.has(row.areaId) || !progress?.at) return;
+  const at = Date.parse(progress.at);
+  const run = syncRuns.value[row.areaId];
+  let stats = etaStats.get(row.areaId);
+  if (!stats || stats.part !== progress.part) {
+    stats = { part: progress.part, readMs: 0, readDone: 0, gapMs: [], runReadMs: [], runStartAt: null, lastReadAt: null, last: null };
+    etaStats.set(row.areaId, stats);
+  }
+  const last = stats.last;
+  if (last && at <= last.at) return;
+
+  if (progress.stage === 'reading') {
+    if (last?.stage === 'reading' && last.run === run) {
+      const members = (progress.done ?? 0) - last.done;
+      if (members >= 0) {
+        stats.readDone += members;
+        stats.readMs += at - last.at;
+      }
+    } else {
+      // First reading sample of a run: the time since the last run stopped
+      // reading is the gap between runs.
+      if (stats.lastReadAt) stats.gapMs.push(at - stats.lastReadAt);
+      stats.runStartAt = at;
+    }
+  } else if (last?.stage === 'reading') {
+    stats.lastReadAt = last.at;
+    if (stats.runStartAt) stats.runReadMs.push(last.at - stats.runStartAt);
+    stats.runStartAt = null;
+  }
+  stats.last = { at, done: progress.done ?? 0, stage: progress.stage, run };
+  etaText.value = { ...etaText.value, [row.areaId]: estimateTimeLeft(stats, progress) };
+}
+
+function timeLeftLabel(row) {
+  const text = etaText.value[row.areaId];
+  if (!text) return syncingIds.value.has(row.areaId) ? 'Working out the time left…' : '';
+  const part = currentPart(row);
+  return part === 'info' ? `${text[0].toUpperCase()}${text.slice(1)} for Member info, then Formations.` : `${text[0].toUpperCase()}${text.slice(1)} for Formations.`;
 }
 
 async function waitBeforeRetry(areaId) {
@@ -216,7 +303,7 @@ function setSyncing(areaId, isSyncing) {
   updatePolling();
 }
 
-const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…' };
+const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…', skipping: 'Going back to where it stopped' };
 // The server syncs Member info (list + household heads) first, then Formations.
 const SYNC_PARTS = [
   { key: 'info', label: 'Member info' },
@@ -247,6 +334,7 @@ function progressLabel(row) {
   const runText = run > 1 ? ` · run ${run}` : '';
   if (syncWaiting.value[row.areaId]) return `Sign-in failed, trying again in about a minute…${runText}`;
   if (!progress) return `Starting…${runText}`;
+  if (progress.stage === 'skipping') return `${STAGE_LABELS.skipping} · page ${progress.page ?? '…'}${runText}`;
   if (progress.stage !== 'reading') return `${STAGE_LABELS[progress.stage] ?? 'Working…'}${runText}`;
   const count = progress.total ? `${Math.min(progress.done ?? 0, progress.total)} of ~${progress.total}` : `${progress.done ?? 0}`;
   const reading = progress.part === 'formations' ? 'Reading formations' : STAGE_LABELS.reading;
@@ -454,6 +542,7 @@ onBeforeUnmount(() => {
                 <div class="progress-fill" :style="{ width: `${progressPercent(row.memberSync?.progress) ?? 35}%` }" />
               </div>
               <p class="muted tiny">{{ progressLabel(row) }}</p>
+              <p class="tiny strong-ish" aria-live="polite">{{ timeLeftLabel(row) }}</p>
               <p class="muted tiny">Keep this page open until it finishes.</p>
             </template>
             <template v-else-if="row.memberSync">
@@ -543,6 +632,7 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .guide-body a { display: block; font-weight: var(--fw-medium); }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
+.strong-ish { color: var(--ink-2); font-weight: var(--fw-medium); }
 .sync-parts { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
 .sync-parts li { display: inline-flex; align-items: center; gap: 5px; }
 .sync-parts li.active { color: var(--ink); font-weight: var(--fw-medium); }

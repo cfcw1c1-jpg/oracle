@@ -618,7 +618,8 @@ export function createMemberListReader({ deadline, chapterName, startPage = 1, p
     let failures = 0;
     let lastError = null;
     let done = 0;
-    const report = (pageNumber) => onProgress({ done, page: pageNumber }).catch(() => null);
+    // skipping: still paging past members an earlier run already finished.
+    const report = (pageNumber, skipping = false) => onProgress({ done, page: pageNumber, skipping }).catch(() => null);
 
     pages: while (pagesRead < MAX_PAGES) {
       const pageNumber = (await pagerAction(found.frame, 'read').catch(() => null))?.current ?? pagesRead + 1;
@@ -627,7 +628,7 @@ export function createMemberListReader({ deadline, chapterName, startPage = 1, p
 
       if (pageNumber < startPage) {
         done += found.table.records.filter((cells) => inChapter(headers, cells)).length;
-        await report(pageNumber);
+        await report(pageNumber, true);
       } else {
         for (const [rowIndex, cells] of found.table.records.entries()) {
           if (!inChapter(headers, cells)) continue;
