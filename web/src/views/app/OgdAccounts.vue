@@ -8,6 +8,7 @@ import PageHead from '@/components/PageHead.vue';
 import PasswordField from '@/components/PasswordField.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, formatDateTime } from '@/lib/data';
+import { TRAINING_COLUMNS } from '@/lib/formation';
 import { FAILURE_MESSAGES, fetchOgdChanges, fetchOgdChapters, pushOgdChanges, runOgdTestLogin, saveOgdCredential, syncOgdMembers, updateOgdChanges } from '@/lib/ogdApi';
 
 const props = defineProps({ scopes: { type: Array, required: true } });
@@ -351,6 +352,12 @@ const FIELD_LABELS = {
   Phone: 'Phone', MobileNo: 'Mobile #', Email: 'Email', PastoralService: 'Pastoral service', AreaName: 'Area',
   NameOfHouseholdHead: 'Household head', YearRegistered: 'Year registered',
 };
+// Talks ticked in PFO Trainings or Assign to Talks are queued by their
+// training column; they show as "CLPT 2 talk" and Ticked / Not ticked.
+const TRAINING_LABELS = new Map(TRAINING_COLUMNS.map((column) => [column.id, `${column.label} talk`]));
+const isTraining = (field) => /^.+?_\d+-/.test(field);
+const fieldLabel = (field) => FIELD_LABELS[field] ?? TRAINING_LABELS.get(field) ?? field;
+const changeValue = (change, value) => (isTraining(change.field) ? (value === 'Y' ? 'Ticked' : 'Not ticked') : value || 'blank');
 const CHANGE_STATUS = { pending: { label: 'Waiting', tone: 'info' }, failed: { label: 'Not pushed', tone: 'danger' } };
 const MAX_PUSH_RUNS = 20;
 
@@ -365,8 +372,8 @@ const changeColumns = [
   { key: 'select', label: '', action: true },
   { key: 'memberName', label: 'Member' },
   { key: 'chapter', label: 'Chapter', value: (change) => chapterName(change.areaId) },
-  { key: 'field', label: 'Field', value: (change) => FIELD_LABELS[change.field] ?? change.field },
-  { key: 'change', label: 'Change', value: (change) => change.newValue ?? '' },
+  { key: 'field', label: 'Field', value: (change) => fieldLabel(change.field) },
+  { key: 'change', label: 'Change', value: (change) => changeValue(change, change.newValue) },
   { key: 'changedAt', label: 'Edited' },
   { key: 'status', label: 'Status', value: (change) => CHANGE_STATUS[change.status]?.label ?? change.status },
   { key: 'rowActions', label: 'Actions', action: true },
@@ -664,10 +671,10 @@ onBeforeUnmount(() => {
         <div><button class="btn btn-sm" @click="loadChanges">Try again</button></div>
       </div>
       <DataTable v-else :columns="changeColumns" :rows="changes" row-key="id" :initial-sort="{ key: 'changedAt', ascending: false }" empty-text="Nothing is waiting. Member edits saved in Oracle will show here.">
-        <template #cell-select="{ row }"><input class="tick" type="checkbox" :aria-label="`Select ${row.memberName} ${FIELD_LABELS[row.field] ?? row.field}`" :checked="selectedChanges.has(row.id)" @change="toggleChange(row.id)" /></template>
+        <template #cell-select="{ row }"><input class="tick" type="checkbox" :aria-label="`Select ${row.memberName} ${fieldLabel(row.field)}`" :checked="selectedChanges.has(row.id)" @change="toggleChange(row.id)" /></template>
         <template #cell-memberName="{ row }"><span class="strong">{{ row.memberName }}</span><p class="muted tiny">{{ row.memberId }}</p></template>
         <template #cell-change="{ row }">
-          <span class="change"><span class="old">{{ row.oldValue || 'blank' }}</span><ArrowRight :size="12" aria-label="to" /><span class="strong">{{ row.newValue || 'blank' }}</span></span>
+          <span class="change"><span class="old">{{ changeValue(row, row.oldValue) }}</span><ArrowRight :size="12" aria-label="to" /><span class="strong">{{ changeValue(row, row.newValue) }}</span></span>
         </template>
         <template #cell-changedAt="{ row }"><span class="nowrap">{{ formatDateTime(row.changedAt) }}</span><p v-if="row.changedBy" class="muted tiny">{{ row.changedBy }}</p></template>
         <template #cell-status="{ row }">

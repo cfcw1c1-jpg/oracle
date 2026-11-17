@@ -9,6 +9,9 @@ import { loadOpenChanges, loadPushProgress } from '../_lib/ogdChanges.mjs';
 
 const REVERTIBLE = new Set(['Lastname', 'Firstname', 'Status', 'SpouseName', 'Phone', 'MobileNo', 'Email', 'PastoralService', 'AreaName', 'NameOfHouseholdHead', 'YearRegistered']);
 
+// Training columns ("CODE_N-Title") live on pfo_members; "Y" is ticked.
+const isFormationField = (field) => /^.+?_\d+-/.test(field);
+
 function missingTable(error) {
   return error?.code === 'PGRST205' || error?.code === '42P01';
 }
@@ -41,6 +44,11 @@ export const POST = route(async (request) => {
   if (body.action === 'revert') {
     // The service role's own writes are not queued again by the trigger.
     for (const change of allowed) {
+      if (isFormationField(change.field)) {
+        const { error } = await db.from('pfo_members').update({ [change.field]: change.oldValue === 'Y' ? 'Y' : null }).eq('MemberIDNo', change.memberId);
+        if (error) throw error;
+        continue;
+      }
       if (!REVERTIBLE.has(change.field)) throw new HttpError(400, 'This change cannot be reverted.');
       const value = change.field === 'YearRegistered' ? (change.oldValue == null ? null : Number(change.oldValue)) : change.oldValue;
       const { error } = await db.from('members').update({ [change.field]: value }).eq('MemberIDNo', change.memberId);

@@ -144,7 +144,8 @@ export const POST = route(async (request) => {
           issues.push(...[...readIssues, ...built.issues].map((issue) => `${member.MemberIDNo} ${issue}`));
           return built.row;
         });
-      await upsertGrouped(db, 'pfo_members', pfoRows);
+      // Talks still waiting to be pushed keep Oracle's tick.
+      await upsertGrouped(db, 'pfo_members', await keepPendingFields(db, pfoRows));
       record = {
         ...shared,
         status: list.complete ? 'synced' : 'partial',

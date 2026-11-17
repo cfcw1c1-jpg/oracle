@@ -1,12 +1,27 @@
 import { authorize, HttpError, route } from '../access.mjs';
 import { countChapterMembers, createPushProgress, loadOpenChanges } from '../ogdChanges.mjs';
 import { pushMemberChanges } from '../ogdMemberForm.mjs';
-import { createMemberListReader } from '../ogdMembers.mjs';
+import { TRAINING_COLUMNS } from '../../../web/src/lib/formation.js';
+import { createMemberListReader, findMembersTable, groupTrainingColumns, pushFormationChanges } from '../ogdMembers.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 
 // Work stops by this point so saving the results still fits inside the
 // function's maxDuration (vercel.json), after the login and OTP wait.
 const WORK_BUDGET_MS = 230 * 1000;
+
+const COLUMNS_BY_CODE = groupTrainingColumns(TRAINING_COLUMNS.map((column) => column.id));
+// Training columns are "CODE_N-Title"; member detail fields never look like that.
+const isFormationField = (field) => /^.+?_\d+-/.test(field);
+
+// After a save the members list can re-render, so the member's row is found
+// again before the next popup is opened.
+async function refindMember(page, member) {
+  const found = await findMembersTable(page, 0).catch(() => null);
+  if (!found) return member;
+  const idColumn = found.table.headers.indexOf('Member ID #');
+  const rowIndex = found.table.records.findIndex((cells) => (cells[idColumn] ?? '').trim() === member.memberId);
+  return rowIndex === -1 ? member : { ...member, listFrame: found.frame, rowIndex, nameColumn: found.table.nameColumn };
+}
 
 function plural(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -53,7 +68,14 @@ export const POST = route(async (request) => {
       const changes = byMember.get(member.memberId);
       if (!changes) return undefined;
       byMember.delete(member.memberId);
-      outcomes.push(...(await pushMemberChanges(page, member, changes)));
+      const detailChanges = changes.filter((change) => !isFormationField(change.field));
+      const formationChanges = changes.filter((change) => isFormationField(change.field));
+      let current = member;
+      if (detailChanges.length) {
+        outcomes.push(...(await pushMemberChanges(page, current, detailChanges)));
+        if (formationChanges.length) current = await refindMember(page, current);
+      }
+      if (formationChanges.length) outcomes.push(...(await pushFormationChanges(page, current, formationChanges, COLUMNS_BY_CODE)));
       membersDone += 1;
       await progress.write({ stage: 'pushing', members_done: membersDone }, { force: true });
       return true;

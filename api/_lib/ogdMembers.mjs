@@ -494,9 +494,9 @@ async function frameHasText(frame, pattern) {
   return frame.evaluate((source) => new RegExp(source, 'i').test(document.body?.innerText || ''), pattern.source).catch(() => false);
 }
 
-// Opens one formation's "Set Formation" checklist, reads its talk checkboxes
-// and cancels it without saving anything.
-async function readChecklist(page, frame, formation) {
+// Opens one formation's "Set Formation" checklist from its row on the
+// Formation tab and returns the frame that shows it.
+async function openChecklist(page, frame, formation) {
   const framesBefore = new Set(page.frames());
   await frame.locator(`tr[data-oracle-formation="${formation.key}"] > td`).nth(formation.nameColumn).locator('a, [onclick]').first().click({ timeout: CLICK_TIMEOUT_MS });
 
@@ -513,12 +513,19 @@ async function readChecklist(page, frame, formation) {
   }
   if (!dialog) throw new Error('The "Set Formation" checklist did not open.');
   await page.waitForTimeout(300);
+  return dialog;
+}
 
-  const talks = await dialog.evaluate(() => {
+// The checklist's talk checkboxes in order, each tagged data-oracle-talk so it
+// can be ticked by index.
+function readChecklistBoxes(dialog) {
+  return dialog.evaluate(() => {
     const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    document.querySelectorAll('[data-oracle-talk]').forEach((el) => el.removeAttribute('data-oracle-talk'));
     return [...document.querySelectorAll('input[type=checkbox]')]
       .filter((box) => box.offsetParent !== null || box.closest('table'))
-      .map((box) => {
+      .map((box, index) => {
+        box.setAttribute('data-oracle-talk', String(index));
         let label = '';
         if (box.id) label = text(document.querySelector(`label[for="${CSS.escape(box.id)}"]`) || { innerText: '' });
         if (!label && box.closest('label')) label = text(box.closest('label'));
@@ -526,18 +533,33 @@ async function readChecklist(page, frame, formation) {
         return { label, checked: box.checked };
       });
   });
+}
 
-  // Cancel only: the checklist's other buttons would save changes to OGD.
+async function waitForChecklistToClose(page, timeoutMs = 5000) {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    let open = false;
+    for (const candidate of page.frames()) if (await frameHasText(candidate, SET_FORMATION_PATTERN)) open = true;
+    if (!open) return true;
+    await page.waitForTimeout(300);
+  }
+  return false;
+}
+
+// Cancel only: the checklist's other buttons would save changes to OGD.
+async function cancelChecklist(page, dialog) {
   const cancel = dialog.locator('input[value="Cancel" i], button:has-text("Cancel"), a:has-text("Cancel")').first();
   if (await cancel.count()) await cancel.click({ timeout: CLICK_TIMEOUT_MS }).catch(() => null);
   else await page.keyboard.press('Escape').catch(() => null);
-  const gone = Date.now() + 5000;
-  while (Date.now() < gone) {
-    let open = false;
-    for (const candidate of page.frames()) if (await frameHasText(candidate, SET_FORMATION_PATTERN)) open = true;
-    if (!open) break;
-    await page.waitForTimeout(300);
-  }
+  await waitForChecklistToClose(page);
+}
+
+// Opens one formation's "Set Formation" checklist, reads its talk checkboxes
+// and cancels it without saving anything.
+async function readChecklist(page, frame, formation) {
+  const dialog = await openChecklist(page, frame, formation);
+  const talks = await readChecklistBoxes(dialog);
+  await cancelChecklist(page, dialog);
   return talks;
 }
 
@@ -579,6 +601,141 @@ export async function readFormations(page, member) {
   } finally {
     await closePopup(page, member.memberId, framesBefore);
   }
+}
+
+// ---------- Pushing formation changes ----------
+
+const SAVE_BUTTON_TEXT = /^(save|save changes|update|set|set formation|submit|ok|apply)$/i;
+
+// Clicks the checklist's save button. Returns the buttons it saw when none
+// looks like one, so the change can say why it was not pushed.
+async function saveChecklist(page, dialog) {
+  const buttons = await dialog.evaluate((source) => {
+    const pattern = new RegExp(source, 'i');
+    const text = (el) => (el.value || el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    document.querySelectorAll('[data-oracle-save]').forEach((el) => el.removeAttribute('data-oracle-save'));
+    const candidates = [...document.querySelectorAll('input[type=submit], input[type=button], button, a')].filter((el) => el.offsetParent !== null && text(el));
+    const save = candidates.find((el) => pattern.test(text(el)));
+    if (save) save.setAttribute('data-oracle-save', '1');
+    return { found: Boolean(save), labels: candidates.map(text).slice(0, 12) };
+  }, SAVE_BUTTON_TEXT.source);
+  if (!buttons.found) return { saved: false, labels: buttons.labels };
+
+  // OGD may ask "Are you sure?"; the push means yes.
+  const accept = (prompt) => prompt.accept().catch(() => null);
+  page.on('dialog', accept);
+  try {
+    await dialog.locator('[data-oracle-save]').first().click({ timeout: CLICK_TIMEOUT_MS });
+    const closed = await waitForChecklistToClose(page, MODAL_WAIT_MS);
+    return { saved: true, closed, labels: buttons.labels };
+  } finally {
+    page.off('dialog', accept);
+  }
+}
+
+// Writes Oracle's talk changes into the member's "Set Formation" checklists on
+// OGD, then reopens each checklist to confirm it. changes are queue rows whose
+// field is a training column id ("CODE_N-Title"); new_value "Y" means ticked.
+// Returns [{ id, status: 'pushed'|'failed', detail }].
+export async function pushFormationChanges(page, member, changes, columnsByCode) {
+  const outcome = new Map();
+  const finish = (change, status, detail = null) => outcome.set(change.id, { id: change.id, status, detail });
+
+  const byCode = new Map();
+  for (const change of changes) {
+    const code = /^(.+?)_\d+-/.exec(change.field)?.[1];
+    const index = code ? (columnsByCode.get(code) ?? []).findIndex((column) => column.id === change.field) : -1;
+    if (index === -1) {
+      finish(change, 'failed', 'This training is not one Oracle matches to an OGD formation.');
+      continue;
+    }
+    byCode.set(code, [...(byCode.get(code) ?? []), { change, index, wanted: String(change.new_value ?? '').trim().toUpperCase() === 'Y' }]);
+  }
+  if (!byCode.size) return [...outcome.values()];
+
+  const readTable = (frame) => readFormationTable(frame, member.memberId);
+  let framesBefore = new Set(page.frames());
+  const reopenTable = async () => {
+    let current = await waitForPopupContent(page, readTable, 2000);
+    if (!current) {
+      await closePopup(page, member.memberId, framesBefore);
+      framesBefore = await openMemberTab(page, member, 'formation');
+      current = await waitForPopupContent(page, readTable);
+    }
+    if (!current) throw new Error('The Formation tab did not open.');
+    return current;
+  };
+
+  try {
+    framesBefore = await openMemberTab(page, member, 'formation');
+    for (const [code, items] of byCode) {
+      const failAll = (detail) => items.forEach((item) => finish(item.change, 'failed', detail));
+      try {
+        const columns = columnsByCode.get(code);
+        let current = await reopenTable();
+        const formation = current.result.formations.find((item) => item.code === code);
+        if (!formation) {
+          failAll(`OGD's Formation tab does not list ${code} for this member yet, so its talks cannot be ticked there.`);
+          continue;
+        }
+        if (!formation.hasLink) {
+          failAll(`${code} on OGD has no checklist to open.`);
+          continue;
+        }
+
+        let dialog = await openChecklist(page, current.frame, formation);
+        let boxes = await readChecklistBoxes(dialog);
+        if (boxes.length !== columns.length) {
+          await cancelChecklist(page, dialog);
+          failAll(`OGD's ${code} checklist has ${boxes.length} talks; Oracle has ${columns.length}.`);
+          continue;
+        }
+        const mismatch = items.find((item) => !titlesMatch(columns[item.index].title, boxes[item.index].label));
+        if (mismatch) {
+          await cancelChecklist(page, dialog);
+          failAll(`OGD's ${code} talk ${mismatch.index + 1} reads "${boxes[mismatch.index].label}", which does not match Oracle's.`);
+          continue;
+        }
+
+        const toChange = items.filter((item) => boxes[item.index].checked !== item.wanted);
+        items.filter((item) => !toChange.includes(item)).forEach((item) => finish(item.change, 'pushed', 'OGD already had this value.'));
+        if (!toChange.length) {
+          await cancelChecklist(page, dialog);
+          continue;
+        }
+        for (const item of toChange) await dialog.locator(`input[data-oracle-talk="${item.index}"]`).setChecked(item.wanted, { timeout: CLICK_TIMEOUT_MS });
+
+        const save = await saveChecklist(page, dialog);
+        if (!save.saved) {
+          await cancelChecklist(page, dialog);
+          toChange.forEach((item) => finish(item.change, 'failed', `Could not find the save button on OGD's ${code} checklist (buttons: ${save.labels.join(', ') || 'none'}).`));
+          continue;
+        }
+
+        // Read it back to be sure OGD kept the ticks.
+        current = await reopenTable();
+        const again = current.result.formations.find((item) => item.code === code);
+        if (!again?.hasLink) {
+          toChange.forEach((item) => finish(item.change, 'failed', `Saved, but ${code} could not be reopened on OGD to check it.`));
+          continue;
+        }
+        dialog = await openChecklist(page, current.frame, again);
+        boxes = await readChecklistBoxes(dialog);
+        await cancelChecklist(page, dialog);
+        for (const item of toChange) {
+          if (boxes[item.index]?.checked === item.wanted) finish(item.change, 'pushed');
+          else finish(item.change, 'failed', `OGD still shows ${code} talk ${item.index + 1} as ${boxes[item.index]?.checked ? 'ticked' : 'not ticked'} after saving.`);
+        }
+      } catch (error) {
+        items.filter((item) => !outcome.has(item.change.id)).forEach((item) => finish(item.change, 'failed', error.message.split('\n')[0]));
+      }
+    }
+  } catch (error) {
+    for (const change of changes) if (!outcome.has(change.id)) finish(change, 'failed', error.message.split('\n')[0]);
+  } finally {
+    await closePopup(page, member.memberId, framesBefore);
+  }
+  return [...outcome.values()];
 }
 
 // ---------- List walk shared by both parts ----------
