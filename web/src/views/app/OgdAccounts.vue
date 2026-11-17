@@ -1,6 +1,6 @@
 <script setup>
 import { ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw } from 'lucide-vue-next';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
@@ -140,18 +140,31 @@ async function testLogin(row) {
   }
 }
 
-// The server signs in and reads every page of OGD's list, which can take a
-// few minutes, so the row shows a spinner until it answers.
+// Each run signs in and works for a few minutes. Household heads need a popup
+// per member, so the server answers more: true until the last page is done
+// and this keeps starting the next run. Leaving the page stops the loop; the
+// next Sync Members resumes from the saved page.
+const MAX_SYNC_RUNS = 30;
+const syncProgress = ref({});
+let isMounted = true;
+
 async function syncMembers(row) {
   notice.value = '';
   setSyncing(row.areaId, true);
   try {
-    await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+    for (let run = 1; run <= MAX_SYNC_RUNS && isMounted; run += 1) {
+      const result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+      if (!result.more) break;
+      syncProgress.value = { ...syncProgress.value, [row.areaId]: `Run ${run} done; continuing from page ${result.nextPage}…` };
+      load();
+    }
   } catch (error) {
     notice.value = `${row.chapter}: ${error.message}`;
   } finally {
+    const { [row.areaId]: _, ...rest } = syncProgress.value;
+    syncProgress.value = rest;
     setSyncing(row.areaId, false);
-    load();
+    if (isMounted) load();
   }
 }
 
@@ -163,6 +176,9 @@ function setSyncing(areaId, isSyncing) {
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  isMounted = false;
+});
 </script>
 
 <template>
@@ -209,7 +225,10 @@ onMounted(load);
         <template #cell-lastAttemptAt="{ value }"><span class="nowrap">{{ formatDateTime(value) }}</span></template>
         <template #cell-memberSync="{ row }">
           <div class="status">
-            <span v-if="syncingIds.has(row.areaId)" class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
+            <template v-if="syncingIds.has(row.areaId)">
+              <span class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
+              <p class="muted tiny">{{ syncProgress[row.areaId] || 'Signing in and reading members. This can take a few minutes; keep this page open.' }}</p>
+            </template>
             <template v-else-if="row.memberSync">
               <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
               <p v-if="row.memberSync.status === 'failed' && FAILURE_MESSAGES[row.memberSync.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.memberSync.failureCode] }}</p>
