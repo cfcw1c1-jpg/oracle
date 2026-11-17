@@ -1,5 +1,5 @@
 <script setup>
-import { CircleX, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
+import { CircleX, Download, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -9,7 +9,7 @@ import PageHead from '@/components/PageHead.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import StatCard from '@/components/StatCard.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
-import { fetchAllRows, showAlert } from '@/lib/data';
+import { exportCsv, fetchAllRows, showAlert } from '@/lib/data';
 import { parseTrainingName, TRAINING_COLUMNS } from '@/lib/formation';
 import { buildSuggestions, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, ROLE_OPTION_CODES, STATUS_OPTIONS, STATUS_TONE } from '@/lib/members';
 import { supabase } from '@/lib/supabase';
@@ -98,6 +98,21 @@ const columns = [
   { key: 'AreaName', label: 'Area' },
   { key: 'edit', label: 'Edit', action: true },
 ];
+
+// Exports the members on screen (search, filters and status card applied),
+// or only the ticked ones when any are selected.
+const EXPORT_COLUMNS = [
+  { key: 'MemberIDNo', label: 'Member ID' }, { key: 'Lastname', label: 'Last Name' }, { key: 'Firstname', label: 'First Name' },
+  { key: 'Status', label: 'Status', value: statusOf }, { key: 'PastoralService', label: 'Role', value: (member) => memberRoleLabel(member.PastoralService) },
+  { key: 'AreaName', label: 'Area' }, { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'SpouseName', label: 'Spouse' },
+  { key: 'MobileNo', label: 'Mobile' }, { key: 'Phone', label: 'Phone' }, { key: 'Email', label: 'Email' }, { key: 'YearRegistered', label: 'Year Registered' },
+];
+const exportRows = computed(() => (selectedIds.value.size ? filteredMembers.value.filter((member) => selectedIds.value.has(member.MemberIDNo)) : filteredMembers.value));
+
+function handleExport() {
+  if (!exportRows.value.length) return;
+  exportCsv(`directory-${new Date().toISOString().slice(0, 10)}`, EXPORT_COLUMNS, exportRows.value);
+}
 
 function patchMember(memberId, changes) {
   members.value = members.value.map((member) => (member.MemberIDNo === memberId ? { ...member, ...changes } : member));
@@ -275,6 +290,7 @@ onMounted(async () => {
       <span v-if="selectedIds.size" class="pill row">{{ selectedIds.size }} selected
         <button class="x" aria-label="Clear selection" @click="selectedIds = new Set()"><CircleX :size="14" /></button>
       </span>
+      <button class="btn" :disabled="!exportRows.length" @click="handleExport"><Download :size="14" />Export{{ selectedIds.size ? ` (${exportRows.length})` : '' }}</button>
       <button class="btn btn-primary" @click="openAssign"><Plus :size="14" />Assign to Talks</button>
     </PageHead>
 
