@@ -22,6 +22,10 @@
     "api/ogd/sync-members.mjs": {
       "maxDuration": 300,
       "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "api/ogd/push-changes.mjs": {
+      "maxDuration": 300,
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
     }
   }
 }

@@ -1,5 +1,6 @@
 import { TRAINING_COLUMNS } from '../../web/src/lib/formation.js';
 import { authorize, HttpError, route } from '../_lib/access.mjs';
+import { keepPendingFields } from '../_lib/ogdChanges.mjs';
 import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../_lib/ogdMembers.mjs';
 import { runChapterLogin } from '../_lib/ogdRun.mjs';
 
@@ -126,7 +127,8 @@ export const POST = route(async (request) => {
 
     if (part === 'info') {
       const { members, skipped } = planMemberSync({ ...list, households: list.results }, chapter.chapter);
-      await upsertGrouped(db, 'members', members);
+      // Fields with an Oracle change still waiting for OGD keep Oracle's value.
+      await upsertGrouped(db, 'members', await keepPendingFields(db, members));
       const households = members.filter((member) => member.NameOfHouseholdHead).length;
       record = {
         ...shared,
@@ -141,7 +143,7 @@ export const POST = route(async (request) => {
     } else {
       // The list is read again on the way, so member info is refreshed too.
       const { members, skipped } = planMemberSync(list, chapter.chapter);
-      await upsertGrouped(db, 'members', members);
+      await upsertGrouped(db, 'members', await keepPendingFields(db, members));
       const issues = [];
       const pfoRows = members
         .filter((member) => list.results.has(member.MemberIDNo))

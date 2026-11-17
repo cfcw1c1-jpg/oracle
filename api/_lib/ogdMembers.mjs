@@ -105,7 +105,7 @@ function readMembersTable(frame) {
   });
 }
 
-async function findMembersTable(page, timeoutMs) {
+export async function findMembersTable(page, timeoutMs) {
   const end = Date.now() + timeoutMs;
   do {
     for (const frame of page.frames()) {
@@ -238,10 +238,10 @@ const MAX_CONSECUTIVE_FAILURES = 4;
 // Finds a visible element with exactly this text inside the member popup:
 // first in frames the popup added, then inside a popup container. Links are
 // tried before wider elements so the click lands on the link itself.
-async function findInPopup(page, framesBefore, label) {
+async function findInPopup(page, framesBefore, label, timeoutMs = MODAL_WAIT_MS) {
   const pattern = new RegExp(`^\\s*${label}\\s*$`, 'i');
   const kinds = ['a', 'li', 'span', 'td', 'div', 'button'];
-  const end = Date.now() + MODAL_WAIT_MS;
+  const end = Date.now() + timeoutMs;
   do {
     const newFrames = page.frames().filter((frame) => !framesBefore.has(frame));
     const scopes = [...newFrames.map((frame) => frame.locator('body')), ...page.frames().map((frame) => frame.locator(MODAL_CONTAINERS))];
@@ -261,7 +261,7 @@ async function findInPopup(page, framesBefore, label) {
 
 // Polls every frame with read(frame) until it returns a result for a frame
 // that shows the expected Member ID, so a stale popup is never read.
-async function waitForPopupContent(page, read, timeoutMs = MODAL_WAIT_MS) {
+export async function waitForPopupContent(page, read, timeoutMs = MODAL_WAIT_MS) {
   const end = Date.now() + timeoutMs;
   do {
     for (const frame of page.frames()) {
@@ -281,7 +281,7 @@ async function popupIsOpen(page, memberId, framesBefore) {
   return false;
 }
 
-async function closePopup(page, memberId, framesBefore) {
+export async function closePopup(page, memberId, framesBefore) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let clicked = false;
     for (const frame of page.frames()) {
@@ -309,6 +309,25 @@ async function openMemberTab(page, member, tabLabel) {
   const tab = await findInPopup(page, framesBefore, tabLabel);
   if (!tab) throw new Error(`The member popup has no ${tabLabel} tab.`);
   await tab.click({ timeout: CLICK_TIMEOUT_MS });
+  return framesBefore;
+}
+
+// Opens a member's popup and, when it has one of these tabs, clicks the first
+// found. Without any, the popup stays on the tab it opened with. Returns the
+// frames that existed before, for closePopup and friends.
+export async function openMemberPopup(page, member, tabLabels = []) {
+  const framesBefore = new Set(page.frames());
+  const cell = member.listFrame.locator(`tr[data-oracle-row="${member.rowIndex}"] > td`).nth(member.nameColumn);
+  const link = cell.locator('a, [onclick]').first();
+  await ((await link.count()) ? link : cell).click({ timeout: CLICK_TIMEOUT_MS });
+  // The first label waits for the popup to appear; the rest only look.
+  for (const [index, label] of tabLabels.entries()) {
+    const tab = await findInPopup(page, framesBefore, label, index === 0 ? MODAL_WAIT_MS : POLL_MS);
+    if (tab) {
+      await tab.click({ timeout: CLICK_TIMEOUT_MS });
+      break;
+    }
+  }
   return framesBefore;
 }
 
@@ -573,7 +592,10 @@ export async function readFormations(page, member) {
 // onProgress({ done, page }) reports the chapter's members covered so far in
 // this pass: all of them on pages before startPage (finished by an earlier
 // run) plus each one handled since.
-export function createMemberListReader({ deadline, chapterName, startPage = 1, perMember, onProgress = async () => {} }) {
+// perMember(page, member) runs for every member of the chapter, in list
+// order. shouldStop(), checked after each page, ends the walk early (as a
+// complete one) once the caller has everything it needs.
+export function createMemberListReader({ deadline, chapterName, startPage = 1, perMember, onProgress = async () => {}, shouldStop = () => false }) {
   const inChapter = (headers, cells) => {
     const area = cells[headers.indexOf('Area')] ?? '';
     return area.toUpperCase().startsWith(chapterName.toUpperCase());
@@ -635,6 +657,7 @@ export function createMemberListReader({ deadline, chapterName, startPage = 1, p
         }
       }
 
+      if (shouldStop()) break;
       if (Date.now() > deadline) {
         timedOut = true;
         nextPage = pageNumber + 1;

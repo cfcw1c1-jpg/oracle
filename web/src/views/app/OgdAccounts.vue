@@ -1,5 +1,5 @@
 <script setup>
-import { Check, ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw } from 'lucide-vue-next';
+import { ArrowRight, Check, ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw, Trash2, Undo2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -7,8 +7,8 @@ import LoadingBlock from '@/components/LoadingBlock.vue';
 import PageHead from '@/components/PageHead.vue';
 import PasswordField from '@/components/PasswordField.vue';
 import SearchInput from '@/components/SearchInput.vue';
-import { formatDateTime } from '@/lib/data';
-import { FAILURE_MESSAGES, fetchOgdChapters, runOgdTestLogin, saveOgdCredential, syncOgdMembers } from '@/lib/ogdApi';
+import { confirmAction, formatDateTime } from '@/lib/data';
+import { FAILURE_MESSAGES, fetchOgdChanges, fetchOgdChapters, pushOgdChanges, runOgdTestLogin, saveOgdCredential, syncOgdMembers, updateOgdChanges } from '@/lib/ogdApi';
 
 const props = defineProps({ scopes: { type: Array, required: true } });
 
@@ -253,6 +253,137 @@ function progressLabel(row) {
   return `${reading} ${count}${progress.page ? ` · page ${progress.page}` : ''}${runText}`;
 }
 
+// ---------- Changes waiting for OGD ----------
+// Member edits saved in Oracle wait here until MSG or the Chapter Head pushes
+// them. Discard drops a change (Oracle keeps it); Revert also restores the
+// old value in Oracle.
+
+const FIELD_LABELS = {
+  Lastname: 'Last name', Firstname: 'First name', Gender: 'Gender', Status: 'Status', SpouseName: 'Spouse',
+  Phone: 'Phone', MobileNo: 'Mobile #', Email: 'Email', PastoralService: 'Pastoral service', AreaName: 'Area',
+  NameOfHouseholdHead: 'Household head', YearRegistered: 'Year registered',
+};
+const CHANGE_STATUS = { pending: { label: 'Waiting', tone: 'info' }, failed: { label: 'Not pushed', tone: 'danger' } };
+const MAX_PUSH_RUNS = 20;
+
+const changes = ref([]);
+const changesState = reactive({ status: 'idle', message: '' });
+const selectedChanges = ref(new Set());
+const busyChanges = ref(false);
+const pushingIds = ref(new Set());
+const pushNotice = ref('');
+
+const changeColumns = [
+  { key: 'select', label: '', action: true },
+  { key: 'memberName', label: 'Member' },
+  { key: 'chapter', label: 'Chapter', value: (change) => chapterName(change.areaId) },
+  { key: 'field', label: 'Field', value: (change) => FIELD_LABELS[change.field] ?? change.field },
+  { key: 'change', label: 'Change', value: (change) => change.newValue ?? '' },
+  { key: 'changedAt', label: 'Edited' },
+  { key: 'status', label: 'Status', value: (change) => CHANGE_STATUS[change.status]?.label ?? change.status },
+  { key: 'rowActions', label: 'Actions', action: true },
+];
+
+const chapterName = (areaId) => rows.value.find((row) => row.areaId === areaId)?.chapter ?? '';
+const changeCount = (areaId) => changes.value.filter((change) => change.areaId === areaId).length;
+const allChangesSelected = computed(() => changes.value.length > 0 && changes.value.every((change) => selectedChanges.value.has(change.id)));
+
+async function loadChanges() {
+  if (scope.value !== 'accounts') return;
+  if (changesState.status === 'idle') changesState.status = 'loading';
+  try {
+    changes.value = await fetchOgdChanges(scope.value);
+    const open = new Set(changes.value.map((change) => change.id));
+    selectedChanges.value = new Set([...selectedChanges.value].filter((id) => open.has(id)));
+    Object.assign(changesState, { status: 'success', message: '' });
+  } catch (error) {
+    Object.assign(changesState, { status: 'error', message: error.message });
+  }
+}
+
+function toggleChange(id) {
+  const next = new Set(selectedChanges.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedChanges.value = next;
+}
+
+function toggleAllChanges() {
+  selectedChanges.value = allChangesSelected.value ? new Set() : new Set(changes.value.map((change) => change.id));
+}
+
+async function updateChanges(action, ids) {
+  if (!ids.length) return;
+  const count = ids.length === 1 ? 'this change' : `these ${ids.length} changes`;
+  const message = action === 'revert'
+    ? `Oracle will go back to the old value for ${count}, and nothing is sent to OGD.`
+    : `Oracle keeps the new value for ${count}, but it will not be sent to OGD.`;
+  if (!confirmAction(action === 'revert' ? 'Revert in Oracle?' : 'Remove from the OGD queue?', message)) return;
+  busyChanges.value = true;
+  pushNotice.value = '';
+  try {
+    await updateOgdChanges({ scope: scope.value, action, ids });
+    selectedChanges.value = new Set([...selectedChanges.value].filter((id) => !ids.includes(id)));
+  } catch (error) {
+    pushNotice.value = error.message;
+  } finally {
+    busyChanges.value = false;
+    loadChanges();
+  }
+}
+
+function setPushing(areaId, isPushing) {
+  const next = new Set(pushingIds.value);
+  if (isPushing) next.add(areaId);
+  else next.delete(areaId);
+  pushingIds.value = next;
+}
+
+// Each run signs in once and pushes as many members as fit; the server says
+// more: true when changes are left over and this starts the next run.
+async function pushChanges(row) {
+  const count = changeCount(row.areaId);
+  if (!count || !confirmAction(`Push ${count} change${count === 1 ? '' : 's'} to OGD?`, `This signs in to OGD as ${row.chapter} and saves the changes on each member's record there.`)) return;
+  notice.value = '';
+  pushNotice.value = '';
+  setPushing(row.areaId, true);
+  try {
+    let retries = 0;
+    for (let run = 1; run <= MAX_PUSH_RUNS && isMounted; run += 1) {
+      let result;
+      try {
+        result = await pushOgdChanges({ scope: scope.value, areaId: row.areaId });
+      } catch (error) {
+        if (error.status !== 429 || retries >= MAX_SIGN_IN_RETRIES) throw error;
+        result = { status: 'failed', failureCode: 'cooldown' };
+      }
+      if (result.status === 'failed' && (result.failureCode === 'cooldown' || RETRYABLE_FAILURES.has(result.failureCode)) && retries < MAX_SIGN_IN_RETRIES) {
+        retries += 1;
+        await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
+        continue;
+      }
+      pushNotice.value = `${row.chapter}: ${result.status === 'failed' ? (FAILURE_MESSAGES[result.failureCode] ?? result.statusDetail ?? 'The push failed.') : result.statusDetail}`;
+      await loadChanges();
+      if (!result.more) break;
+    }
+  } catch (error) {
+    pushNotice.value = `${row.chapter}: ${error.message}`;
+  } finally {
+    setPushing(row.areaId, false);
+    if (isMounted) {
+      load();
+      loadChanges();
+    }
+  }
+}
+
+watch(scope, () => {
+  changes.value = [];
+  changesState.status = 'idle';
+  loadChanges();
+});
+
+onMounted(loadChanges);
 onMounted(load);
 onBeforeUnmount(() => {
   isMounted = false;
@@ -337,11 +468,53 @@ onBeforeUnmount(() => {
         <template #cell-actions="{ row }">
           <div class="row">
             <button class="link-btn" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
-            <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId)" class="spinner sm" role="status" aria-label="Working" />
-            <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running'">
+            <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId) || pushingIds.has(row.areaId)" class="spinner sm" role="status" :aria-label="pushingIds.has(row.areaId) ? 'Pushing to OGD' : 'Working'" />
+            <span v-if="pushingIds.has(row.areaId)" class="muted small">Pushing to OGD…</span>
+            <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
               <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
               <button class="link-btn" @click="syncMembers(row)"><RefreshCw :size="13" />Sync Members</button>
+              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="link-btn" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
             </template>
+          </div>
+        </template>
+      </DataTable>
+    </section>
+
+    <section v-if="scope === 'accounts'" class="card" aria-labelledby="ogd-changes-title">
+      <div class="card-pad changes-head">
+        <div class="grow">
+          <h2 id="ogd-changes-title" class="card-title">Changes waiting for OGD</h2>
+          <p class="muted small">Member edits saved in Oracle. Remove the ones that should not go to OGD, then use Push to OGD on the chapter above.</p>
+        </div>
+        <div v-if="changes.length" class="row row-wrap">
+          <label class="check small"><input class="tick" type="checkbox" :checked="allChangesSelected" @change="toggleAllChanges" />Select all</label>
+          <button class="btn btn-sm" :disabled="!selectedChanges.size || busyChanges || pushingIds.size > 0" @click="updateChanges('discard', [...selectedChanges])"><Trash2 :size="13" />Discard selected</button>
+          <button class="btn btn-sm" :disabled="!selectedChanges.size || busyChanges || pushingIds.size > 0" @click="updateChanges('revert', [...selectedChanges])"><Undo2 :size="13" />Revert selected</button>
+        </div>
+      </div>
+      <p v-if="pushNotice" class="notice push-notice" role="status">{{ pushNotice }}</p>
+      <LoadingBlock v-if="changesState.status === 'loading'" />
+      <div v-else-if="changesState.status === 'error'" class="card-pad stack">
+        <p class="text-danger">{{ changesState.message }}</p>
+        <div><button class="btn btn-sm" @click="loadChanges">Try again</button></div>
+      </div>
+      <DataTable v-else :columns="changeColumns" :rows="changes" row-key="id" :initial-sort="{ key: 'changedAt', ascending: false }" empty-text="Nothing is waiting. Member edits saved in Oracle will show here.">
+        <template #cell-select="{ row }"><input class="tick" type="checkbox" :aria-label="`Select ${row.memberName} ${FIELD_LABELS[row.field] ?? row.field}`" :checked="selectedChanges.has(row.id)" @change="toggleChange(row.id)" /></template>
+        <template #cell-memberName="{ row }"><span class="strong">{{ row.memberName }}</span><p class="muted tiny">{{ row.memberId }}</p></template>
+        <template #cell-change="{ row }">
+          <span class="change"><span class="old">{{ row.oldValue || 'blank' }}</span><ArrowRight :size="12" aria-label="to" /><span class="strong">{{ row.newValue || 'blank' }}</span></span>
+        </template>
+        <template #cell-changedAt="{ row }"><span class="nowrap">{{ formatDateTime(row.changedAt) }}</span><p v-if="row.changedBy" class="muted tiny">{{ row.changedBy }}</p></template>
+        <template #cell-status="{ row }">
+          <div class="status">
+            <span class="pill" :class="CHANGE_STATUS[row.status]?.tone">{{ CHANGE_STATUS[row.status]?.label ?? row.status }}</span>
+            <p v-if="row.detail" class="muted tiny">{{ row.detail }}</p>
+          </div>
+        </template>
+        <template #cell-rowActions="{ row }">
+          <div class="row">
+            <button class="link-btn" :disabled="busyChanges || pushingIds.has(row.areaId)" @click="updateChanges('discard', [row.id])"><Trash2 :size="13" />Discard</button>
+            <button class="link-btn" :disabled="busyChanges || pushingIds.has(row.areaId)" @click="updateChanges('revert', [row.id])"><Undo2 :size="13" />Revert</button>
           </div>
         </template>
       </DataTable>
@@ -386,4 +559,9 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
   .progress.indeterminate .progress-fill { animation: none; left: 0; opacity: 0.6; }
 }
 .actions { justify-content: flex-end; }
+.changes-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.push-notice { margin: 0 16px 12px; }
+.tick { width: 16px; height: 16px; accent-color: var(--primary); }
+.change { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.change .old { color: var(--muted); text-decoration: line-through; }
 </style>

@@ -29,6 +29,19 @@ export function syncOgdMembers(values) {
   return request('/api/ogd/sync-members', { method: 'POST', body: JSON.stringify(values) });
 }
 
+export async function fetchOgdChanges(scope) {
+  return (await request(`/api/ogd/changes?scope=${encodeURIComponent(scope)}`)).changes;
+}
+
+// action: 'discard' (drop from the queue) or 'revert' (also restore Oracle's old value).
+export function updateOgdChanges(values) {
+  return request('/api/ogd/changes', { method: 'POST', body: JSON.stringify(values) });
+}
+
+export function pushOgdChanges(values) {
+  return request('/api/ogd/push-changes', { method: 'POST', body: JSON.stringify(values) });
+}
+
 export function fetchPastoralReports() {
   return request('/api/ogd/reports');
 }
