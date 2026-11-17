@@ -147,7 +147,14 @@ async function testLogin(row) {
 const MAX_SYNC_RUNS = 60;
 // The server writes progress every few seconds; this re-reads it while a sync runs.
 const PROGRESS_POLL_MS = 4000;
+// A run that could not sign in is tried again after OGD's one-minute spacing
+// between logins, a few times in a row, so a sync isn't lost to a hiccup. Wrong
+// credentials and Gmail problems still stop the sync straight away.
+const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found']);
+const MAX_SIGN_IN_RETRIES = 3;
+const RETRY_WAIT_MS = 65 * 1000;
 const syncRuns = ref({});
+const syncWaiting = ref({});
 let isMounted = true;
 let pollTimer = null;
 
@@ -163,9 +170,23 @@ async function syncMembers(row) {
   notice.value = '';
   setSyncing(row.areaId, true);
   try {
+    let retries = 0;
     for (let run = 1; run <= MAX_SYNC_RUNS && isMounted; run += 1) {
       syncRuns.value = { ...syncRuns.value, [row.areaId]: run };
-      const result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+      let result;
+      try {
+        result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+      } catch (error) {
+        if (error.status !== 429 || retries >= MAX_SIGN_IN_RETRIES) throw error;
+        result = { status: 'failed', failureCode: 'cooldown' };
+      }
+      const canRetry = result.status === 'failed' && (result.failureCode === 'cooldown' || RETRYABLE_FAILURES.has(result.failureCode));
+      if (canRetry && retries < MAX_SIGN_IN_RETRIES) {
+        retries += 1;
+        await waitBeforeRetry(row.areaId);
+        continue;
+      }
+      if (result.status !== 'failed') retries = 0;
       if (!result.more) break;
     }
   } catch (error) {
@@ -173,9 +194,18 @@ async function syncMembers(row) {
   } finally {
     const { [row.areaId]: _, ...rest } = syncRuns.value;
     syncRuns.value = rest;
+    const { [row.areaId]: __, ...waiting } = syncWaiting.value;
+    syncWaiting.value = waiting;
     setSyncing(row.areaId, false);
     if (isMounted) load();
   }
+}
+
+async function waitBeforeRetry(areaId) {
+  syncWaiting.value = { ...syncWaiting.value, [areaId]: Date.now() + RETRY_WAIT_MS };
+  await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
+  const { [areaId]: _, ...rest } = syncWaiting.value;
+  syncWaiting.value = rest;
 }
 
 function setSyncing(areaId, isSyncing) {
@@ -215,6 +245,7 @@ function progressLabel(row) {
   const progress = row.memberSync?.progress;
   const run = syncRuns.value[row.areaId];
   const runText = run > 1 ? ` · run ${run}` : '';
+  if (syncWaiting.value[row.areaId]) return `Sign-in failed, trying again in about a minute…${runText}`;
   if (!progress) return `Starting…${runText}`;
   if (progress.stage !== 'reading') return `${STAGE_LABELS[progress.stage] ?? 'Working…'}${runText}`;
   const count = progress.total ? `${Math.min(progress.done ?? 0, progress.total)} of ~${progress.total}` : `${progress.done ?? 0}`;

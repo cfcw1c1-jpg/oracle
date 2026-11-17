@@ -5,7 +5,11 @@ async function request(path, options = {}) {
   if (!data.session) throw new Error('Please sign in again.');
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` } });
   const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload) throw new Error(payload?.error || 'The server could not complete this request.');
+  if (!response.ok || !payload) {
+    const error = new Error(payload?.error || 'The server could not complete this request.');
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
