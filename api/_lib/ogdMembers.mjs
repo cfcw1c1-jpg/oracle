@@ -346,7 +346,11 @@ async function readHouseholdHead(page, listFrame, rowIndex, nameColumn, memberId
 // household head. At the deadline it stops and reports nextHouseholdPage so
 // the next run carries on from there. Stopping early still returns what was
 // read, with complete: false and the reason.
-export function createMemberListReader({ deadline, chapterName, householdStartPage = 1 }) {
+//
+// onProgress({ done, page }) reports the chapter's members covered so far in
+// this pass: all of them on pages before householdStartPage (finished by an
+// earlier run) plus each one opened since.
+export function createMemberListReader({ deadline, chapterName, householdStartPage = 1, onProgress = async () => {} }) {
   const inChapter = (headers, cells) => {
     const area = cells[headers.indexOf('Area')] ?? '';
     return area.toUpperCase().startsWith(chapterName.toUpperCase());
@@ -368,13 +372,18 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
     let nextHouseholdPage = null;
     let failures = 0;
     let lastError = null;
+    let done = 0;
+    const report = (pageNumber) => onProgress({ done, page: pageNumber }).catch(() => null);
 
     pages: while (pagesRead < MAX_PAGES) {
       const pageNumber = (await pagerAction(found.frame, 'read').catch(() => null))?.current ?? pagesRead + 1;
       records.push(...found.table.records);
       pagesRead += 1;
 
-      if (pageNumber >= householdStartPage) {
+      if (pageNumber < householdStartPage) {
+        done += found.table.records.filter((cells) => inChapter(headers, cells)).length;
+        await report(pageNumber);
+      } else {
         for (const [rowIndex, cells] of found.table.records.entries()) {
           if (!inChapter(headers, cells)) continue;
           if (Date.now() > deadline) {
@@ -396,6 +405,8 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
               break pages;
             }
           }
+          done += 1;
+          await report(pageNumber);
           // Re-tag the rows in case the popup re-rendered the list.
           found = (await findMembersTable(page, 0)) ?? found;
         }

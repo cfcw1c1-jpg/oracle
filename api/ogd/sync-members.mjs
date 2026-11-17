@@ -6,6 +6,7 @@ import { runChapterLogin } from '../_lib/ogdRun.mjs';
 // the function's maxDuration (vercel.json), after the login and OTP wait.
 const READ_BUDGET_MS = 230 * 1000;
 const UPSERT_CHUNK = 100;
+const PROGRESS_EVERY_MS = 3000;
 
 function plural(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
@@ -35,6 +36,29 @@ async function saveMembers(db, members) {
   return withHead.length;
 }
 
+// The bar's total is how many of the chapter's members Oracle already has;
+// OGD's list doesn't say how many it holds until the last page.
+async function estimateMemberCount(db, chapterName) {
+  const pattern = `${chapterName.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  const { count, error } = await db.from('members').select('MemberIDNo', { count: 'exact', head: true }).ilike('AreaName', pattern);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+// Writes the running sync's progress for the OGD Accounts page to poll. The
+// row's last result stays as it is until the run finishes.
+function createProgressWriter(db, areaId, previousStatus) {
+  let lastWrite = 0;
+  return async (fields, { force = false } = {}) => {
+    if (!force && Date.now() - lastWrite < PROGRESS_EVERY_MS) return;
+    lastWrite = Date.now();
+    const { error } = await db
+      .from('ogd_member_syncs')
+      .upsert({ area_id: areaId, status: previousStatus ?? 'partial', ...fields, progress_at: new Date().toISOString() }, { onConflict: 'area_id' });
+    if (error) console.error('[ogd] progress write failed:', error.message);
+  };
+}
+
 // Signs one chapter in to OGD and copies its Members Database list into the
 // members table, keyed by Member ID, plus each member's present household
 // head from their Service tab. Household heads need a popup per member, so a
@@ -50,13 +74,23 @@ export const POST = route(async (request) => {
   const chapter = chapters.find((item) => item.areaId === areaId);
   if (!chapter) throw new HttpError(403, 'You cannot manage this chapter.');
 
-  const { data: previous, error: previousError } = await db.from('ogd_member_syncs').select('hh_next_page').eq('area_id', areaId).maybeSingle();
+  const { data: previous, error: previousError } = await db.from('ogd_member_syncs').select('status, hh_next_page').eq('area_id', areaId).maybeSingle();
   if (previousError) throw previousError;
   const householdStartPage = previous?.hh_next_page ?? 1;
 
-  const reader = createMemberListReader({ deadline: startedAt + READ_BUDGET_MS, chapterName: chapter.chapter, householdStartPage });
+  const total = await estimateMemberCount(db, chapter.chapter);
+  const writeProgress = createProgressWriter(db, areaId, previous?.status);
+  await writeProgress({ progress_stage: 'signing_in', progress_done: 0, progress_total: total, progress_page: null }, { force: true });
+
+  const reader = createMemberListReader({
+    deadline: startedAt + READ_BUDGET_MS,
+    chapterName: chapter.chapter,
+    householdStartPage,
+    onProgress: ({ done, page }) => writeProgress({ progress_stage: 'reading', progress_done: done, progress_total: Math.max(total, done), progress_page: page }),
+  });
   const run = await runChapterLogin({ db, areaId, userId, afterLogin: reader });
   const list = run.afterLoginResult;
+  if (list) await writeProgress({ progress_stage: 'saving' }, { force: true });
 
   let record;
   let more = false;
@@ -81,7 +115,10 @@ export const POST = route(async (request) => {
 
   const { error } = await db
     .from('ogd_member_syncs')
-    .upsert({ area_id: areaId, ...record, synced_at: new Date().toISOString(), synced_by: userId }, { onConflict: 'area_id' });
+    .upsert(
+      { area_id: areaId, ...record, progress_stage: null, progress_at: new Date().toISOString(), synced_at: new Date().toISOString(), synced_by: userId },
+      { onConflict: 'area_id' },
+    );
   if (error) throw error;
 
   return {

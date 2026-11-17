@@ -145,24 +145,34 @@ async function testLogin(row) {
 // and this keeps starting the next run. Leaving the page stops the loop; the
 // next Sync Members resumes from the saved page.
 const MAX_SYNC_RUNS = 30;
-const syncProgress = ref({});
+// The server writes progress every few seconds; this re-reads it while a sync runs.
+const PROGRESS_POLL_MS = 4000;
+const syncRuns = ref({});
 let isMounted = true;
+let pollTimer = null;
+
+function updatePolling() {
+  if (syncingIds.value.size && !pollTimer) pollTimer = setInterval(load, PROGRESS_POLL_MS);
+  if (!syncingIds.value.size && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
 async function syncMembers(row) {
   notice.value = '';
   setSyncing(row.areaId, true);
   try {
     for (let run = 1; run <= MAX_SYNC_RUNS && isMounted; run += 1) {
+      syncRuns.value = { ...syncRuns.value, [row.areaId]: run };
       const result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
       if (!result.more) break;
-      syncProgress.value = { ...syncProgress.value, [row.areaId]: `Run ${run} done; continuing from page ${result.nextPage}…` };
-      load();
     }
   } catch (error) {
     notice.value = `${row.chapter}: ${error.message}`;
   } finally {
-    const { [row.areaId]: _, ...rest } = syncProgress.value;
-    syncProgress.value = rest;
+    const { [row.areaId]: _, ...rest } = syncRuns.value;
+    syncRuns.value = rest;
     setSyncing(row.areaId, false);
     if (isMounted) load();
   }
@@ -173,11 +183,33 @@ function setSyncing(areaId, isSyncing) {
   if (isSyncing) next.add(areaId);
   else next.delete(areaId);
   syncingIds.value = next;
+  updatePolling();
+}
+
+const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…' };
+
+// Percent for the bar, or null while the total is unknown (indeterminate bar).
+// Signing in and saving sit at the ends so the bar never jumps backwards.
+function progressPercent(progress) {
+  if (!progress?.total) return null;
+  if (progress.stage === 'saving') return 100;
+  return Math.min(99, Math.round(((progress.done ?? 0) / progress.total) * 100));
+}
+
+function progressLabel(row) {
+  const progress = row.memberSync?.progress;
+  const run = syncRuns.value[row.areaId];
+  const runText = run > 1 ? ` · run ${run}` : '';
+  if (!progress) return `Starting…${runText}`;
+  if (progress.stage !== 'reading') return `${STAGE_LABELS[progress.stage] ?? 'Working…'}${runText}`;
+  const count = progress.total ? `${Math.min(progress.done ?? 0, progress.total)} of ~${progress.total}` : `${progress.done ?? 0}`;
+  return `${STAGE_LABELS.reading} ${count}${progress.page ? ` · page ${progress.page}` : ''}${runText}`;
 }
 
 onMounted(load);
 onBeforeUnmount(() => {
   isMounted = false;
+  clearInterval(pollTimer);
 });
 </script>
 
@@ -227,7 +259,19 @@ onBeforeUnmount(() => {
           <div class="status">
             <template v-if="syncingIds.has(row.areaId)">
               <span class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
-              <p class="muted tiny">{{ syncProgress[row.areaId] || 'Signing in and reading members. This can take a few minutes; keep this page open.' }}</p>
+              <div
+                class="progress"
+                :class="{ indeterminate: progressPercent(row.memberSync?.progress) === null }"
+                role="progressbar"
+                aria-label="Members sync progress"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="progressPercent(row.memberSync?.progress) ?? undefined"
+              >
+                <div class="progress-fill" :style="{ width: `${progressPercent(row.memberSync?.progress) ?? 35}%` }" />
+              </div>
+              <p class="muted tiny">{{ progressLabel(row) }}</p>
+              <p class="muted tiny">Keep this page open until it finishes.</p>
             </template>
             <template v-else-if="row.memberSync">
               <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
@@ -274,5 +318,13 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .guide-body a { display: block; font-weight: var(--fw-medium); }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
+.progress { position: relative; height: 6px; margin-top: 6px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; min-width: 140px; }
+.progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
+.progress.indeterminate .progress-fill { position: absolute; animation: progress-slide 1.4s ease-in-out infinite; }
+@keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill { transition: none; }
+  .progress.indeterminate .progress-fill { animation: none; left: 0; opacity: 0.6; }
+}
 .actions { justify-content: flex-end; }
 </style>

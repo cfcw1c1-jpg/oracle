@@ -18,7 +18,7 @@ export const GET = route(async (request) => {
         .order('area_id'),
     ),
     // Until 2026111701_ogd_member_syncs.sql runs, every chapter reads as never synced.
-    fetchAllRows(() => db.from('ogd_member_syncs').select('area_id, status, members_saved, households_saved, hh_next_page, failure_code, status_detail, synced_at').order('area_id')).catch(
+    fetchAllRows(() => db.from('ogd_member_syncs').select('area_id, status, members_saved, households_saved, hh_next_page, failure_code, status_detail, synced_at, progress_stage, progress_done, progress_total, progress_page, progress_at').order('area_id')).catch(
       (error) => {
         if (error?.code === 'PGRST205' || error?.code === '42P01') return [];
         throw error;
@@ -45,7 +45,8 @@ export const GET = route(async (request) => {
         lastAttemptAt: row?.last_attempt_at ?? null,
         lastSuccessAt: row?.last_success_at ?? null,
         memberSync: sync
-          ? { status: sync.status, membersSaved: sync.members_saved, householdsSaved: sync.households_saved, nextPage: sync.hh_next_page, failureCode: sync.failure_code, statusDetail: sync.status_detail, syncedAt: sync.synced_at }
+          ? { status: sync.status, membersSaved: sync.members_saved, householdsSaved: sync.households_saved, nextPage: sync.hh_next_page, failureCode: sync.failure_code, statusDetail: sync.status_detail, syncedAt: sync.synced_at,
+              progress: sync.progress_stage ? { stage: sync.progress_stage, done: sync.progress_done, total: sync.progress_total, page: sync.progress_page, at: sync.progress_at } : null }
           : null,
       };
     }),
