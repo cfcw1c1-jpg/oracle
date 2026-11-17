@@ -16,9 +16,13 @@ import { supabase } from '@/lib/supabase';
 
 const props = defineProps({ roleName: { type: String, default: null } });
 
-// Other roles' edits go to the Change Requests queue instead of the record.
-const APPROVER_ROLES = new Set(['Admin', 'Moderator']);
-const canApprove = computed(() => APPROVER_ROLES.has(props.roleName));
+// These roles save edits straight to the record. Chapter Heads and MSGs push
+// their saved edits to OGD themselves from OGD Accounts, so they skip the
+// approval queue. Other roles' edits go to the Change Requests queue.
+const DIRECT_EDIT_ROLES = new Set(['Admin', 'Moderator', 'Chapter Head', 'MSG']);
+const OGD_PUSH_ROLES = new Set(['Chapter Head', 'MSG']);
+const canApprove = computed(() => DIRECT_EDIT_ROLES.has(props.roleName));
+const pushesToOgd = computed(() => OGD_PUSH_ROLES.has(props.roleName));
 
 const members = ref([]);
 const isLoading = ref(true);
@@ -117,6 +121,7 @@ async function changeField(member, field, value, label, event) {
   busyId.value = member.MemberIDNo;
   try {
     const queued = await applyOrQueue(member.MemberIDNo, { [field]: value }, { [field]: member[field] });
+    if (!queued && pushesToOgd.value) showAlert('Saved', `The ${label} change is saved. Push it to OGD from OGD Accounts.`);
     if (queued) {
       event.target.value = field === 'Status' ? statusOf(member) : (member[field] || '').trim().toUpperCase();
       showAlert('Submitted for Approval', `This ${label} change has been sent to an Admin/Moderator for review.`);
@@ -160,6 +165,7 @@ async function saveEdit() {
     const queued = await applyOrQueue(memberId, changes, previous);
     editForm.value = null;
     if (queued) showAlert('Submitted for Approval', `${count} field(s) sent to an Admin/Moderator for review.`);
+    else if (pushesToOgd.value) showAlert('Saved', `${count} field(s) saved. Push them to OGD from OGD Accounts.`);
   } catch (error) {
     showAlert('Save Failed', error.message);
   } finally {

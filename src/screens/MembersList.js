@@ -254,11 +254,12 @@ function SelectField({ label, value, options, onChange, getLabel = (v) => v, pla
   );
 }
 
-// Admins/Moderators keep writing to `members` directly from this screen, as
-// before. Any other role's edits here are queued in member_change_requests
-// for one of them to review on the Change Requests page instead -- see
-// scripts/sql/add-member-change-requests.sql.
-const APPROVER_ROLES = new Set(['Admin', 'Moderator']);
+// Admins, Moderators, Chapter Heads and MSGs write to `members` directly from
+// this screen. Chapter Heads and MSGs then push their edits to OGD from OGD
+// Accounts on the website. Any other role's edits here are queued in
+// member_change_requests for review on the Change Requests page instead --
+// see scripts/sql/add-member-change-requests.sql.
+const APPROVER_ROLES = new Set(['Admin', 'Moderator', 'Chapter Head', 'MSG']);
 
 export default function MembersList({ roleName }) {
   const canApproveChanges = APPROVER_ROLES.has(roleName);
