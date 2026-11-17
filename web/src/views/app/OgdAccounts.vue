@@ -1,5 +1,5 @@
 <script setup>
-import { ChevronDown, ChevronUp, Info, KeyRound, LogIn } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw } from 'lucide-vue-next';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -8,7 +8,7 @@ import PageHead from '@/components/PageHead.vue';
 import PasswordField from '@/components/PasswordField.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { formatDateTime } from '@/lib/data';
-import { FAILURE_MESSAGES, fetchOgdChapters, runOgdTestLogin, saveOgdCredential } from '@/lib/ogdApi';
+import { FAILURE_MESSAGES, fetchOgdChapters, runOgdTestLogin, saveOgdCredential, syncOgdMembers } from '@/lib/ogdApi';
 
 const props = defineProps({ scopes: { type: Array, required: true } });
 
@@ -25,6 +25,10 @@ const COPY = {
 const STATUS = {
   connected: { label: 'Logged in', tone: 'success' }, running: { label: 'Logging in…', tone: 'info' },
   failed: { label: 'Failed', tone: 'danger' }, idle: { label: 'Not tested', tone: '' },
+};
+const SYNC_STATUS = {
+  synced: { label: 'Synced', tone: 'success' }, partial: { label: 'Partly synced', tone: 'warning' },
+  failed: { label: 'Sync failed', tone: 'danger' }, syncing: { label: 'Syncing…', tone: 'info' },
 };
 const GUIDE_STEPS = [
   { text: "Sign in to the chapter's Gmail account in your browser." },
@@ -49,6 +53,7 @@ const isGuideOpen = ref(true);
 const editing = ref(null);
 const form = reactive({ identifier: '', password: '', error: '', isSaving: false });
 const testingIds = ref(new Set());
+const syncingIds = ref(new Set());
 const notice = ref('');
 
 function setupLabel(row) {
@@ -63,6 +68,7 @@ const columns = computed(() => [
   { key: 'setup', label: 'Setup', value: setupLabel },
   { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label },
   { key: 'lastAttemptAt', label: 'Last Attempt' },
+  { key: 'memberSync', label: 'Members Sync', value: (row) => row.memberSync?.syncedAt ?? '' },
   { key: 'actions', label: 'Actions', action: true },
 ]);
 
@@ -134,6 +140,28 @@ async function testLogin(row) {
   }
 }
 
+// The server signs in and reads every page of OGD's list, which can take a
+// few minutes, so the row shows a spinner until it answers.
+async function syncMembers(row) {
+  notice.value = '';
+  setSyncing(row.areaId, true);
+  try {
+    await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+  } catch (error) {
+    notice.value = `${row.chapter}: ${error.message}`;
+  } finally {
+    setSyncing(row.areaId, false);
+    load();
+  }
+}
+
+function setSyncing(areaId, isSyncing) {
+  const next = new Set(syncingIds.value);
+  if (isSyncing) next.add(areaId);
+  else next.delete(areaId);
+  syncingIds.value = next;
+}
+
 onMounted(load);
 </script>
 
@@ -179,11 +207,26 @@ onMounted(load);
           </div>
         </template>
         <template #cell-lastAttemptAt="{ value }"><span class="nowrap">{{ formatDateTime(value) }}</span></template>
+        <template #cell-memberSync="{ row }">
+          <div class="status">
+            <span v-if="syncingIds.has(row.areaId)" class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
+            <template v-else-if="row.memberSync">
+              <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
+              <p v-if="row.memberSync.status === 'failed' && FAILURE_MESSAGES[row.memberSync.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.memberSync.failureCode] }}</p>
+              <p v-if="row.memberSync.statusDetail" class="muted tiny">{{ row.memberSync.statusDetail }}</p>
+              <p class="muted tiny">{{ formatDateTime(row.memberSync.syncedAt) }}</p>
+            </template>
+            <span v-else class="muted small">Never synced</span>
+          </div>
+        </template>
         <template #cell-actions="{ row }">
           <div class="row">
             <button class="link-btn" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
-            <span v-if="testingIds.has(row.areaId)" class="spinner sm" role="status" aria-label="Testing login" />
-            <button v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running'" class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
+            <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId)" class="spinner sm" role="status" aria-label="Working" />
+            <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running'">
+              <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
+              <button class="link-btn" @click="syncMembers(row)"><RefreshCw :size="13" />Sync Members</button>
+            </template>
           </div>
         </template>
       </DataTable>

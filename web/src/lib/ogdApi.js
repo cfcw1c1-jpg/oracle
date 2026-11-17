@@ -21,6 +21,10 @@ export function runOgdTestLogin(values) {
   return request('/api/ogd/test-login', { method: 'POST', body: JSON.stringify(values) });
 }
 
+export function syncOgdMembers(values) {
+  return request('/api/ogd/sync-members', { method: 'POST', body: JSON.stringify(values) });
+}
+
 export function fetchPastoralReports() {
   return request('/api/ogd/reports');
 }
@@ -39,4 +43,5 @@ export const FAILURE_MESSAGES = {
   run_interrupted: 'The last login did not finish. Please try again.',
   automation_error: 'The automated browser hit an error.',
   report_page_unexpected: 'Signed in, but could not read the Pastoral Report page.',
+  members_page_unexpected: 'Signed in, but could not read the Members Database list.',
 };
