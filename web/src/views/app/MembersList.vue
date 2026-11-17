@@ -1,5 +1,5 @@
 <script setup>
-import { ArrowLeftRight, CircleX, Pencil, Plus, X } from 'lucide-vue-next';
+import { ArrowLeftRight, CircleX, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -7,6 +7,7 @@ import LoadingBlock from '@/components/LoadingBlock.vue';
 import MemberForm from '@/components/MemberForm.vue';
 import PageHead from '@/components/PageHead.vue';
 import SearchInput from '@/components/SearchInput.vue';
+import StatCard from '@/components/StatCard.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { fetchAllRows, showAlert } from '@/lib/data';
 import { parseTrainingName, TRAINING_COLUMNS } from '@/lib/formation';
@@ -37,18 +38,49 @@ const suggestions = computed(() => buildSuggestions(members.value));
 const roleOptions = computed(() => ['All', ...[...new Set(members.value.map((member) => (member.PastoralService || 'MEMBER').trim()))].sort()]);
 const areaOptions = computed(() => buildAreaOptions(assignedAreaNames.value, members.value.map((member) => member.AreaName)));
 
-const filteredMembers = computed(() => {
+// Members matching the search and every filter except Status, so the status
+// cards show the breakdown of what the other filters leave.
+const membersBeforeStatus = computed(() => {
   const query = search.value.trim().toLowerCase();
-  const { gender, role, area, status } = filters.value;
+  const { gender, role, area } = filters.value;
   return members.value.filter((member) => {
     const haystack = [member.Firstname, member.Lastname, member.MemberIDNo, member.Email, member.MobileNo, member.Phone, member.SpouseName].filter(Boolean).join(' ').toLowerCase();
     return (!query || haystack.includes(query))
       && (gender === 'All' || member.Gender === gender)
       && (role === 'All' || (member.PastoralService || 'MEMBER').trim() === role)
-      && matchesArea(area, member.AreaName)
-      && (status === 'All' || statusOf(member) === status);
+      && matchesArea(area, member.AreaName);
   });
 });
+
+const filteredMembers = computed(() => {
+  const { status } = filters.value;
+  return status === 'All' ? membersBeforeStatus.value : membersBeforeStatus.value.filter((member) => statusOf(member) === status);
+});
+
+const STATUS_CARD_META = {
+  All: { label: 'All Members', icon: Users },
+  Active: { label: 'Active', icon: UserCheck },
+  Inactive: { label: 'Inactive', icon: UserMinus },
+  Deceased: { label: 'Deceased', icon: Flower2 },
+  SOLD: { label: 'SOLD', icon: Shield },
+  HANDMAID: { label: 'Handmaid', icon: HandHeart },
+};
+
+const statusCards = computed(() => {
+  const counts = new Map();
+  for (const member of membersBeforeStatus.value) counts.set(statusOf(member), (counts.get(statusOf(member)) ?? 0) + 1);
+  const total = membersBeforeStatus.value.length;
+  return ['All', ...STATUS_OPTIONS].map((status) => {
+    const count = status === 'All' ? total : (counts.get(status) ?? 0);
+    const share = total ? Math.round((count / total) * 100) : 0;
+    return { status, ...(STATUS_CARD_META[status] ?? { label: status, icon: Users }), count, hint: status === 'All' ? 'In the current filters' : `${share}% of members` };
+  });
+});
+
+// Clicking the selected card again goes back to all statuses.
+function selectStatus(status) {
+  filters.value = { ...filters.value, status: filters.value.status === status ? 'All' : status };
+}
 
 const allSelected = computed(() => filteredMembers.value.length > 0 && filteredMembers.value.every((member) => selectedIds.value.has(member.MemberIDNo)));
 const hasFilters = computed(() => search.value || Object.values(filters.value).some((value) => value !== 'All'));
@@ -265,6 +297,20 @@ onMounted(async () => {
       <button class="btn btn-primary" @click="openAssign"><Plus :size="14" />Assign to Talks</button>
     </PageHead>
 
+    <section class="grid status-cards" aria-label="Members by status">
+      <StatCard
+        v-for="card in statusCards"
+        :key="card.status"
+        :label="card.label"
+        :value="card.count.toLocaleString()"
+        :hint="card.hint"
+        :icon="card.icon"
+        :active="filters.status === card.status"
+        :aria-pressed="filters.status === card.status"
+        @select="selectStatus(card.status)"
+      />
+    </section>
+
     <div class="row row-wrap">
       <SearchInput v-model="search" placeholder="Search name or ID..." class="grow" />
       <select v-model="filters.gender" class="select filter" aria-label="Gender"><option value="All">Gender: All</option><option>Male</option><option>Female</option></select>
@@ -353,6 +399,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.status-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.status-cards :deep(.stat) { padding: 14px 16px; cursor: pointer; }
+.status-cards :deep(.stat-value) { font-size: 22px; margin-top: 6px; }
+@media (max-width: 1100px) { .status-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .status-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }
 .filter { width: auto; max-width: 180px; }
 .who { min-width: 180px; }
 .tick { width: 16px; height: 16px; accent-color: var(--primary); }
