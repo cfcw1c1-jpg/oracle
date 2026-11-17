@@ -1,5 +1,5 @@
 <script setup>
-import { ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw } from 'lucide-vue-next';
+import { Check, ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -144,7 +144,7 @@ async function testLogin(row) {
 // per member, so the server answers more: true until the last page is done
 // and this keeps starting the next run. Leaving the page stops the loop; the
 // next Sync Members resumes from the saved page.
-const MAX_SYNC_RUNS = 30;
+const MAX_SYNC_RUNS = 60;
 // The server writes progress every few seconds; this re-reads it while a sync runs.
 const PROGRESS_POLL_MS = 4000;
 const syncRuns = ref({});
@@ -187,6 +187,21 @@ function setSyncing(areaId, isSyncing) {
 }
 
 const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…' };
+// The server syncs Member info (list + household heads) first, then Formations.
+const SYNC_PARTS = [
+  { key: 'info', label: 'Member info' },
+  { key: 'formations', label: 'Formations' },
+];
+
+function currentPart(row) {
+  return row.memberSync?.progress?.part ?? row.memberSync?.part ?? 'info';
+}
+
+function partState(row, key) {
+  const current = SYNC_PARTS.findIndex((part) => part.key === currentPart(row));
+  const index = SYNC_PARTS.findIndex((part) => part.key === key);
+  return index < current ? 'done' : index === current ? 'active' : 'pending';
+}
 
 // Percent for the bar, or null while the total is unknown (indeterminate bar).
 // Signing in and saving sit at the ends so the bar never jumps backwards.
@@ -203,7 +218,8 @@ function progressLabel(row) {
   if (!progress) return `Starting…${runText}`;
   if (progress.stage !== 'reading') return `${STAGE_LABELS[progress.stage] ?? 'Working…'}${runText}`;
   const count = progress.total ? `${Math.min(progress.done ?? 0, progress.total)} of ~${progress.total}` : `${progress.done ?? 0}`;
-  return `${STAGE_LABELS.reading} ${count}${progress.page ? ` · page ${progress.page}` : ''}${runText}`;
+  const reading = progress.part === 'formations' ? 'Reading formations' : STAGE_LABELS.reading;
+  return `${reading} ${count}${progress.page ? ` · page ${progress.page}` : ''}${runText}`;
 }
 
 onMounted(load);
@@ -259,6 +275,11 @@ onBeforeUnmount(() => {
           <div class="status">
             <template v-if="syncingIds.has(row.areaId)">
               <span class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
+              <ol class="sync-parts" aria-label="Sync parts">
+                <li v-for="(part, index) in SYNC_PARTS" :key="part.key" :class="partState(row, part.key)" :aria-current="partState(row, part.key) === 'active' ? 'step' : undefined">
+                  <span class="part-dot"><Check v-if="partState(row, part.key) === 'done'" :size="10" /><template v-else>{{ index + 1 }}</template></span>{{ part.label }}
+                </li>
+              </ol>
               <div
                 class="progress"
                 :class="{ indeterminate: progressPercent(row.memberSync?.progress) === null }"
@@ -318,6 +339,13 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .guide-body a { display: block; font-weight: var(--fw-medium); }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
+.sync-parts { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
+.sync-parts li { display: inline-flex; align-items: center; gap: 5px; }
+.sync-parts li.active { color: var(--ink); font-weight: var(--fw-medium); }
+.sync-parts li.done { color: var(--success); }
+.part-dot { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; border: 1px solid currentColor; }
+.sync-parts li.active .part-dot { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.sync-parts li.done .part-dot { background: var(--success); border-color: var(--success); color: var(--surface); }
 .progress { position: relative; height: 6px; margin-top: 6px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; min-width: 140px; }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
 .progress.indeterminate .progress-fill { position: absolute; animation: progress-slide 1.4s ease-in-out infinite; }

@@ -227,39 +227,13 @@ export function presentHouseholdHead(rows) {
   return present ? toHouseholdHeadName(present.hhHead) : undefined;
 }
 
+// ---------- Member popup ----------
+
 const MODAL_CONTAINERS = '#simplemodal-container, .simplemodal-container, .simplemodal-wrap, .ui-dialog, .modal.show, [role=dialog]';
 const MODAL_CLOSE = '.simplemodal-close, .modalCloseImg, a.modalClose, #simplemodal-container a.close, .ui-dialog-titlebar-close';
 const MODAL_WAIT_MS = 15000;
 const CLICK_TIMEOUT_MS = 10000;
 const MAX_CONSECUTIVE_FAILURES = 4;
-
-// Reads the Pastoral Service Record table: the one whose header row has both
-// TO and HH HEAD (Service Roles has TO but no HH HEAD). Also reports whether
-// the frame shows the expected Member ID, so a stale popup is never read.
-function readServiceRecord(frame, memberId) {
-  return frame.evaluate((memberId) => {
-    const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toUpperCase();
-    for (const table of document.querySelectorAll('table')) {
-      const rows = [...table.rows];
-      const headerIndex = rows.findIndex((row) => {
-        const labels = [...row.cells].map(text);
-        return labels.includes('TO') && labels.includes('HH HEAD');
-      });
-      if (headerIndex === -1) continue;
-      const labels = [...rows[headerIndex].cells].map(text);
-      const toColumn = labels.indexOf('TO');
-      const headColumn = labels.indexOf('HH HEAD');
-      return {
-        showsMember: (document.body.innerText || '').includes(memberId),
-        rows: rows.slice(headerIndex + 1).filter((row) => !row.querySelector('table')).map((row) => ({
-          to: (row.cells[toColumn]?.innerText || '').trim(),
-          hhHead: (row.cells[headColumn]?.innerText || '').trim(),
-        })),
-      };
-    }
-    return null;
-  }, memberId);
-}
 
 // Finds a visible element with exactly this text inside the member popup:
 // first in frames the popup added, then inside a popup container. Links are
@@ -285,27 +259,29 @@ async function findInPopup(page, framesBefore, label) {
   return null;
 }
 
-async function waitForServiceRecord(page, memberId) {
-  const end = Date.now() + MODAL_WAIT_MS;
+// Polls every frame with read(frame) until it returns a result for a frame
+// that shows the expected Member ID, so a stale popup is never read.
+async function waitForPopupContent(page, read, timeoutMs = MODAL_WAIT_MS) {
+  const end = Date.now() + timeoutMs;
   do {
     for (const frame of page.frames()) {
-      const record = await readServiceRecord(frame, memberId).catch(() => null);
-      if (record?.showsMember) return record;
+      const result = await read(frame).catch(() => null);
+      if (result?.showsMember) return { frame, result };
     }
     await page.waitForTimeout(POLL_MS);
   } while (Date.now() < end);
   return null;
 }
 
-async function popupIsOpen(page, memberId) {
+async function popupIsOpen(page, memberId, framesBefore) {
   for (const frame of page.frames()) {
-    if ((await readServiceRecord(frame, memberId).catch(() => null))?.showsMember) return true;
     if (await frame.locator(MODAL_CONTAINERS).first().isVisible().catch(() => false)) return true;
+    if (!framesBefore.has(frame) && (await frame.evaluate((id) => (document.body?.innerText || '').includes(id), memberId).catch(() => false))) return true;
   }
   return false;
 }
 
-async function closePopup(page, memberId) {
+async function closePopup(page, memberId, framesBefore) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     let clicked = false;
     for (const frame of page.frames()) {
@@ -318,39 +294,286 @@ async function closePopup(page, memberId) {
     }
     if (!clicked) await page.keyboard.press('Escape').catch(() => null);
     await page.waitForTimeout(POLL_MS);
-    if (!(await popupIsOpen(page, memberId))) return;
+    if (!(await popupIsOpen(page, memberId, framesBefore))) return;
   }
 }
 
-// Opens one member's popup from the list, switches to its Service tab and
-// returns the present household head (undefined when the record has none).
-async function readHouseholdHead(page, listFrame, rowIndex, nameColumn, memberId) {
+// Opens a member's popup from their list row and clicks one of its tabs.
+// Returns the frames that existed before, which the popup helpers use to
+// tell the popup's own frames apart.
+async function openMemberTab(page, member, tabLabel) {
   const framesBefore = new Set(page.frames());
-  const cell = listFrame.locator(`tr[data-oracle-row="${rowIndex}"] > td`).nth(nameColumn);
+  const cell = member.listFrame.locator(`tr[data-oracle-row="${member.rowIndex}"] > td`).nth(member.nameColumn);
   const link = cell.locator('a, [onclick]').first();
+  await ((await link.count()) ? link : cell).click({ timeout: CLICK_TIMEOUT_MS });
+  const tab = await findInPopup(page, framesBefore, tabLabel);
+  if (!tab) throw new Error(`The member popup has no ${tabLabel} tab.`);
+  await tab.click({ timeout: CLICK_TIMEOUT_MS });
+  return framesBefore;
+}
+
+// ---------- Part 1: household head (Service tab) ----------
+
+// Reads the Pastoral Service Record table: the one whose header row has both
+// TO and HH HEAD (Service Roles has TO but no HH HEAD).
+function readServiceRecord(frame, memberId) {
+  return frame.evaluate((memberId) => {
+    const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toUpperCase();
+    for (const table of document.querySelectorAll('table')) {
+      const rows = [...table.rows];
+      const headerIndex = rows.findIndex((row) => {
+        const labels = [...row.cells].map(text);
+        return labels.includes('TO') && labels.includes('HH HEAD');
+      });
+      if (headerIndex === -1) continue;
+      const labels = [...rows[headerIndex].cells].map(text);
+      const toColumn = labels.indexOf('TO');
+      const headColumn = labels.indexOf('HH HEAD');
+      return {
+        showsMember: (document.body.innerText || '').includes(memberId),
+        rows: rows.slice(headerIndex + 1).filter((row) => !row.querySelector('table')).map((row) => ({
+          to: (row.cells[toColumn]?.innerText || '').trim(),
+          hhHead: (row.cells[headColumn]?.innerText || '').trim(),
+        })),
+      };
+    }
+    return null;
+  }, memberId);
+}
+
+// Per-member step for Part 1: the present household head, or undefined when
+// the record has none.
+export async function readHouseholdHead(page, member) {
+  let framesBefore = new Set(page.frames());
   try {
-    await ((await link.count()) ? link : cell).click({ timeout: CLICK_TIMEOUT_MS });
-    const tab = await findInPopup(page, framesBefore, 'service');
-    if (!tab) throw new Error('The member popup has no Service tab.');
-    await tab.click({ timeout: CLICK_TIMEOUT_MS });
-    const record = await waitForServiceRecord(page, memberId);
-    if (!record) throw new Error('The Service tab showed no Pastoral Service Record for this member.');
-    return presentHouseholdHead(record.rows);
+    framesBefore = await openMemberTab(page, member, 'service');
+    const found = await waitForPopupContent(page, (frame) => readServiceRecord(frame, member.memberId));
+    if (!found) throw new Error('The Service tab showed no Pastoral Service Record for this member.');
+    return presentHouseholdHead(found.result.rows);
   } finally {
-    await closePopup(page, memberId);
+    await closePopup(page, member.memberId, framesBefore);
   }
 }
+
+// ---------- Part 2: formations (Formation tab) ----------
+
+const SET_FORMATION_PATTERN = /set formation for/i;
+
+// Compares talk titles loosely, as scripts/import-cfc-formations.js does: the
+// column ids were truncated or punctuated differently in places.
+const squash = (value) => value.toLowerCase().replace(/^(talk \d+:|[a-z]+\d+:|\d+\.)\s*/, '').replace(/[^a-z0-9]/g, '');
+export function titlesMatch(columnTitle, siteTitle) {
+  const a = squash(columnTitle);
+  const b = squash(siteTitle);
+  return a === b || (a.length >= 20 && b.startsWith(a));
+}
+
+// "CODE_N-Title" ids from web/src/lib/formation.js, grouped by formation code
+// in talk order: { ET: [{ id, n, title }, ...], ... }.
+export function groupTrainingColumns(columnIds) {
+  const byCode = new Map();
+  for (const id of columnIds) {
+    const match = /^(.+?)_(\d+)-(.*)$/.exec(id);
+    if (!match) continue;
+    const list = byCode.get(match[1]) ?? [];
+    list.push({ id, n: Number(match[2]), title: match[3] });
+    byCode.set(match[1], list);
+  }
+  for (const list of byCode.values()) list.sort((a, b) => a.n - b.n);
+  return byCode;
+}
+
+// OGD's "% complete" decides most formations without opening them: across
+// 4,672 scraped rows, 0% always meant no talk checked and 100% all of them.
+export const needsChecklist = (formation) => formation.talkCount > 0 && formation.sitePercent !== 0 && formation.sitePercent !== 100;
+
+// Builds the pfo_members row for one member. Checked talks are "Y" and
+// unchecked ones null, like the PFO grid. Formations OGD has no talks for,
+// unknown codes, and any that don't line up are left out, so whatever is
+// stored there is kept; the issues list says why.
+export function buildPfoRow(memberId, formations, columnsByCode) {
+  const row = { MemberIDNo: memberId };
+  const issues = [];
+  for (const formation of formations) {
+    const columns = columnsByCode.get(formation.code);
+    if (!columns || !formation.talkCount) continue;
+    if (columns.length !== formation.talkCount) {
+      issues.push(`${formation.code}: OGD has ${formation.talkCount} talks, PFO has ${columns.length}`);
+      continue;
+    }
+    if (formation.talks) {
+      if (formation.talks.length !== columns.length) {
+        issues.push(`${formation.code}: checklist shows ${formation.talks.length} talks`);
+        continue;
+      }
+      const mismatch = columns.findIndex((column, index) => !titlesMatch(column.title, formation.talks[index].label));
+      if (mismatch !== -1) {
+        issues.push(`${formation.code} talk ${mismatch + 1}: OGD says "${formation.talks[mismatch].label}"`);
+        continue;
+      }
+      columns.forEach((column, index) => {
+        row[column.id] = formation.talks[index].checked ? 'Y' : null;
+      });
+    } else if (formation.sitePercent === 0 || formation.sitePercent === 100) {
+      for (const column of columns) row[column.id] = formation.sitePercent === 100 ? 'Y' : null;
+    } else {
+      issues.push(`${formation.code}: checklist could not be read`);
+    }
+  }
+  return { row, issues };
+}
+
+// Reads every formation table on the Formation tab (First Year, Second Year,
+// ..., Leaders Track, SOLD). Rows are tagged so a partly done formation's
+// link can be clicked for its checklist.
+function readFormationTable(frame, memberId) {
+  return frame.evaluate((memberId) => {
+    const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    const nameHeader = /^(name of formation|formation name|formation)$/i;
+    document.querySelectorAll('[data-oracle-formation]').forEach((el) => el.removeAttribute('data-oracle-formation'));
+    const formations = [];
+    let found = false;
+    // A header needs a talks or percent column as well: the popup's own tab
+    // bar has a cell reading just "Formation" and must not count.
+    const isHeader = (row) => {
+      if (row.querySelector('table')) return false;
+      const labels = [...row.cells].map(text);
+      return labels.some((label) => nameHeader.test(label)) && labels.some((label) => /talks|%|percent/i.test(label));
+    };
+    [...document.querySelectorAll('table')].forEach((table, tableIndex) => {
+      const rows = [...table.rows];
+      const headerIndex = rows.findIndex(isHeader);
+      if (headerIndex === -1) return;
+      found = true;
+      const header = [...rows[headerIndex].cells].map(text);
+      const nameColumn = header.findIndex((label) => nameHeader.test(label));
+      const talksColumn = header.findIndex((label) => /# of talks|no\.? of talks|talks/i.test(label));
+      const percentColumn = header.findIndex((label) => /% complete|percent|%/i.test(label));
+      rows.slice(headerIndex + 1).forEach((row, rowIndex) => {
+        if (row.querySelector('table')) return;
+        const cells = [...row.cells].map(text);
+        if (!cells[nameColumn]) return;
+        const key = `${tableIndex}-${rowIndex}`;
+        row.setAttribute('data-oracle-formation', key);
+        const match = cells[nameColumn].match(/^(\S+(?:\s\d+)?)\s+-\s+(.+)$/);
+        formations.push({
+          key,
+          nameColumn,
+          code: match ? match[1] : '',
+          name: match ? match[2] : cells[nameColumn],
+          talkCount: talksColumn >= 0 ? Number(cells[talksColumn]) || 0 : 0,
+          sitePercent: percentColumn >= 0 && /\d/.test(cells[percentColumn]) ? Number(cells[percentColumn].replace(/[^\d.]/g, '')) : null,
+          hasLink: Boolean(row.cells[nameColumn]?.querySelector('a, [onclick]')),
+        });
+      });
+    });
+    return found ? { showsMember: (document.body.innerText || '').includes(memberId), formations } : null;
+  }, memberId);
+}
+
+async function frameHasText(frame, pattern) {
+  return frame.evaluate((source) => new RegExp(source, 'i').test(document.body?.innerText || ''), pattern.source).catch(() => false);
+}
+
+// Opens one formation's "Set Formation" checklist, reads its talk checkboxes
+// and cancels it without saving anything.
+async function readChecklist(page, frame, formation) {
+  const framesBefore = new Set(page.frames());
+  await frame.locator(`tr[data-oracle-formation="${formation.key}"] > td`).nth(formation.nameColumn).locator('a, [onclick]').first().click({ timeout: CLICK_TIMEOUT_MS });
+
+  let dialog = null;
+  const end = Date.now() + MODAL_WAIT_MS;
+  while (!dialog && Date.now() < end) {
+    for (const candidate of [...page.frames().filter((item) => !framesBefore.has(item)), ...page.frames()]) {
+      if (await frameHasText(candidate, SET_FORMATION_PATTERN)) {
+        dialog = candidate;
+        break;
+      }
+    }
+    if (!dialog) await page.waitForTimeout(POLL_MS);
+  }
+  if (!dialog) throw new Error('The "Set Formation" checklist did not open.');
+  await page.waitForTimeout(300);
+
+  const talks = await dialog.evaluate(() => {
+    const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    return [...document.querySelectorAll('input[type=checkbox]')]
+      .filter((box) => box.offsetParent !== null || box.closest('table'))
+      .map((box) => {
+        let label = '';
+        if (box.id) label = text(document.querySelector(`label[for="${CSS.escape(box.id)}"]`) || { innerText: '' });
+        if (!label && box.closest('label')) label = text(box.closest('label'));
+        for (let node = box.nextSibling; node && !label; node = node.nextSibling) label = (node.textContent || '').trim();
+        return { label, checked: box.checked };
+      });
+  });
+
+  // Cancel only: the checklist's other buttons would save changes to OGD.
+  const cancel = dialog.locator('input[value="Cancel" i], button:has-text("Cancel"), a:has-text("Cancel")').first();
+  if (await cancel.count()) await cancel.click({ timeout: CLICK_TIMEOUT_MS }).catch(() => null);
+  else await page.keyboard.press('Escape').catch(() => null);
+  const gone = Date.now() + 5000;
+  while (Date.now() < gone) {
+    let open = false;
+    for (const candidate of page.frames()) if (await frameHasText(candidate, SET_FORMATION_PATTERN)) open = true;
+    if (!open) break;
+    await page.waitForTimeout(300);
+  }
+  return talks;
+}
+
+// Per-member step for Part 2: the member's formations, with talk checklists
+// read only for the partly done ones. Returns { formations, issues }.
+export async function readFormations(page, member) {
+  let framesBefore = new Set(page.frames());
+  const readTable = (frame) => readFormationTable(frame, member.memberId);
+  try {
+    framesBefore = await openMemberTab(page, member, 'formation');
+    let found = await waitForPopupContent(page, readTable);
+    if (!found) throw new Error('The Formation tab showed no formations for this member.');
+    const formations = found.result.formations.map(({ key, nameColumn, hasLink, ...formation }) => ({ ...formation }));
+    const issues = [];
+
+    for (const [index, formation] of found.result.formations.entries()) {
+      if (!needsChecklist(formation)) continue;
+      if (!formation.hasLink) {
+        issues.push(`${formation.code}: no checklist link`);
+        continue;
+      }
+      // The checklist can close the member popup; reopen it when the table is gone.
+      let current = await waitForPopupContent(page, readTable, 2000);
+      if (!current) {
+        await closePopup(page, member.memberId, framesBefore);
+        framesBefore = await openMemberTab(page, member, 'formation');
+        current = await waitForPopupContent(page, readTable);
+        if (!current) throw new Error('The Formation tab did not come back after a checklist.');
+      }
+      const target = current.result.formations.find((item) => item.code === formation.code && item.name === formation.name) ?? current.result.formations[index];
+      try {
+        formations[index].talks = await readChecklist(page, current.frame, target);
+      } catch (error) {
+        issues.push(`${formation.code}: ${error.message.split('\n')[0]}`);
+      }
+      found = current;
+    }
+    return { formations, issues };
+  } finally {
+    await closePopup(page, member.memberId, framesBefore);
+  }
+}
+
+// ---------- List walk shared by both parts ----------
 
 // Run on OGD's signed-in page. Reads every page of the members list and, from
-// householdStartPage on, opens each of the chapter's members for their
-// household head. At the deadline it stops and reports nextHouseholdPage so
-// the next run carries on from there. Stopping early still returns what was
-// read, with complete: false and the reason.
+// startPage on, runs perMember for each of the chapter's members, collecting
+// what it returns by Member ID. At the deadline it stops and reports nextPage
+// so the next run carries on from there. Stopping early still returns what
+// was read, with complete: false and the reason.
 //
 // onProgress({ done, page }) reports the chapter's members covered so far in
-// this pass: all of them on pages before householdStartPage (finished by an
-// earlier run) plus each one opened since.
-export function createMemberListReader({ deadline, chapterName, householdStartPage = 1, onProgress = async () => {} }) {
+// this pass: all of them on pages before startPage (finished by an earlier
+// run) plus each one handled since.
+export function createMemberListReader({ deadline, chapterName, startPage = 1, perMember, onProgress = async () => {} }) {
   const inChapter = (headers, cells) => {
     const area = cells[headers.indexOf('Area')] ?? '';
     return area.toUpperCase().startsWith(chapterName.toUpperCase());
@@ -365,11 +588,11 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
     const idColumn = headers.indexOf('Member ID #');
 
     const records = [];
-    const households = new Map();
+    const results = new Map();
     let pagesRead = 0;
     let stopReason = null;
     let timedOut = false;
-    let nextHouseholdPage = null;
+    let nextPage = null;
     let failures = 0;
     let lastError = null;
     let done = 0;
@@ -380,7 +603,7 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
       records.push(...found.table.records);
       pagesRead += 1;
 
-      if (pageNumber < householdStartPage) {
+      if (pageNumber < startPage) {
         done += found.table.records.filter((cells) => inChapter(headers, cells)).length;
         await report(pageNumber);
       } else {
@@ -388,20 +611,20 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
           if (!inChapter(headers, cells)) continue;
           if (Date.now() > deadline) {
             timedOut = true;
-            nextHouseholdPage = pageNumber;
+            nextPage = pageNumber;
             break pages;
           }
           const memberId = cells[idColumn].trim();
           try {
-            const head = await readHouseholdHead(page, found.frame, rowIndex, found.table.nameColumn, memberId);
-            if (head) households.set(memberId, head);
+            const value = await perMember(page, { listFrame: found.frame, rowIndex, nameColumn: found.table.nameColumn, memberId });
+            if (value !== undefined) results.set(memberId, value);
             failures = 0;
           } catch (error) {
             failures += 1;
             lastError = error.message.split('\n')[0];
             if (failures >= MAX_CONSECUTIVE_FAILURES) {
-              stopReason = `Could not read household heads: ${lastError}`;
-              nextHouseholdPage = pageNumber;
+              stopReason = `Could not read members: ${lastError}`;
+              nextPage = pageNumber;
               break pages;
             }
           }
@@ -414,7 +637,7 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
 
       if (Date.now() > deadline) {
         timedOut = true;
-        nextHouseholdPage = pageNumber + 1;
+        nextPage = pageNumber + 1;
         break;
       }
       const previousKey = firstKey(found.table);
@@ -423,13 +646,13 @@ export function createMemberListReader({ deadline, chapterName, householdStartPa
       const next = await waitForNextPage(page, previousKey);
       if (next.error) {
         stopReason = next.error;
-        nextHouseholdPage = pageNumber + 1;
+        nextPage = pageNumber + 1;
         break;
       }
       found = next.found;
     }
 
     if (timedOut) stopReason = 'Stopped to stay within the time limit.';
-    return { headers, records, households, pagesRead, complete: !stopReason, timedOut, stopReason, nextHouseholdPage, lastHouseholdError: lastError };
+    return { headers, records, results, pagesRead, complete: !stopReason, timedOut, stopReason, nextPage, lastError };
   };
 }
