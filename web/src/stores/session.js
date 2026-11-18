@@ -12,6 +12,8 @@ export const sessionState = reactive({
   pendingChangeRequests: 0,
   messageToast: null,
   disclaimerVisible: false,
+  // Set by a fresh sign-in; App shows the OGD sign-in screen for MSG and Chapter Heads.
+  ogdSignInPending: false,
   landOnAdminDashboard: false,
   pendingConversationId: null,
   activeTab: null,
@@ -24,6 +26,13 @@ let messageChannel = null;
 let changeRequestChannel = null;
 let stopPresence = null;
 let toastTimer = null;
+
+// Roles that sign their chapters in to OGD right after signing in to Oracle.
+const OGD_SIGN_IN_ROLES = new Set(['MSG', 'Chapter Head']);
+
+export function needsOgdSignIn() {
+  return sessionState.ogdSignInPending && OGD_SIGN_IN_ROLES.has(sessionState.access?.roleName) && canView('ogdAccounts');
+}
 
 export function canView(pageKey) {
   return Boolean(sessionState.access?.allowedPages?.includes(pageKey));
@@ -113,6 +122,7 @@ function handleUserChange(userId) {
     sessionState.access = null;
     sessionState.accessLoading = true;
     sessionState.unreadMessages = 0;
+    sessionState.ogdSignInPending = false;
     return;
   }
   loadAccess(userId);
@@ -182,6 +192,7 @@ export function startSession() {
     if (isNewSignIn && readyForSignIn && !sessionState.passwordRecovery) {
       sessionState.disclaimerVisible = true;
       sessionState.landOnAdminDashboard = true;
+      sessionState.ogdSignInPending = true;
     }
   });
   authListener = data;
