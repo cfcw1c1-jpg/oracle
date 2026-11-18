@@ -1,10 +1,12 @@
 <script setup>
-import { ChevronLeft, ChevronRight, Info, Lock, LogOut, Mail, MessageCircle, MessagesSquare, Search, X } from 'lucide-vue-next';
-import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import { ChevronLeft, ChevronRight, Info, Lock, LogOut, Mail, MessageCircle, MessagesSquare, Search, UserRound, X } from 'lucide-vue-next';
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppModal from '@/components/AppModal.vue';
 import { useIsWide } from '@/composables/useIsWide';
+import { fullName, searchTerm } from '@/lib/data';
 import { mobileTabsForRole, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
+import { supabase } from '@/lib/supabase';
 import { canView, loadAccess, logPageView, sessionState, signOut } from '@/stores/session';
 
 const MODERATOR_EMAILS = ['jamesryanpatiag@gmail.com', 'markjosephreyes1513@gmail.com', 'bryanmunoz28@yahoo.com', 'bentiung02421@gmail.com'];
@@ -29,6 +31,10 @@ const isWide = useIsWide();
 const isCollapsed = ref(false);
 const openGroupKey = ref(null);
 const pageSearch = ref('');
+const isSearchOpen = ref(false);
+const memberMatches = ref([]);
+const isSearchingMembers = ref(false);
+const expandedMemberId = ref(null);
 const previousTab = ref('home');
 
 const access = computed(() => sessionState.access);
@@ -109,10 +115,11 @@ const screenProps = computed(() => {
   }
 });
 
-function selectTab(tab) {
+function selectTab(tab, query) {
   openGroupKey.value = null;
   pageSearch.value = '';
-  router.push(`/${tab}`);
+  isSearchOpen.value = false;
+  router.push(query ? { path: `/${tab}`, query } : `/${tab}`);
 }
 
 function openConversation(conversationId) {
@@ -125,8 +132,73 @@ const pageMatches = computed(() => {
   return query ? navItems.value.filter((item) => item.label.toLowerCase().includes(query)).slice(0, 7) : [];
 });
 
+// Pages that list members, in the order offered after picking a member.
+// PFO Trainings only lists members who have a tracking profile.
+const MEMBER_PAGES = [
+  { key: 'members', label: 'Directory' },
+  { key: 'manageMembers', label: 'Manage Members' },
+  { key: 'pfo', label: 'PFO Trainings', needsPfo: true },
+];
+const memberPageKeys = computed(() => MEMBER_PAGES.filter((page) => canView(page.key)));
+
+function memberPages(member) {
+  return memberPageKeys.value.filter((page) => !page.needsPfo || member.hasPfo);
+}
+
+let memberSearchTimer = null;
+let memberSearchToken = 0;
+
+// Each typed word must match a first or last name, so "james patiag" works.
+// Row-level security already limits results to the account's areas.
+async function searchMembers(text) {
+  const words = searchTerm(text).split(/\s+/).filter(Boolean);
+  const token = ++memberSearchToken;
+  if (!memberPageKeys.value.length || words.join('').length < 2) {
+    memberMatches.value = [];
+    isSearchingMembers.value = false;
+    return;
+  }
+  isSearchingMembers.value = true;
+  let query = supabase.from('members').select('MemberIDNo, Firstname, Lastname, AreaName');
+  words.forEach((word) => {
+    query = query.or(`Firstname.ilike.%${word}%,Lastname.ilike.%${word}%`);
+  });
+  const { data, error } = await query.order('Lastname').limit(8);
+  const members = error ? [] : data || [];
+  let pfoIds = new Set();
+  if (members.length && memberPageKeys.value.some((page) => page.needsPfo)) {
+    const { data: pfoRows } = await supabase.from('pfo_members').select('MemberIDNo').in('MemberIDNo', members.map((member) => member.MemberIDNo));
+    pfoIds = new Set((pfoRows || []).map((row) => String(row.MemberIDNo)));
+  }
+  if (token !== memberSearchToken) return;
+  isSearchingMembers.value = false;
+  memberMatches.value = members.map((member) => ({ ...member, hasPfo: pfoIds.has(String(member.MemberIDNo)) }));
+}
+
+watch(pageSearch, (text) => {
+  expandedMemberId.value = null;
+  clearTimeout(memberSearchTimer);
+  memberSearchTimer = setTimeout(() => searchMembers(text), 250);
+});
+onBeforeUnmount(() => clearTimeout(memberSearchTimer));
+
+const showResults = computed(() => isSearchOpen.value && pageSearch.value.trim().length > 0);
+
+function toggleMember(member) {
+  expandedMemberId.value = expandedMemberId.value === member.MemberIDNo ? null : member.MemberIDNo;
+}
+
+function openMemberIn(page, member) {
+  selectTab(page.key, { q: String(member.MemberIDNo) });
+}
+
+function closeSearchOnLeave(event) {
+  if (!event.currentTarget.contains(event.relatedTarget)) isSearchOpen.value = false;
+}
+
 function goToFirstMatch() {
   if (pageMatches.value[0]) selectTab(pageMatches.value[0].key);
+  else if (memberMatches.value[0]) toggleMember(memberMatches.value[0]);
 }
 
 const mobileTabs = computed(() => mobileTabsForRole(roleName.value)
@@ -206,17 +278,46 @@ function openMessagesFromDisclaimer() {
             <h2 class="top-title">{{ pageTitle }}</h2>
             <p class="top-sub clamp">{{ user?.email }}</p>
           </div>
-          <div class="top-search">
+          <div class="top-search" @focusin="isSearchOpen = true" @focusout="closeSearchOnLeave">
             <label class="search-input">
               <Search :size="15" />
-              <span class="sr-only">Find a page</span>
-              <input v-model="pageSearch" class="input" type="search" placeholder="Find a page..." @keydown.enter="goToFirstMatch" />
+              <span class="sr-only">Find a page or member</span>
+              <input
+                v-model="pageSearch" class="input" type="search" :placeholder="memberPageKeys.length ? 'Find a page or member...' : 'Find a page...'"
+                @keydown.enter="goToFirstMatch" @keydown.esc="isSearchOpen = false"
+              />
             </label>
-            <ul v-if="pageMatches.length" class="top-results">
-              <li v-for="item in pageMatches" :key="item.key">
-                <button @click="selectTab(item.key)"><component :is="item.icon" :size="15" />{{ item.label }}</button>
-              </li>
-            </ul>
+            <div v-if="showResults" class="top-results">
+              <template v-if="pageMatches.length">
+                <p class="top-results-head">Pages</p>
+                <button v-for="item in pageMatches" :key="item.key" class="top-result" @mousedown.prevent @click="selectTab(item.key)">
+                  <component :is="item.icon" :size="15" />{{ item.label }}
+                </button>
+              </template>
+              <template v-if="memberPageKeys.length">
+                <p class="top-results-head">Members <span v-if="isSearchingMembers" class="spinner sm" /></p>
+                <template v-for="member in memberMatches" :key="member.MemberIDNo">
+                  <button class="top-result" :class="{ on: expandedMemberId === member.MemberIDNo }" :aria-expanded="expandedMemberId === member.MemberIDNo" @mousedown.prevent @click="toggleMember(member)">
+                    <UserRound :size="15" />
+                    <span class="grow member-line">
+                      <span class="clamp">{{ member.Lastname }}, {{ member.Firstname }}</span>
+                      <small class="clamp">{{ member.AreaName || 'No Area' }} · ID {{ member.MemberIDNo }}</small>
+                    </span>
+                    <ChevronRight :size="14" class="member-chevron" />
+                  </button>
+                  <div v-if="expandedMemberId === member.MemberIDNo" class="member-pages">
+                    <p>Open {{ fullName(member) }} in</p>
+                    <button v-for="page in memberPages(member)" :key="page.key" class="member-page" @mousedown.prevent @click="openMemberIn(page, member)">
+                      {{ page.label }}<ChevronRight :size="13" />
+                    </button>
+                  </div>
+                </template>
+                <p v-if="!isSearchingMembers && !memberMatches.length" class="top-results-empty">
+                  {{ pageSearch.trim().length < 2 ? 'Type at least 2 letters to find members.' : 'No members found.' }}
+                </p>
+              </template>
+              <p v-else-if="!pageMatches.length" class="top-results-empty">No pages found.</p>
+            </div>
           </div>
           <button class="icon-btn" aria-label="Messages" @click="selectTab('messages')">
             <MessageCircle :size="19" />
@@ -326,9 +427,20 @@ function openMessagesFromDisclaimer() {
 .top-title { font-size: 18px; font-weight: var(--fw-heading); }
 .top-sub { font-size: 12.5px; color: var(--muted); }
 .top-search { position: relative; width: 250px; }
-.top-results { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0; list-style: none; margin: 0; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
-.top-results button { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; background: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; text-align: left; }
-.top-results button:hover { background: var(--surface-hover); }
+.top-results { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 320px; max-height: 70vh; overflow-y: auto; padding: 5px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
+.top-results-head { display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: var(--fw-medium); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 8px 10px 4px; }
+.top-results-empty { font-size: 12.5px; color: var(--muted); padding: 6px 10px 8px; }
+.top-result { width: 100%; display: flex; align-items: center; gap: 9px; border: 0; background: none; border-radius: 8px; padding: 8px 10px; font-size: 13px; text-align: left; }
+.top-result:hover, .top-result.on { background: var(--surface-hover); }
+.top-result svg { flex: none; }
+.member-line { display: flex; flex-direction: column; min-width: 0; }
+.member-line small { font-size: 11.5px; color: var(--muted); }
+.member-chevron { color: var(--muted); transition: transform 0.15s; }
+.top-result.on .member-chevron { transform: rotate(90deg); }
+.member-pages { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 34px; padding-left: 10px; border-left: 2px solid var(--line); }
+.member-pages p { font-size: 11.5px; color: var(--muted); padding: 2px 0 4px; }
+.member-page { display: flex; align-items: center; justify-content: space-between; border: 0; background: none; border-radius: 7px; padding: 6px 8px; font-size: 12.5px; font-weight: var(--fw-medium); color: var(--ink-2); text-align: left; }
+.member-page:hover { background: var(--accent-soft); color: var(--ink); }
 .avatar-btn { border: 0; background: none; padding: 0; border-radius: 50%; }
 .content { flex: 1; overflow-y: auto; background: #fbfaf8; position: relative; }
 .no-access { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); text-align: center; padding: 32px; font-size: 13px; }
