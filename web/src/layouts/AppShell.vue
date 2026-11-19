@@ -3,9 +3,10 @@ import { ChevronLeft, ChevronRight, Info, Lock, LogOut, Mail, MessageCircle, Mes
 import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppModal from '@/components/AppModal.vue';
+import OgdStatus from '@/components/OgdStatus.vue';
 import { useIsWide } from '@/composables/useIsWide';
 import { mobileTabsForRole, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
-import { canView, loadAccess, logPageView, sessionState, signOut } from '@/stores/session';
+import { canView, isOgdRole, loadAccess, logPageView, sessionState, signOut } from '@/stores/session';
 
 const MODERATOR_EMAILS = ['jamesryanpatiag@gmail.com', 'markjosephreyes1513@gmail.com', 'bryanmunoz28@yahoo.com', 'bentiung02421@gmail.com'];
 const LAST_TAB_KEY = 'oracle_current_tab';
@@ -218,6 +219,7 @@ function openMessagesFromDisclaimer() {
               </li>
             </ul>
           </div>
+          <OgdStatus v-if="isOgdRole()" @open="selectTab('ogdAccounts')" />
           <button class="icon-btn" aria-label="Messages" @click="selectTab('messages')">
             <MessageCircle :size="19" />
             <span v-if="sessionState.unreadMessages" class="badge">{{ sessionState.unreadMessages > 99 ? '99+' : sessionState.unreadMessages }}</span>
@@ -228,6 +230,7 @@ function openMessagesFromDisclaimer() {
             <strong>ORACLE</strong>
             <small class="clamp">{{ portalLabel.toUpperCase() }}</small>
           </div>
+          <OgdStatus v-if="isOgdRole()" @open="selectTab('ogdAccounts')" />
         </template>
         <button class="avatar-btn" aria-label="My profile" @click="selectTab('profile')">
           <img v-if="avatarUrl" :src="avatarUrl" class="avatar" alt="" />

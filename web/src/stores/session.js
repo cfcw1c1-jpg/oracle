@@ -30,8 +30,12 @@ let toastTimer = null;
 // Roles that sign their chapters in to OGD right after signing in to Oracle.
 const OGD_SIGN_IN_ROLES = new Set(['MSG', 'Chapter Head']);
 
+export function isOgdRole() {
+  return OGD_SIGN_IN_ROLES.has(sessionState.access?.roleName) && canView('ogdAccounts');
+}
+
 export function needsOgdSignIn() {
-  return sessionState.ogdSignInPending && OGD_SIGN_IN_ROLES.has(sessionState.access?.roleName) && canView('ogdAccounts');
+  return sessionState.ogdSignInPending && isOgdRole();
 }
 
 export function canView(pageKey) {
