@@ -158,7 +158,7 @@ async function openMembersList(page) {
 
 // Reads or moves an ASP.NET GridView pager inside the list's frame. 'read'
 // returns the current page; 'next' posts back to the following page.
-function pagerAction(frame, action) {
+export function pagerAction(frame, action) {
   return frame.evaluate((action) => {
     const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
     const isPagerText = (value) => /^(\d+|\.\.\.|…|next|>|>>|»|last)$/i.test(value);

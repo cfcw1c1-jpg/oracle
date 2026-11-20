@@ -16,7 +16,7 @@ const pages = import.meta.glob('../views/app/*.vue');
 const SCREENS = {
   home: 'DashboardHome', adminDashboard: 'AdminDashboard', members: 'MembersList', myChangeRequests: 'MyChangeRequests',
   manageMembers: 'ManageMembers', pfo: 'PfoList', pfoReports: 'PfoReports', pfoStats: 'PfoStatGenerator', clp: 'ClpMaintenance',
-  materials: 'Materials', ogdAccounts: 'OgdAccounts', ogdChapters: 'OgdAccounts', monthlyPastoralReports: 'MonthlyPastoralReports',
+  materials: 'Materials', ogdAccounts: 'OgdAccounts', ogdChapters: 'OgdAccounts', monthlyPastoralReports: 'MonthlyPastoralReports', reports: 'Reports',
   portalUsers: 'PortalUsers', logs: 'Logs', memberChangeQueue: 'MemberChangeQueue', settings: 'Settings', predictor: 'PredictorScreen',
   profile: 'ProfileScreen', messages: 'Messages',
 };

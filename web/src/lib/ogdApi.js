@@ -52,6 +52,14 @@ export function checkPastoralReport(values) {
   return request('/api/ogd/browser?task=check-report', { method: 'POST', body: JSON.stringify(values) });
 }
 
+export function fetchCelebrants(month) {
+  return request(`/api/ogd/celebrants?month=${encodeURIComponent(month)}`);
+}
+
+export function generateCelebrants(values) {
+  return request('/api/ogd/browser?task=celebrants', { method: 'POST', body: JSON.stringify(values) });
+}
+
 export const FAILURE_MESSAGES = {
   ogd_bad_credentials: 'OGD did not accept this login.',
   otp_rejected: 'OGD did not accept the emailed code.',
@@ -63,4 +71,7 @@ export const FAILURE_MESSAGES = {
   automation_error: 'The automated browser hit an error.',
   report_page_unexpected: 'Signed in, but could not read the Pastoral Report page.',
   members_page_unexpected: 'Signed in, but could not read the Members Database list.',
+  celebrants_link_missing: 'Signed in, but could not find the Celebrants page in OGD.',
+  celebrants_form_unexpected: 'Signed in, but could not fill in the Celebrants form.',
+  celebrants_result_unexpected: 'Signed in, but could not read the celebrant list.',
 };

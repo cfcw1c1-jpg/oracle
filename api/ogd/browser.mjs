@@ -1,3 +1,4 @@
+import { POST as celebrants } from '../_lib/tasks/celebrants.mjs';
 import { POST as checkReport } from '../_lib/tasks/check-report.mjs';
 import { POST as pushChanges } from '../_lib/tasks/push-changes.mjs';
 import { POST as syncMembers } from '../_lib/tasks/sync-members.mjs';
@@ -9,6 +10,7 @@ import { POST as testLogin } from '../_lib/tasks/test-login.mjs';
 // installed phone apps and open browser tabs keep working.
 
 const TASKS = {
+  celebrants,
   'check-report': checkReport,
   'push-changes': pushChanges,
   'sync-members': syncMembers,

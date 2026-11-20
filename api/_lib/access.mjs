@@ -7,6 +7,7 @@ export const SCOPES = {
   accounts: { pageKey: 'ogdAccounts', credential: 'ogd' },
   sector: { pageKey: 'ogdChapters', credential: 'gmail' },
   reports: { pageKey: 'monthlyPastoralReports', credential: null },
+  celebrants: { pageKey: 'reports', credential: null },
 };
 
 export class HttpError extends Error {

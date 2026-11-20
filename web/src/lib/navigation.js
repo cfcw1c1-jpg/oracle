@@ -1,6 +1,6 @@
 import {
   BarChart3, BookOpen, CheckCheck, FileText, FolderOpen, Home, Hourglass, Inbox, KeyRound, Layers,
-  LayoutDashboard, LineChart, ListChecks, Settings, TrendingUp, UserCog, Users, Wrench,
+  LayoutDashboard, LineChart, ListChecks, PartyPopper, Settings, TrendingUp, UserCog, Users, Wrench,
 } from 'lucide-vue-next';
 
 // `group` renders under its own labelled section in the sidebar.
@@ -18,6 +18,7 @@ export const NAV_ITEMS = [
   { key: 'ogdAccounts', label: 'OGD Accounts', icon: KeyRound },
   { key: 'ogdChapters', label: 'OGD Accounts', icon: KeyRound },
   { key: 'monthlyPastoralReports', label: 'Monthly Pastoral Reports', icon: FileText },
+  { key: 'reports', label: 'Reports', icon: PartyPopper },
   { key: 'portalUsers', label: 'Portal Users', icon: UserCog },
   { key: 'logs', label: 'Logs', icon: Inbox },
   { key: 'settings', label: 'Settings', icon: Settings },
