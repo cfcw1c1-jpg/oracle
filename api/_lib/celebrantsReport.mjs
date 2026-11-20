@@ -158,34 +158,80 @@ function scoreLink(text, kind) {
   return score;
 }
 
-// Clicks the menu link that best names this report. A hidden menu entry with
-// a real address is opened by going to that address instead.
-async function openReport(page, kind) {
-  const snapshots = await snapshotAll(page);
-  let best = null;
+// Links that could open this report, best match first. Shown links beat
+// hidden ones of the same score, and each address is tried once.
+function reportLinks(snapshots, kind) {
+  const candidates = [];
   for (const { frame, snapshot } of snapshots) {
     for (const link of snapshot.links) {
       const score = scoreLink(link.text, kind);
-      if (score >= 2 && (!best || score > best.score || (score === best.score && link.shown && !best.link.shown))) best = { frame, link, score };
+      if (score >= 2) candidates.push({ frame, link, score });
     }
   }
-  if (!best) {
-    throw new CelebrantsFailure('celebrants_link_missing', `No Celebrants link on ${new URL(page.url()).pathname}. Links seen: ${describeLinks(snapshots)}`);
-  }
+  candidates.sort((a, b) => b.score - a.score || Number(b.link.shown) - Number(a.link.shown));
+  const seen = new Set();
+  return candidates.filter(({ link }) => {
+    const key = `${link.text}|${link.href}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
+// Clicks one link. A hidden menu entry with a real address is opened by going
+// to that address instead.
+async function followLink(page, { frame, link }) {
   const loaded = page.waitForEvent('load', { timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
-  const element = best.frame.locator(`[data-oracle-link="${best.link.index}"]`);
-  const href = best.link.href;
-  if (best.link.shown) {
+  const element = frame.locator(`[data-oracle-link="${link.index}"]`);
+  const href = link.href;
+  if (link.shown) {
     await element.click({ timeout: 5000 });
   } else if (href && !/^(javascript:|#)/i.test(href)) {
-    await page.goto(new URL(href, best.frame.url()).href, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS });
+    await page.goto(new URL(href, frame.url()).href, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS });
   } else {
     await element.evaluate((el) => el.click());
   }
-  await loaded;
-  await page.waitForTimeout(1000);
-  return best.link.text;
+  await Promise.race([loaded, page.waitForTimeout(5000)]);
+}
+
+const LINK_ATTEMPTS = 3;
+const LINK_FORM_WAIT_MS = 15000;
+
+// Opens the report's form: tries each likely link in turn, looking for the
+// form on the page itself, in its frames and popups, and in any new tab or
+// window the link opens. Returns the form and the link that led to it.
+async function openReport(page, kind) {
+  const homeUrl = page.url();
+  const candidates = reportLinks(await snapshotAll(page), kind);
+  if (!candidates.length) {
+    throw new CelebrantsFailure('celebrants_link_missing', `No Celebrants link on ${new URL(homeUrl).pathname}. Links seen: ${describeLinks(await snapshotAll(page))}`);
+  }
+
+  const context = page.context();
+  const attempts = [];
+  for (const candidate of candidates.slice(0, LINK_ATTEMPTS)) {
+    const opened = [];
+    const onPage = (newPage) => opened.push(newPage);
+    context.on('page', onPage);
+    try {
+      // Links are re-read after going home, since the page was reloaded.
+      const fresh = reportLinks(await snapshotAll(page), kind).find(({ link }) => link.text === candidate.link.text && link.href === candidate.link.href) ?? candidate;
+      await followLink(page, fresh);
+      // Every tab counts: a link can also reload a window that is already open.
+      const result = await waitForForm(() => [...opened, ...context.pages().filter((shown) => shown !== page && !opened.includes(shown)), page], LINK_FORM_WAIT_MS);
+      if (result.form) return { form: result.form, linkText: candidate.link.text };
+      attempts.push(`"${candidate.link.text}" (${candidate.link.href || 'no address'}${candidate.link.shown ? '' : ', hidden'}) led to ${result.seen}`);
+    } catch (error) {
+      attempts.push(`"${candidate.link.text}" failed: ${String(error?.message ?? error).split('\n')[0].slice(0, 150)}`);
+    } finally {
+      context.off('page', onPage);
+    }
+    await page.goto(homeUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
+  }
+  throw new CelebrantsFailure(
+    'celebrants_form_unexpected',
+    `No Celebrants form (month list or Service Types) found. Tried: ${attempts.join(' ;; ')}. Other matching links: ${candidates.slice(LINK_ATTEMPTS).map(({ link }) => link.text).join(', ') || 'none'}.`,
+  );
 }
 
 // ---------- Filling the form ----------
@@ -200,16 +246,31 @@ function findForm(snapshots) {
   return null;
 }
 
-async function waitForForm(page) {
-  const end = Date.now() + NAVIGATION_TIMEOUT_MS;
-  let snapshots = [];
+// Looks through every frame of the given pages until the form shows up.
+// Returns { form } with form.page set, or { seen } describing what was there.
+async function waitForForm(getPages, timeoutMs = NAVIGATION_TIMEOUT_MS) {
+  const end = Date.now() + timeoutMs;
+  let seen = '';
   do {
-    snapshots = await snapshotAll(page);
-    const form = findForm(snapshots);
-    if (form) return form;
-    await page.waitForTimeout(POLL_MS);
+    const descriptions = [];
+    for (const shown of getPages()) {
+      if (shown.isClosed()) continue;
+      const snapshots = await snapshotAll(shown);
+      const form = findForm(snapshots);
+      if (form) return { form: { ...form, page: shown } };
+      descriptions.push(`${describe(snapshots)} (frames: ${shown.frames().map((frame) => frame.url()).filter((url) => url && url !== 'about:blank').map((url) => new URL(url).pathname).join(', ')})`);
+    }
+    seen = descriptions.join(' || ');
+    await getPages()[0].waitForTimeout(POLL_MS);
   } while (Date.now() < end);
-  throw new CelebrantsFailure('celebrants_form_unexpected', `The Celebrants page has no month list or Service Types. ${describe(snapshots)}`);
+  return { seen };
+}
+
+// After a postback the frame can be replaced, so the form is located again.
+async function reloadForm(page) {
+  const result = await waitForForm(() => [page]);
+  if (!result.form) throw new CelebrantsFailure('celebrants_form_unexpected', `The Celebrants form disappeared. ${result.seen}`);
+  return result.form;
 }
 
 function locatorFor(frame, item) {
@@ -294,7 +355,7 @@ async function applyServiceFilters(page, form) {
 
   // Confirms the boxes stuck, since a postback can reset them. A postback can
   // also replace the frame, so the form is located again.
-  const after = await waitForForm(page);
+  const after = await reloadForm(form.page);
   const { typeList: typeAfter, groupLists: groupsAfter } = classifyLists(after.snapshot.checkboxLists);
   const wrongType = typeAfter?.items.filter((item) => item.checked !== WANTED.has(normalizeLabel(item.label))) ?? [];
   const tickedGroups = groupsAfter.flatMap((list) => list.items.filter((item) => item.checked));
@@ -378,15 +439,18 @@ async function readAllPages(found) {
 
 // ---------- One report ----------
 
-async function generateOne(page, kind, month) {
-  const linkText = await openReport(page, kind);
-  let form = await waitForForm(page);
+// homePage is OGD's signed-in page. The form may open in a new tab, so the
+// rest of the run works on whichever page holds it.
+async function generateOne(homePage, kind, month) {
+  const { form: openedForm, linkText } = await openReport(homePage, kind);
+  let form = openedForm;
+  const { page } = form;
 
   const isKindPage = scoreLink(linkText, kind) >= 3;
   if (!(await chooseKind(page, form, kind)) && !isKindPage) {
     throw new CelebrantsFailure('celebrants_form_unexpected', `Could not choose ${CELEBRANT_KINDS[kind].label} on the "${linkText}" page. ${describe([form])}`);
   }
-  form = await waitForForm(page);
+  form = await reloadForm(form.page);
 
   if (!form.monthSelect) throw new CelebrantsFailure('celebrants_form_unexpected', `The Celebrants page has no month list. ${describe([form])}`);
   const monthName = MONTH_NAMES[month - 1].toUpperCase();
@@ -396,7 +460,7 @@ async function generateOne(page, kind, month) {
   if (!option) throw new CelebrantsFailure('celebrants_form_unexpected', `The month list has no ${MONTH_NAMES[month - 1]}.`);
   await chooseOption(page, form.frame, form.monthSelect, option);
 
-  form = await applyServiceFilters(page, await waitForForm(page));
+  form = await applyServiceFilters(page, await reloadForm(form.page));
 
   const button = findGenerateButton(form);
   if (!button) throw new CelebrantsFailure('celebrants_form_unexpected', `No Generate button on the Celebrants page. ${describe([form])}`);
@@ -451,6 +515,8 @@ export function createCelebrantsReport(month, kinds = Object.keys(CELEBRANT_KIND
           ? { ok: false, failureCode: error.code, statusDetail: error.message }
           : { ok: false, failureCode: 'automation_error', statusDetail: String(error?.message ?? 'Unknown error').split('\n')[0].slice(0, 500) };
       }
+      // Tabs the report opened are closed so the next one starts clean.
+      for (const extra of page.context().pages()) if (extra !== page) await extra.close().catch(() => null);
       await page.goto(homeUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
     }
     return results;
