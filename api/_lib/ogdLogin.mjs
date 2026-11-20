@@ -126,26 +126,62 @@ async function logOut(page) {
   }
 }
 
-async function runSignedIn(page, otpRequired, afterLogin) {
+// session.state is filled with the browser's cookies once signed in and again
+// after afterLogin, even when afterLogin fails, so the caller can save them.
+// With keepSession the run does not log out, leaving those cookies valid.
+async function runSignedIn(page, flags, afterLogin, { keepSession, session }) {
+  const capture = async () => {
+    if (keepSession) session.state = await page.context().storageState().catch(() => session.state ?? null);
+  };
+  await capture();
   try {
-    return { otpRequired, afterLoginResult: await afterLogin?.(page) };
+    return { ...flags, afterLoginResult: await afterLogin?.(page) };
   } finally {
-    await logOut(page);
+    if (keepSession) await capture();
+    else await logOut(page);
   }
 }
 
-// Resolves to { otpRequired, afterLoginResult } when OGD reaches its signed-in
-// page and throws AutomationFailure otherwise. readOtp({ sinceEpochSeconds })
-// supplies the OTP; the optional afterLogin(page) runs on the signed-in page.
-export async function loginToOgd({ browser, username, password, readOtp, afterLogin, loginUrl = OGD_LOGIN_URL }) {
-  const context = await browser.newContext();
+// Opens OGD's home page with saved cookies. True when OGD still treats them as
+// signed in; otherwise the cookies are dropped so the login starts clean.
+async function resumeSession(page, homeUrl) {
+  await page.goto(homeUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
+  const { step } = await settledStep(page, homeUrl).catch(() => ({ step: { state: 'unexpected' } }));
+  if (step.state === 'connected') return true;
+  await page.context().clearCookies().catch(() => null);
+  return false;
+}
+
+// Resolves to { otpRequired, sessionReused, sessionRejected, afterLoginResult }
+// when OGD reaches its signed-in page and throws AutomationFailure otherwise.
+// readOtp({ sinceEpochSeconds }) supplies the OTP; the optional afterLogin(page)
+// runs on the signed-in page. storageState (saved cookies) is tried first; a
+// full login after it is rejected waits until notBeforeMs, keeping logins
+// spaced. Pass a session object to receive the cookies to save; its
+// rejected flag is set when OGD turned the saved cookies down.
+export async function loginToOgd({
+  browser, username, password, readOtp, afterLogin, loginUrl = OGD_LOGIN_URL,
+  storageState = null, notBeforeMs = 0, keepSession = false, session = {},
+}) {
+  const context = await browser.newContext(storageState ? { storageState } : undefined);
   const page = await context.newPage();
   const homeUrl = new URL('/default.aspx', loginUrl).href;
+  const signedIn = { keepSession, session };
   let dialogMessage = null;
   page.on('dialog', async (dialog) => {
     dialogMessage = dialog.message().slice(0, 200);
     await dialog.accept();
   });
+
+  let sessionRejected = false;
+  if (storageState) {
+    if (await resumeSession(page, homeUrl)) return runSignedIn(page, { otpRequired: false, sessionReused: true, sessionRejected }, afterLogin, signedIn);
+    sessionRejected = true;
+    session.rejected = true;
+    const wait = notBeforeMs - Date.now();
+    if (wait > 0) await page.waitForTimeout(wait);
+  }
+  const flags = (otpRequired) => ({ otpRequired, sessionReused: false, sessionRejected });
 
   await page.goto(loginUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS });
   // OGD fills this field from script once its browser detection has loaded.
@@ -163,7 +199,7 @@ export async function loginToOgd({ browser, username, password, readOtp, afterLo
 
   const { snapshot: afterPassword, step: firstStep } = await settledStep(page, homeUrl);
 
-  if (firstStep.state === 'connected') return runSignedIn(page, false, afterLogin);
+  if (firstStep.state === 'connected') return runSignedIn(page, flags(false), afterLogin, signedIn);
   if (firstStep.state === 'login') {
     const reason = afterPassword.loginError || dialogMessage;
     throw new AutomationFailure('ogd_bad_credentials', reason ? `OGD says: ${reason}` : 'OGD returned to its login form without giving a reason.');
@@ -179,7 +215,7 @@ export async function loginToOgd({ browser, username, password, readOtp, afterLo
   await submitAndSettle(page, () => (button ? button.click() : field.press('Enter')));
 
   const { snapshot: afterOtp, step: finalStep } = await settledStep(page, homeUrl);
-  if (finalStep.state === 'connected') return runSignedIn(page, true, afterLogin);
+  if (finalStep.state === 'connected') return runSignedIn(page, flags(true), afterLogin, signedIn);
   if (finalStep.state === 'otp' || finalStep.state === 'login') {
     throw new AutomationFailure('otp_rejected', dialogMessage || 'OGD did not accept the code from the email.');
   }

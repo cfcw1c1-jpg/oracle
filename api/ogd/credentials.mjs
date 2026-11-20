@@ -31,7 +31,9 @@ export const POST = route(async (request) => {
 
   const now = new Date().toISOString();
   const credentialColumns = kind === 'ogd'
-    ? { ogd_username: identifier, ogd_password_enc: encryptSecret(password, areaId, 'ogd'), ogd_updated_at: now, ogd_updated_by: userId }
+    ? { ogd_username: identifier, ogd_password_enc: encryptSecret(password, areaId, 'ogd'), ogd_updated_at: now, ogd_updated_by: userId,
+        // A saved session belongs to the old login.
+        ogd_session_enc: null, ogd_session_saved_at: null, ogd_session_reuse_off_until: null }
     : { gmail_address: identifier, gmail_password_enc: encryptSecret(password, areaId, 'gmail'), gmail_updated_at: now, gmail_updated_by: userId };
 
   // A previous result says nothing about credentials that just changed.
