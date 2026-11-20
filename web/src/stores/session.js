@@ -27,6 +27,10 @@ let changeRequestChannel = null;
 let stopPresence = null;
 let toastTimer = null;
 
+// Pages that are built but not ready for use. They stay granted in role_pages
+// and are hidden here; remove a key to show its page again.
+const HIDDEN_PAGES = new Set(['reports']);
+
 // Roles that sign their chapters in to OGD right after signing in to Oracle.
 const OGD_SIGN_IN_ROLES = new Set(['MSG', 'Chapter Head']);
 
@@ -57,7 +61,7 @@ export async function loadAccess(userId = sessionState.session?.user?.id) {
     if (profile?.role_id) {
       const { data, error } = await supabase.from('role_pages').select('page_key').eq('role_id', profile.role_id);
       if (error) throw error;
-      allowedPages = (data || []).map((row) => row.page_key);
+      allowedPages = (data || []).map((row) => row.page_key).filter((key) => !HIDDEN_PAGES.has(key));
     }
     const roleName = profile?.roles?.name || null;
     sessionState.access = { profile, roleName, isAdmin: roleName === 'Admin', allowedPages };
