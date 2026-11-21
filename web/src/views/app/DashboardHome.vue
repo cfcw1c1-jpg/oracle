@@ -7,7 +7,7 @@ import LoadingBlock from '@/components/LoadingBlock.vue';
 import ServicesGrid from '@/components/ServicesGrid.vue';
 import StatCard from '@/components/StatCard.vue';
 import { fetchAllRows, isActiveStatus } from '@/lib/data';
-import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT } from '@/lib/formation';
+import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, scopedTracks } from '@/lib/formation';
 import { supabase } from '@/lib/supabase';
 import { sessionState } from '@/stores/session';
 
@@ -84,7 +84,7 @@ const pastoralSegments = computed(() => {
 });
 
 function trackedPercents(stage) {
-  return stage.tracks.map((track) => computeTrackStat(track, activePfoRows.value, activeMembers.value)).filter((stat) => stat.tracked).map((stat) => stat.percent);
+  return scopedTracks(stage).map((track) => computeTrackStat(track, activePfoRows.value, activeMembers.value)).filter((stat) => stat.tracked).map((stat) => stat.percent);
 }
 const stageProgress = computed(() => FORMATION_STAGES.map((stage) => ({ ...stage, avgPercent: average(trackedPercents(stage)) })));
 const overallPfoAvg = computed(() => average(FORMATION_STAGES.flatMap(trackedPercents)));
@@ -99,8 +99,8 @@ async function loadDashboard() {
   isLoading.value = true;
   try {
     const [memberRows, pfoData, clpResult] = await Promise.all([
-      fetchAllRows('members', 'Status, PastoralService, MemberIDNo', { orderBy: 'MemberIDNo' }),
-      fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (Status, PastoralService)`, { orderBy: 'MemberIDNo' }),
+      fetchAllRows('members', 'Status, PastoralService, MemberIDNo, YearRegistered', { orderBy: 'MemberIDNo' }),
+      fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (Status, PastoralService, YearRegistered)`, { orderBy: 'MemberIDNo' }),
       supabase.from('clp_trainings').select('id, start_date, end_date, venue').order('start_date', { ascending: false }),
     ]);
     if (clpResult.error) throw clpResult.error;

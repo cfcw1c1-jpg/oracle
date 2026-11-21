@@ -7,7 +7,7 @@ import MultiSelect from '@/components/MultiSelect.vue';
 import PageHead from '@/components/PageHead.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { confirmAction, downloadBlob, exportCsv, fetchAllRows, isActiveStatus, showAlert } from '@/lib/data';
-import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, trackPendingMembers, trackRolesLabel } from '@/lib/formation';
+import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, scopedTracks, stageMaxYear, trackPendingMembers, trackRolesLabel } from '@/lib/formation';
 import { supabase } from '@/lib/supabase';
 
 const SNAPSHOT_COLUMNS = 'id, created_at, created_by_email, note, area_filter, role_filter, total_members, track_results';
@@ -44,8 +44,8 @@ const activePfoRows = computed(() => pfoRows.value.filter((row) => isActiveStatu
 const denominatorLabel = computed(() => (selectedRoles.value.length ? `Total Active Members (${selectedRoles.value.map(getRoleLabel).join(', ')})` : 'Total Active Members'));
 
 const stageResults = computed(() => FORMATION_STAGES.map((stage) => {
-  const trackResults = stage.tracks.map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, activeMembers.value) }));
-  return { ...stage, trackResults, insight: buildStageInsight(trackResults.filter((track) => track.tracked).map((track) => track.percent)) };
+  const trackResults = scopedTracks(stage).map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, activeMembers.value) }));
+  return { ...stage, maxYear: stageMaxYear(stage), trackResults, insight: buildStageInsight(trackResults.filter((track) => track.tracked).map((track) => track.percent)) };
 }));
 
 // A trend only means something against a snapshot taken under the same filters.
@@ -145,8 +145,8 @@ async function generateStats() {
   isLoading.value = true;
   try {
     const [members, pfo] = await Promise.all([
-      fetchAllRows('members', 'MemberIDNo, Lastname, Firstname, PastoralService, Status, AreaName', { orderBy: 'MemberIDNo' }),
-      fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (PastoralService, Status, AreaName)`, { orderBy: 'MemberIDNo' }),
+      fetchAllRows('members', 'MemberIDNo, Lastname, Firstname, PastoralService, Status, AreaName, YearRegistered', { orderBy: 'MemberIDNo' }),
+      fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (PastoralService, Status, AreaName, YearRegistered)`, { orderBy: 'MemberIDNo' }),
     ]);
     membersRows.value = members;
     pfoRows.value = pfo;
@@ -265,7 +265,10 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 
     <section class="grid grid-2">
       <article v-for="stage in stageResults" :key="stage.key" class="card card-pad stack" :style="{ '--stage': stage.color }">
-        <h2 class="card-title row"><span class="stage-dot" />{{ stage.label }}</h2>
+        <div>
+          <h2 class="card-title row"><span class="stage-dot" />{{ stage.label }}</h2>
+          <p class="muted small stage-scope">{{ stage.maxYear ? `Members registered ${stage.maxYear} and earlier` : stage.key === 'firstYear' ? 'All members' : 'All members, by role where noted' }}</p>
+        </div>
         <component
           :is="track.tracked ? 'button' : 'div'"
           v-for="track in stage.trackResults"
@@ -375,7 +378,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
     <AppModal
       v-if="pendingTrack"
       :title="`Not yet finished: ${pendingTrack.name}`"
-      :subtitle="`${pendingMembers.length} of ${pendingTrack.total} ${pendingTrack.roles ? trackRolesLabel(pendingTrack) : 'members'} · Area: ${areaFilter}`"
+      :subtitle="`${pendingMembers.length} of ${pendingTrack.total} ${pendingTrack.roles ? trackRolesLabel(pendingTrack) : 'members'}${pendingTrack.maxYear ? ` registered ${pendingTrack.maxYear} and earlier` : ''} · Area: ${areaFilter}`"
       :width="620"
       @close="pendingTrack = null"
     >
@@ -408,6 +411,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 .summary-value { font-size: 30px; font-weight: var(--fw-medium); letter-spacing: -0.02em; }
 .filters { align-items: flex-start; }
 .filters .select { min-width: 190px; }
+.stage-scope { margin-top: 3px; padding-left: 17px; }
 .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
 .track { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .track-link { border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; color: inherit; font: inherit; font-size: 13px; cursor: pointer; border-radius: 8px; padding-inline: 6px; margin-inline: -6px; width: calc(100% + 12px); transition: background 0.15s; }

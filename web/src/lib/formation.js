@@ -206,6 +206,7 @@ export const FORMATION_STAGES = [
   },
   {
     key: 'secondYear',
+    yearsRegistered: 2,
     label: 'Second Year Formation',
     marker: '🟩',
     color: '#22c55e',
@@ -218,6 +219,7 @@ export const FORMATION_STAGES = [
   },
   {
     key: 'thirdYear',
+    yearsRegistered: 3,
     label: 'Third Year Formation',
     marker: '🟨',
     color: '#eab308',
@@ -229,6 +231,7 @@ export const FORMATION_STAGES = [
   },
   {
     key: 'fourthYear',
+    yearsRegistered: 4,
     label: 'Fourth Year Formation',
     marker: '🟧',
     color: '#f97316',
@@ -279,12 +282,35 @@ export function getRoleLabel(code) {
 // A track is complete for a member only when every column in its group is Y.
 // members: the active members in scope. A track with roles (HLT, ULT, CLT)
 // counts only members with those roles, on both sides of the percentage.
-// pfoRows carry the member's role as row.members.PastoralService.
+// A track with maxYear (Second to Fourth Year) counts only members registered
+// in or before that year; members with no Year Registered are left out there.
+// pfoRows carry the member as row.members.
+export function inTrackScope(track, member) {
+  if (!member) return false;
+  if (track.roles && !track.roles.includes(normalizeRole(member.PastoralService))) return false;
+  if (track.maxYear != null) {
+    const year = Number(member.YearRegistered);
+    if (!Number.isInteger(year) || year <= 0 || year > track.maxYear) return false;
+  }
+  return true;
+}
+
+// Second Year counts members registered 2+ years ago, Third 3+, Fourth 4+:
+// in 2026 that is 2024, 2023 and 2022 and earlier. Moves on each January.
+export function stageMaxYear(stage, today = new Date()) {
+  return stage.yearsRegistered ? today.getFullYear() - stage.yearsRegistered : null;
+}
+
+// The stage's tracks with the stage's registration cut-off attached.
+export function scopedTracks(stage, today = new Date()) {
+  const maxYear = stageMaxYear(stage, today);
+  return stage.tracks.map((track) => (maxYear == null ? track : { ...track, maxYear }));
+}
+
 export function computeTrackStat(track, pfoRows, members) {
   if (!track.group) return { tracked: false };
-  const inTrack = (role) => !track.roles || track.roles.includes(normalizeRole(role));
-  const eligible = members.filter((member) => inTrack(member.PastoralService));
-  const rows = pfoRows.filter((row) => inTrack(row.members?.PastoralService));
+  const eligible = members.filter((member) => inTrackScope(track, member));
+  const rows = pfoRows.filter((row) => inTrackScope(track, row.members));
   const columnIds = COLUMN_IDS_BY_GROUP[track.group] || [];
   const completedCount = rows.filter((row) => columnIds.length > 0 && columnIds.every((id) => row[id] === 'Y' || row[id] === 'y')).length;
   const total = eligible.length;
@@ -297,7 +323,7 @@ export function trackPendingMembers(track, members, pfoRows) {
   const columnIds = COLUMN_IDS_BY_GROUP[track.group] || [];
   const rowsById = new Map(pfoRows.map((row) => [row.MemberIDNo, row]));
   return members
-    .filter((member) => !track.roles || track.roles.includes(normalizeRole(member.PastoralService)))
+    .filter((member) => inTrackScope(track, member))
     .map((member) => {
       const row = rowsById.get(member.MemberIDNo);
       const talksDone = row ? columnIds.filter((id) => row[id] === 'Y' || row[id] === 'y').length : 0;

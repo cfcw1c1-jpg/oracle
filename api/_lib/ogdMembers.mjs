@@ -38,7 +38,8 @@ export function toMemberRow(headers, cells) {
   if (siteStatus && !STATUS_MAP[siteStatus]) return { skip: 'unknown_status', value: siteStatus };
 
   const comma = fullName.indexOf(',');
-  const yearMatch = /^PM-(\d{4})-/.exec(memberId);
+  // PM-2014-…, IM-2013-…, MM-2016-…: the year the member was registered.
+  const yearMatch = /^[A-Z]{2}-(\d{4})-/i.exec(memberId);
   return {
     member: {
       MemberIDNo: memberId,
@@ -52,7 +53,8 @@ export function toMemberRow(headers, cells) {
       Email: blank(row.Email),
       SiteStatus: siteStatus,
       Status: siteStatus ? STATUS_MAP[siteStatus] : 'Active',
-      YearRegistered: yearMatch ? Number(yearMatch[1]) : null,
+      // Left out when the ID has no year, so a value typed in Oracle is kept.
+      ...(yearMatch ? { YearRegistered: Number(yearMatch[1]) } : {}),
     },
   };
 }
