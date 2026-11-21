@@ -1,6 +1,7 @@
 <script setup>
 import { ChevronRight } from 'lucide-vue-next';
 import { ref } from 'vue';
+import CreditFooter from '@/components/CreditFooter.vue';
 import PasswordField from '@/components/PasswordField.vue';
 import { showAlert } from '@/lib/data';
 import { supabase } from '@/lib/supabase';
@@ -72,6 +73,7 @@ async function handleForgotPassword() {
       </form>
     </div>
     <RouterLink class="auth-privacy" to="/privacy-policy">Privacy Policy</RouterLink>
+    <CreditFooter class="auth-credit" />
   </main>
 </template>
 
@@ -91,6 +93,7 @@ async function handleForgotPassword() {
 .auth-go { display: inline-flex; align-items: center; justify-content: center; gap: 2px; min-width: 80px; border: 0; background: var(--primary); color: var(--primary-ink); border-radius: var(--radius-sm); padding: 9px 14px; font-weight: var(--fw-heading); }
 .spinner.on-go { border-color: rgba(255, 255, 255, 0.35); border-top-color: #fff; }
 .auth-privacy { margin-top: 24px; font-size: 12px; font-weight: var(--fw-medium); color: var(--muted); }
+.auth-credit { margin-top: 8px; padding-bottom: 0; }
 
 /* Phones keep the existing navy sign-in screen. */
 @media (max-width: 767.98px) {
@@ -107,5 +110,8 @@ async function handleForgotPassword() {
   .auth-forgot { color: rgba(255, 255, 255, 0.85); font-style: italic; }
   .auth-go { background: none; font-size: 18px; font-weight: 700; color: #fff; padding: 4px 0 4px 12px; min-width: 0; }
   .auth-privacy { color: rgba(255, 255, 255, 0.55); }
+  /* The logo's navy lettering needs a light chip on the navy screen. */
+  .auth-credit { color: rgba(255, 255, 255, 0.7); }
+  .auth-credit a { background: #fff; padding: 3px 8px; border-radius: 6px; }
 }
 </style>

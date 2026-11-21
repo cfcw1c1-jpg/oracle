@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Info, Lock, LogOut, Mail, MessageCircle, Mes
 import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppModal from '@/components/AppModal.vue';
+import CreditFooter from '@/components/CreditFooter.vue';
 import OgdStatus from '@/components/OgdStatus.vue';
 import { useIsWide } from '@/composables/useIsWide';
 import { mobileTabsForRole, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
@@ -245,6 +246,7 @@ function openMessagesFromDisclaimer() {
           <Lock :size="28" />
           <p>{{ roleName ? "You don't have access to this page yet. Ask an Admin to grant it." : 'Your account has no role assigned yet. Ask an Admin to assign one.' }}</p>
         </div>
+        <CreditFooter v-if="currentTab !== 'messages'" />
       </main>
     </div>
 

@@ -1,4 +1,6 @@
 <script setup>
+import CreditFooter from '@/components/CreditFooter.vue';
+
 defineProps({ subtitle: { type: String, required: true } });
 </script>
 
@@ -11,6 +13,7 @@ defineProps({ subtitle: { type: String, required: true } });
       <small>{{ subtitle }}</small>
     </header>
     <main class="pub-body"><slot /></main>
+    <CreditFooter />
   </div>
 </template>
 
