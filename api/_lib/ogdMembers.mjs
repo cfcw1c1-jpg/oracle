@@ -235,28 +235,70 @@ const MODAL_WAIT_MS = 15000;
 const CLICK_TIMEOUT_MS = 10000;
 const MAX_CONSECUTIVE_FAILURES = 4;
 
-// Finds a visible element with exactly this text inside the member popup:
-// first in frames the popup added, then inside a popup container. Links are
-// tried before wider elements so the click lands on the link itself.
+// Tab labels per tab, tried in order. OGD's wording varies, so the
+// formation tab also accepts "Formations", "Formation Record" and the like.
+const TAB_PATTERNS = {
+  service: [/^\s*service\s*$/i],
+  formation: [
+    /^\s*formations?\s*$/i,
+    /^\s*formations?\s+(records?|programs?|history|info(rmation)?|status|tracks?|details?)\s*$/i,
+    /^\s*(pastoral|pfo)\s+formations?\s*$/i,
+  ],
+};
+const TAB_ELEMENTS = ['a', 'li', 'span', 'td', 'th', 'div', 'button', 'label', 'font', 'b'];
+const TAB_INPUTS = 'input[type=button], input[type=submit]';
+
+function tabPatterns(label) {
+  return TAB_PATTERNS[label] ?? [new RegExp(`^\\s*${label}\\s*$`, 'i')];
+}
+
+function popupScopes(page, framesBefore) {
+  const newFrames = page.frames().filter((frame) => !framesBefore.has(frame));
+  return [...newFrames.map((frame) => frame.locator('body')), ...page.frames().map((frame) => frame.locator(MODAL_CONTAINERS))];
+}
+
+// Finds a visible element whose whole text matches one of the label's
+// patterns inside the member popup: first in frames the popup added, then
+// inside a popup container. Links are tried before wider elements so the
+// click lands on the link itself; buttons are matched by their value.
 async function findInPopup(page, framesBefore, label, timeoutMs = MODAL_WAIT_MS) {
-  const pattern = new RegExp(`^\\s*${label}\\s*$`, 'i');
-  const kinds = ['a', 'li', 'span', 'td', 'div', 'button'];
+  const patterns = tabPatterns(label);
   const end = Date.now() + timeoutMs;
   do {
-    const newFrames = page.frames().filter((frame) => !framesBefore.has(frame));
-    const scopes = [...newFrames.map((frame) => frame.locator('body')), ...page.frames().map((frame) => frame.locator(MODAL_CONTAINERS))];
-    for (const scope of scopes) {
-      for (const kind of kinds) {
-        const locator = scope.locator(kind).filter({ hasText: pattern });
-        for (let index = 0; index < (await locator.count().catch(() => 0)); index += 1) {
-          const element = locator.nth(index);
-          if (await element.isVisible().catch(() => false)) return element;
+    const scopes = popupScopes(page, framesBefore);
+    for (const pattern of patterns) {
+      for (const scope of scopes) {
+        for (const kind of TAB_ELEMENTS) {
+          const locator = scope.locator(kind).filter({ hasText: pattern });
+          for (let index = 0; index < (await locator.count().catch(() => 0)); index += 1) {
+            const element = locator.nth(index);
+            if (pattern.test((await element.innerText().catch(() => '')) || '') && (await element.isVisible().catch(() => false))) return element;
+          }
+        }
+        const inputs = scope.locator(TAB_INPUTS);
+        for (let index = 0; index < (await inputs.count().catch(() => 0)); index += 1) {
+          const element = inputs.nth(index);
+          if (pattern.test((await element.getAttribute('value').catch(() => '')) || '') && (await element.isVisible().catch(() => false))) return element;
         }
       }
     }
     await page.waitForTimeout(POLL_MS);
   } while (Date.now() < end);
   return null;
+}
+
+// Short visible labels in the popup that look like tabs, for error messages.
+async function popupTabTexts(page, framesBefore) {
+  const texts = new Set();
+  for (const scope of popupScopes(page, framesBefore)) {
+    const found = await scope.evaluateAll((roots) => roots.flatMap((root) => [...root.querySelectorAll('a, li, td, th, span, button, input[type=button], input[type=submit]')]
+      .filter((el) => el.getClientRects().length > 0)
+      .map((el) => (el.value || el.innerText || '').replace(/\s+/g, ' ').trim())
+      .filter((text) => text && text.length <= 25))).catch(() => []);
+    found.forEach((text) => texts.add(text));
+    if (texts.size >= 40) break;
+  }
+  return [...texts].slice(0, 40);
 }
 
 // Polls every frame with read(frame) until it returns a result for a frame
@@ -299,15 +341,21 @@ export async function closePopup(page, memberId, framesBefore) {
 }
 
 // Opens a member's popup from their list row and clicks one of its tabs.
-// Returns the frames that existed before, which the popup helpers use to
-// tell the popup's own frames apart.
-async function openMemberTab(page, member, tabLabel) {
+// When the tab cannot be found but alreadyShown(frame) finds its content on
+// the tab the popup opened with, that is used as is. Returns the frames that
+// existed before, which the popup helpers use to tell the popup's own frames
+// apart.
+async function openMemberTab(page, member, tabLabel, alreadyShown = null) {
   const framesBefore = new Set(page.frames());
   const cell = member.listFrame.locator(`tr[data-oracle-row="${member.rowIndex}"] > td`).nth(member.nameColumn);
   const link = cell.locator('a, [onclick]').first();
   await ((await link.count()) ? link : cell).click({ timeout: CLICK_TIMEOUT_MS });
   const tab = await findInPopup(page, framesBefore, tabLabel);
-  if (!tab) throw new Error(`The member popup has no ${tabLabel} tab.`);
+  if (!tab) {
+    if (alreadyShown && (await waitForPopupContent(page, alreadyShown, 3000))) return framesBefore;
+    const seen = await popupTabTexts(page, framesBefore);
+    throw new Error(`The member popup has no ${tabLabel} tab. ${seen.length ? `Labels seen: ${seen.join(', ')}` : 'No popup labels were visible.'}`);
+  }
   await tab.click({ timeout: CLICK_TIMEOUT_MS });
   return framesBefore;
 }
@@ -569,7 +617,7 @@ export async function readFormations(page, member) {
   let framesBefore = new Set(page.frames());
   const readTable = (frame) => readFormationTable(frame, member.memberId);
   try {
-    framesBefore = await openMemberTab(page, member, 'formation');
+    framesBefore = await openMemberTab(page, member, 'formation', readTable);
     let found = await waitForPopupContent(page, readTable);
     if (!found) throw new Error('The Formation tab showed no formations for this member.');
     const formations = found.result.formations.map(({ key, nameColumn, hasLink, ...formation }) => ({ ...formation }));
@@ -585,7 +633,7 @@ export async function readFormations(page, member) {
       let current = await waitForPopupContent(page, readTable, 2000);
       if (!current) {
         await closePopup(page, member.memberId, framesBefore);
-        framesBefore = await openMemberTab(page, member, 'formation');
+        framesBefore = await openMemberTab(page, member, 'formation', readTable);
         current = await waitForPopupContent(page, readTable);
         if (!current) throw new Error('The Formation tab did not come back after a checklist.');
       }
@@ -659,7 +707,7 @@ export async function pushFormationChanges(page, member, changes, columnsByCode)
     let current = await waitForPopupContent(page, readTable, 2000);
     if (!current) {
       await closePopup(page, member.memberId, framesBefore);
-      framesBefore = await openMemberTab(page, member, 'formation');
+      framesBefore = await openMemberTab(page, member, 'formation', readTable);
       current = await waitForPopupContent(page, readTable);
     }
     if (!current) throw new Error('The Formation tab did not open.');
@@ -667,7 +715,7 @@ export async function pushFormationChanges(page, member, changes, columnsByCode)
   };
 
   try {
-    framesBefore = await openMemberTab(page, member, 'formation');
+    framesBefore = await openMemberTab(page, member, 'formation', readTable);
     for (const [code, items] of byCode) {
       const failAll = (detail) => items.forEach((item) => finish(item.change, 'failed', detail));
       try {

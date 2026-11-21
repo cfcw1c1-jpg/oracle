@@ -34,7 +34,7 @@ function describe({ part, saved, households, formations, pagesRead, skipped, iss
   if (issues.length) parts.push(`Left unchanged: ${issues.slice(0, 3).join('; ')}${issues.length > 3 ? `; and ${issues.length - 3} more` : ''}.`);
   if (more) parts.push(`Continues from page ${nextPage}.`);
   else if (stopReason) parts.push(`Not every page was read: ${stopReason}`);
-  return parts.join(' ').slice(0, 500);
+  return parts.join(' ').slice(0, 1000);
 }
 
 // Upserts in groups of rows that share the same columns. A batch whose rows
