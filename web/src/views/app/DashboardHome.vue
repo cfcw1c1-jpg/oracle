@@ -169,6 +169,8 @@ onBeforeUnmount(() => clearInterval(clockTimer));
       <span class="hero-mark"><img src="/oracle-logo.png" alt="" /></span>
     </section>
 
+    <ServicesGrid />
+
     <article class="card gospel-card" aria-labelledby="gospel-title">
       <header class="gospel-head">
         <span class="gospel-icon"><BookOpen :size="18" /></span>
@@ -186,7 +188,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
       </template>
     </article>
 
-    <ServicesGrid />
 
     <section class="grid dash-stats">
       <StatCard label="Total Active Members" :value="totalMembers" :icon="Users" />
