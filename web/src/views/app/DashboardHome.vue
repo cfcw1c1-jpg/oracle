@@ -27,8 +27,6 @@ const gospel = reactive({ loading: true, error: null, liturgicalDay: '', citatio
 
 const user = computed(() => sessionState.session?.user);
 const email = computed(() => user.value?.email || 'Portal Administrator');
-const initials = computed(() => email.value.slice(0, 2).toUpperCase());
-const avatarUrl = computed(() => user.value?.user_metadata?.avatar_url);
 
 function average(values) {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
@@ -235,22 +233,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
         <p v-if="!pastoralSegments.length" class="muted small">No active members yet.</p>
       </article>
 
-      <article class="card card-pad profile-card">
-        <h2 class="card-title mb">My Profile</h2>
-        <div class="row">
-          <img v-if="avatarUrl" :src="avatarUrl" class="avatar lg" alt="" />
-          <span v-else class="avatar lg">{{ initials }}</span>
-          <div class="grow">
-            <p class="strong clamp">{{ email }}</p>
-            <span class="pill accent">{{ roleName || 'Unassigned Role' }}</span>
-          </div>
-        </div>
-        <dl class="facts">
-          <div><dt>Member Since</dt><dd>{{ formatShortDate(user?.created_at) }}</dd></div>
-          <div><dt>Last Sign-in</dt><dd>{{ formatShortDate(user?.last_sign_in_at) }}</dd></div>
-        </dl>
-      </article>
-
       <article class="card card-pad stack">
         <h2 class="card-title">{{ trainingList.upcoming ? 'Upcoming CLP Trainings' : 'Previous CLP Trainings' }}</h2>
         <p v-if="!trainingList.rows.length" class="muted small">No training batches scheduled yet.</p>
@@ -280,10 +262,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 .bar { height: 7px; border-radius: 4px; background: var(--surface-soft); margin-top: 6px; overflow: hidden; }
 .bar-fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
 .view-report { align-self: flex-start; margin-top: 4px; }
-.avatar.lg { width: 54px; height: 54px; font-size: 16px; }
-.facts { display: flex; gap: 30px; margin: 16px 0 0; }
-.facts dt { font-size: 11.5px; color: var(--muted); }
-.facts dd { margin: 2px 0 0; font-weight: var(--fw-medium); font-size: 13px; }
 .gospel-card { padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; border-left: 4px solid var(--primary); }
 .gospel-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .gospel-icon { width: 38px; height: 38px; border-radius: 12px; flex: none; display: grid; place-items: center; background: var(--accent-soft); color: var(--primary); }
@@ -303,8 +281,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
   .dash-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .bar-fill { background: var(--stage); }
   .progress-num { color: var(--stage); }
-  /* Profile is its own tab on phones, so the card is left out here. */
-  .profile-card { display: none; }
   .dash-stats :deep(.stat) { padding: 12px; }
   .dash-stats :deep(.stat-value) { font-size: 20px; }
   /* Three narrow cards: the icon goes above the label so the label has the full width. */
