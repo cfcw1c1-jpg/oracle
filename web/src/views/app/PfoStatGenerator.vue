@@ -1,5 +1,5 @@
 <script setup>
-import { ChevronDown, ChevronRight, ChevronUp, Download, Info, RefreshCw, Save, Trash2 } from 'lucide-vue-next';
+import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp, Download, Info, RefreshCw, Save, Trash2 } from 'lucide-vue-next';
 import { computed, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
@@ -65,6 +65,55 @@ function deltaFor(track) {
 
 function deltaLabel(delta) {
   return `${delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '—'} ${Math.abs(delta).toFixed(1)}%`;
+}
+
+// ---------- Compare a saved snapshot with the numbers now ----------
+const compareSnapshot = ref(null);
+const sameRoles = (a = [], b = []) => a.length === b.length && [...a].sort().every((role, index) => role === [...b].sort()[index]);
+const compareFiltersMatch = computed(() => Boolean(compareSnapshot.value) && sameRoles(compareSnapshot.value.role_filter || [], selectedRoles.value));
+const comparison = computed(() => {
+  const snapshot = compareSnapshot.value;
+  if (!snapshot) return null;
+  const saved = new Map((snapshot.track_results || []).map((item) => [item.code, item]));
+  const stages = stageResults.value.map((stage) => ({
+    key: stage.key,
+    label: stage.label,
+    color: stage.color,
+    rows: stage.trackResults.map((track) => {
+      const then = saved.get(track.code);
+      const thenTracked = Boolean(then?.tracked);
+      const before = thenTracked ? { count: then.completedCount, total: then.total ?? snapshot.total_members, percent: then.percent } : null;
+      const now = track.tracked ? { count: track.completedCount, total: track.total, percent: track.percent } : null;
+      return { code: track.code, name: track.name, before, now, change: before && now ? now.percent - before.percent : null, countChange: before && now ? now.count - before.count : null };
+    }),
+  }));
+  const changes = stages.flatMap((stage) => stage.rows).filter((row) => row.change !== null);
+  return {
+    stages,
+    improved: changes.filter((row) => row.change > 0.05).length,
+    declined: changes.filter((row) => row.change < -0.05).length,
+    unchanged: changes.filter((row) => Math.abs(row.change) <= 0.05).length,
+    averageChange: changes.length ? changes.reduce((sum, row) => sum + row.change, 0) / changes.length : null,
+  };
+});
+const changeTone = (change) => (change === null ? 'muted' : change > 0.05 ? 'text-success' : change < -0.05 ? 'text-danger' : 'muted');
+const signed = (value, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
+const cellText = (value) => (value ? `${value.count} / ${value.total} · ${value.percent.toFixed(1)}%` : 'Not tracked');
+
+function useSnapshotRoles() {
+  selectedRoles.value = [...(compareSnapshot.value?.role_filter || [])];
+}
+
+function exportComparison() {
+  const snapshot = compareSnapshot.value;
+  const rows = comparison.value.stages.flatMap((stage) => stage.rows.map((row) => ({ stage: stage.label, ...row })));
+  exportCsv(`formation-stats-${snapshot.created_at.slice(0, 10)}-vs-${new Date().toISOString().slice(0, 10)}`, [
+    { key: 'stage', label: 'Stage' }, { key: 'name', label: 'Training' }, { key: 'code', label: 'Code' },
+    { key: 'before', label: `Snapshot ${formatStamp(snapshot.created_at)}`, value: (row) => cellText(row.before) },
+    { key: 'now', label: 'Now', value: (row) => cellText(row.now) },
+    { key: 'change', label: 'Change (percentage points)', value: (row) => (row.change === null ? '' : signed(row.change, 1)) },
+    { key: 'countChange', label: 'Change (members)', value: (row) => (row.countChange === null ? '' : signed(row.countChange)) },
+  ], rows);
 }
 
 // ---------- Any tracked training: who has not finished it yet ----------
@@ -262,6 +311,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
             </span>
             <component :is="expandedId === snapshot.id ? ChevronUp : ChevronDown" :size="16" />
           </button>
+          <button class="btn btn-sm" @click="compareSnapshot = snapshot"><ArrowLeftRight :size="13" />Compare with now</button>
           <button class="icon-btn" :disabled="deletingId === snapshot.id" aria-label="Delete snapshot" @click="deleteSnapshot(snapshot)"><Trash2 :size="16" /></button>
         </div>
         <ul v-if="expandedId === snapshot.id" class="snap-detail">
@@ -272,6 +322,55 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         </ul>
       </div>
     </section>
+
+    <AppModal
+      v-if="comparison"
+      title="Snapshot vs Now"
+      :subtitle="`${formatStamp(compareSnapshot.created_at)}${compareSnapshot.note ? ` · &quot;${compareSnapshot.note}&quot;` : ''} compared with today · Area: ${areaFilter}`"
+      :width="760"
+      @close="compareSnapshot = null"
+    >
+      <div class="stack">
+        <div v-if="!compareFiltersMatch" class="compare-warn">
+          <span>This snapshot used Roles: <b>{{ compareSnapshot.role_filter?.length ? compareSnapshot.role_filter.map(getRoleLabel).join(', ') : 'All' }}</b>; the numbers now use <b>{{ selectedRoles.length ? selectedRoles.map(getRoleLabel).join(', ') : 'All' }}</b>.</span>
+          <button class="btn btn-sm" @click="useSnapshotRoles">Use the snapshot's roles</button>
+        </div>
+        <div class="compare-summary">
+          <div><span class="muted small">Active members</span><strong>{{ compareSnapshot.total_members }} → {{ totalActive }}</strong><span class="small" :class="changeTone(totalActive - compareSnapshot.total_members)">{{ signed(totalActive - compareSnapshot.total_members) }}</span></div>
+          <div><span class="muted small">Average change</span><strong :class="changeTone(comparison.averageChange)">{{ comparison.averageChange === null ? '—' : `${signed(comparison.averageChange, 1)} pts` }}</strong></div>
+          <div><span class="muted small">Improved</span><strong class="text-success">{{ comparison.improved }}</strong></div>
+          <div><span class="muted small">Declined</span><strong :class="comparison.declined ? 'text-danger' : 'muted'">{{ comparison.declined }}</strong></div>
+          <div><span class="muted small">No change</span><strong>{{ comparison.unchanged }}</strong></div>
+        </div>
+        <div class="compare-scroll">
+          <table class="compare-table">
+            <thead><tr><th>Training</th><th>Snapshot</th><th>Now</th><th>Change</th></tr></thead>
+            <tbody v-for="stage in comparison.stages" :key="stage.key" :style="{ '--stage': stage.color }">
+              <tr class="compare-stage"><th colspan="4"><span class="stage-dot" />{{ stage.label }}</th></tr>
+              <tr v-for="row in stage.rows" :key="row.code">
+                <td data-label="Training"><span class="strong">{{ row.name }}</span> <span class="muted small">{{ row.code }}</span></td>
+                <td data-label="Snapshot">
+                  <template v-if="row.before"><b>{{ row.before.percent.toFixed(1) }}%</b><span class="muted tiny">{{ row.before.count }} / {{ row.before.total }}</span></template>
+                  <span v-else class="muted small">Not tracked</span>
+                </td>
+                <td data-label="Now">
+                  <template v-if="row.now"><b>{{ row.now.percent.toFixed(1) }}%</b><span class="muted tiny">{{ row.now.count }} / {{ row.now.total }}</span></template>
+                  <span v-else class="muted small">Not tracked</span>
+                </td>
+                <td data-label="Change" :class="changeTone(row.change)">
+                  <template v-if="row.change !== null"><b>{{ row.change > 0.05 ? '▲' : row.change < -0.05 ? '▼' : '—' }} {{ signed(row.change, 1) }} pts</b><span class="tiny">{{ signed(row.countChange) }} members</span></template>
+                  <span v-else class="muted small">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="row compare-foot">
+          <span class="muted small">pts = percentage points</span>
+          <button class="btn" @click="exportComparison"><Download :size="14" />Export CSV</button>
+        </div>
+      </div>
+    </AppModal>
 
     <AppModal
       v-if="pendingTrack"
@@ -315,6 +414,20 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 .track-link:hover { background: var(--surface-hover); }
 .track-link:hover .track-chevron { transform: translateX(2px); }
 .track-chevron { flex: none; transition: transform 0.15s; }
+.compare-warn { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--ink-2); font-size: 12.5px; }
+.compare-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.compare-summary > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.compare-summary strong { font-size: 16px; font-weight: var(--fw-medium); }
+.compare-scroll { max-height: min(56vh, 520px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.compare-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); text-align: left; padding: 9px 12px; font-size: 11.5px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+.compare-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.compare-table td b { font-weight: var(--fw-medium); }
+.compare-table td .tiny { display: block; font-size: 11px; margin-top: 1px; }
+.compare-table td:not(:first-child), .compare-table thead th:not(:first-child) { text-align: right; white-space: nowrap; }
+.compare-stage th { text-align: left; padding: 8px 12px; background: var(--surface-soft); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.compare-stage th .stage-dot { display: inline-block; margin-right: 7px; background: var(--stage); }
+.compare-foot { justify-content: space-between; flex-wrap: wrap; }
 .pending-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .pending-tools .input { flex: 1; min-width: 160px; }
 .pending-list { list-style: none; margin: 0; padding: 0; max-height: min(60vh, 520px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); }
@@ -333,6 +446,15 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 .snap-detail { list-style: none; margin: 6px 0 4px; padding: 0; display: grid; gap: 5px; font-size: 12.5px; }
 .snap-detail li { display: flex; gap: 12px; }
 @media (max-width: 767.98px) {
+  .compare-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compare-summary > div:first-child { grid-column: 1 / -1; }
+  .compare-table thead { display: none; }
+  .compare-table tr:not(.compare-stage) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .compare-table td { border: 0; padding: 2px 0; text-align: right; }
+  .compare-table td:first-child { grid-column: 1 / -1; text-align: left; margin-bottom: 4px; }
+  .compare-table td:not(:first-child) { text-align: left; white-space: normal; }
+  .compare-table td:not(:first-child)::before { content: attr(data-label); display: block; font-size: 10.5px; color: var(--muted); }
+  .compare-stage, .compare-stage th { display: block; }
   .stage-dot { background: var(--stage); }
   .track-pct { color: var(--stage); }
 }
