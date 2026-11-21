@@ -298,7 +298,7 @@ async function continueInBackground(request, body) {
     return Response.json({ skipped: true }, { status: 202 });
   }
   const chapter = await chapterFor(db, payload.areaId);
-  inBackground(runBackgroundStretch({ db, areaId: payload.areaId, chapter: chapter.chapter, userId: payload.userId, part: payload.part, run: payload.run, retries: payload.retries, url: selfUrl(request) }));
+  inBackground(runBackgroundStretch({ db, areaId: payload.areaId, chapter, userId: payload.userId, part: payload.part, run: payload.run, retries: payload.retries, url: selfUrl(request) }));
   return Response.json({ started: true }, { status: 202 });
 }
 
@@ -333,7 +333,7 @@ const handleUserRequest = route(async (request, body) => {
     : await db.from('ogd_member_syncs').insert({ area_id: areaId, status: 'partial', ...columns });
   if (error) throw error;
 
-  inBackground(runBackgroundStretch({ db, areaId, chapter: chapter.chapter, userId, part, run: 1, retries: 0, url: selfUrl(request) }));
+  inBackground(runBackgroundStretch({ db, areaId, chapter, userId, part, run: 1, retries: 0, url: selfUrl(request) }));
   return { started: true, part };
 });
 
