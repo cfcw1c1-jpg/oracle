@@ -283,8 +283,8 @@ onBeforeUnmount(() => clearInterval(clockTimer));
   .dash-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .bar-fill { background: var(--stage); }
   .progress-num { color: var(--stage); }
-  .profile-card { background: linear-gradient(135deg, #002060, #1d3f9e); color: #fff; border: 0; }
-  .profile-card .facts dt { color: rgba(255, 255, 255, 0.7); }
+  /* Profile is its own tab on phones, so the card is left out here. */
+  .profile-card { display: none; }
   .dash-stats :deep(.stat) { padding: 12px; }
   .dash-stats :deep(.stat-value) { font-size: 20px; }
   /* Three narrow cards: the icon goes above the label so the label has the full width. */
