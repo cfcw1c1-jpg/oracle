@@ -1,5 +1,5 @@
 <script setup>
-import { Activity, BookOpen, CalendarDays, ChevronDown, ChevronRight, ChevronUp, GraduationCap, RefreshCw, Users } from 'lucide-vue-next';
+import { Activity, BookOpen, CalendarDays, ChevronRight, GraduationCap, RefreshCw, Users } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import DonutChart from '@/components/DonutChart.vue';
@@ -22,7 +22,6 @@ const now = ref(new Date());
 const members = ref([]);
 const pfoRows = ref([]);
 const clpTrainings = ref([]);
-const isGospelOpen = ref(false);
 const gospel = reactive({ loading: true, error: null, liturgicalDay: '', citation: '', text: '', attribution: '' });
 
 const user = computed(() => sessionState.session?.user);
@@ -181,13 +180,8 @@ onBeforeUnmount(() => clearInterval(clockTimer));
       <LoadingBlock v-if="gospel.loading" variant="text" :rows="4" />
       <p v-else-if="gospel.error" class="muted small">{{ gospel.error }}</p>
       <template v-else>
-        <p class="gospel" :class="{ clamped: !isGospelOpen }">{{ gospel.text }}</p>
-        <div class="gospel-foot">
-          <span v-if="gospel.attribution" class="muted tiny">{{ gospel.attribution }}</span>
-          <button class="link-btn" :aria-expanded="isGospelOpen" @click="isGospelOpen = !isGospelOpen">
-            {{ isGospelOpen ? 'Show less' : 'Read the full Gospel' }}<component :is="isGospelOpen ? ChevronUp : ChevronDown" :size="14" />
-          </button>
-        </div>
+        <p class="gospel">{{ gospel.text }}</p>
+        <p v-if="gospel.attribution" class="muted tiny">{{ gospel.attribution }}</p>
       </template>
     </article>
 
@@ -272,9 +266,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 .gospel-icon { width: 38px; height: 38px; border-radius: 12px; flex: none; display: grid; place-items: center; background: var(--accent-soft); color: var(--primary); }
 .gospel-cite { white-space: normal; text-align: center; }
 .gospel { font-size: 14px; line-height: 1.7; color: var(--ink-2); white-space: pre-line; }
-.gospel.clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; line-clamp: 5; overflow: hidden; }
-.gospel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.gospel-foot .link-btn { margin-left: auto; }
 .agenda { display: flex; align-items: flex-start; gap: 11px; }
 .agenda-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex: none; }
 
@@ -286,7 +277,6 @@ onBeforeUnmount(() => clearInterval(clockTimer));
   .hero-mark { background: rgba(255, 255, 255, 0.12); }
   .gospel-card { padding: 16px; }
   .gospel-cite { order: 3; }
-  .gospel.clamped { -webkit-line-clamp: 6; line-clamp: 6; }
   .dash-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .bar-fill { background: var(--stage); }
   .progress-num { color: var(--stage); }
