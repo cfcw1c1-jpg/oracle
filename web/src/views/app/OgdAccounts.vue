@@ -652,16 +652,16 @@ onBeforeUnmount(() => {
           </div>
         </template>
         <template #cell-actions="{ row }">
-          <div class="row">
-            <button class="link-btn" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
+          <div class="row-actions">
+            <button class="btn btn-sm" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
             <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId) || pushingIds.has(row.areaId)" class="spinner sm" role="status" :aria-label="pushingIds.has(row.areaId) ? 'Pushing to OGD' : 'Working'" />
             <span v-if="pushingIds.has(row.areaId)" class="muted small" aria-live="polite">{{ pushStatus(row) }}</span>
-            <button v-else-if="syncingIds.has(row.areaId) && !startingIds.has(row.areaId)" class="link-btn" :disabled="stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop' }}</button>
+            <button v-else-if="syncingIds.has(row.areaId) && !startingIds.has(row.areaId)" class="btn btn-sm btn-danger" :disabled="stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop' }}</button>
             <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
-              <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
-              <button class="link-btn" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
-              <button class="link-btn" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
-              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="link-btn" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
+              <button class="btn btn-sm" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
+              <button class="btn btn-sm" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
+              <button class="btn btn-sm" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
+              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="btn btn-sm btn-primary" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
             </template>
           </div>
         </template>
@@ -724,6 +724,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 220px; }
 .guide { background: var(--accent-soft); box-shadow: none; }
 .guide-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 16px; border: 0; background: none; font-size: 13.5px; font-weight: var(--fw-heading); text-align: left; }
 .guide-body { padding: 0 16px 14px; font-size: 13px; color: var(--ink-2); display: grid; gap: 8px; }
