@@ -150,6 +150,21 @@ function openToast() {
   selectTab('messages');
 }
 
+// On phones the Messages button slides away while scrolling down the page and
+// comes back on any scroll up, so it never sits on top of what is being read.
+const isFabTucked = ref(false);
+let lastScrollTop = 0;
+function onContentScroll(event) {
+  const top = event.target.scrollTop;
+  if (Math.abs(top - lastScrollTop) < 6) return;
+  isFabTucked.value = top > lastScrollTop && top > 80;
+  lastScrollTop = top;
+}
+watch(currentTab, () => {
+  isFabTucked.value = false;
+  lastScrollTop = 0;
+});
+
 // The sidebar's glow follows the pointer, at most once per frame.
 const sideEl = ref(null);
 let glowFrame = 0;
@@ -259,7 +274,7 @@ function openMessagesFromDisclaimer() {
         <button v-if="!isWide" class="m-logout" aria-label="Log out" @click="signOut"><LogOut :size="20" /></button>
       </header>
 
-      <main class="content">
+      <main class="content" @scroll.passive="onContentScroll">
         <component :is="activeScreen" v-if="activeScreen" v-bind="screenProps" :key="currentTab" />
         <div v-else-if="isKnownPage || !isAllowed" class="no-access">
           <Lock :size="28" />
@@ -279,7 +294,7 @@ function openMessagesFromDisclaimer() {
           <span class="clamp">{{ tab.label }}</span>
         </button>
       </nav>
-      <button class="fab" aria-label="Messages" @click="selectTab('messages')">
+      <button class="fab" :class="{ tucked: isFabTucked }" aria-label="Messages" @click="selectTab('messages')">
         <MessagesSquare :size="24" />
         <span v-if="sessionState.unreadMessages" class="badge">{{ sessionState.unreadMessages > 9 ? '9+' : sessionState.unreadMessages }}</span>
       </button>
@@ -451,7 +466,8 @@ function openMessagesFromDisclaimer() {
   .avatar { width: 32px; height: 32px; background: rgba(255, 255, 255, 0.14); color: #fff; border: 1px solid rgba(255, 255, 255, 0.35); }
   .avatar-btn:hover { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2); }
   .m-logout { border: 0; background: rgba(255, 255, 255, 0.1); color: #fff; padding: 7px; border-radius: 10px; display: flex; }
-  .content { background: var(--bg); }
+  /* Room at the end of every page so its last item can scroll clear of the Messages button. */
+  .content { background: var(--bg); padding-bottom: 76px; scroll-padding-bottom: 76px; }
 
   .bottom {
     flex: none; display: flex; margin: 0 10px calc(10px + env(safe-area-inset-bottom)); padding: 6px;
@@ -470,9 +486,10 @@ function openMessagesFromDisclaimer() {
   .fab {
     position: fixed; z-index: 20; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); width: 56px; height: 56px; border-radius: 18px; border: 0;
     color: #fff; display: flex; align-items: center; justify-content: center; background: linear-gradient(140deg, #1d4ed8, var(--navy));
-    box-shadow: 0 14px 28px -10px rgba(0, 32, 96, 0.7); transition: transform 0.2s;
+    box-shadow: 0 14px 28px -10px rgba(0, 32, 96, 0.7); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s;
   }
   .fab:active { transform: scale(0.94); }
+  .fab.tucked { transform: translateY(24px) scale(0.6); opacity: 0; pointer-events: none; }
   .fab .badge { top: -5px; right: -5px; min-width: 20px; height: 20px; font-size: 11px; border: 2px solid #fff; }
   .sheet-back { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; background: rgba(0, 19, 61, 0.45); backdrop-filter: blur(2px); animation: fade-in 0.2s ease both; }
   .sheet { width: 100%; background: #fff; border-radius: 26px 26px 0 0; padding: 10px 8px calc(24px + env(safe-area-inset-bottom)); animation: sheet-up 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }

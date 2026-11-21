@@ -273,5 +273,9 @@ onBeforeUnmount(() => clearInterval(clockTimer));
   .profile-card .facts dt { color: rgba(255, 255, 255, 0.7); }
   .dash-stats :deep(.stat) { padding: 12px; }
   .dash-stats :deep(.stat-value) { font-size: 20px; }
+  /* Three narrow cards: the icon goes above the label so the label has the full width. */
+  .dash-stats :deep(.stat > .row) { flex-direction: column-reverse; align-items: flex-start; gap: 8px; }
+  .dash-stats :deep(.stat-label) { font-size: 11.5px; line-height: 1.3; }
+  .dash-stats :deep(.icon-chip) { width: 28px; height: 28px; border-radius: 9px; }
 }
 </style>
