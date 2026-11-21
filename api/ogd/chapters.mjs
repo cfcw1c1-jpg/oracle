@@ -11,8 +11,8 @@ function backgroundOf(sync) {
   return { state: sync.bg_state, part: sync.bg_part, run: sync.bg_run, retries: sync.bg_retries, startedAt: sync.bg_started_at, stalled };
 }
 
-// Selects non-secret columns only. Each page sees its own identifier and just
-// a yes/no for the other side's credential.
+// Selects non-secret columns only: both tabs see the OGD username and the
+// Gmail address, never a password.
 export const GET = route(async (request) => {
   const scopeName = new URL(request.url).searchParams.get('scope');
   const { db, scope, chapters } = await authorize(request, scopeName);
@@ -45,6 +45,8 @@ export const GET = route(async (request) => {
       return {
         ...chapter,
         identifier: (isOgdScope ? row?.ogd_username : row?.gmail_address) ?? null,
+        ogdUsername: row?.ogd_username ?? null,
+        gmailAddress: row?.gmail_address ?? null,
         ownConfigured: Boolean(isOgdScope ? row?.ogd_updated_at : row?.gmail_updated_at),
         otherConfigured: Boolean(isOgdScope ? row?.gmail_updated_at : row?.ogd_updated_at),
         status: isStale ? 'failed' : (row?.status ?? 'idle'),

@@ -63,8 +63,9 @@ function setupLabel(row) {
 }
 
 const columns = computed(() => [
-  // Sector, chapter and the account in one cell; sorted by sector, then chapter.
-  { key: 'chapter', label: 'Chapter', value: (row) => `${row.sector ?? ''} ${row.chapter}`, width: '30%' },
+  // Sorted by sector, then chapter.
+  { key: 'chapter', label: 'Chapter', value: (row) => `${row.sector ?? ''} ${row.chapter}`, width: '18%' },
+  { key: 'accounts', label: 'Accounts', value: (row) => row.ogdUsername ?? '', width: '24%' },
   { key: 'setup', label: 'Setup', value: setupLabel },
   { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label, width: '190px' },
   { key: 'memberSync', label: 'Last Sync', value: (row) => row.memberSync?.syncedAt ?? '', width: '210px' },
@@ -73,7 +74,7 @@ const columns = computed(() => [
 
 const visibleRows = computed(() => {
   const query = search.value.trim().toLowerCase();
-  return query ? rows.value.filter((row) => [row.sector, row.cluster, row.chapter, row.identifier].some((value) => value?.toLowerCase().includes(query))) : rows.value;
+  return query ? rows.value.filter((row) => [row.sector, row.cluster, row.chapter, row.identifier, row.ogdUsername, row.gmailAddress].some((value) => value?.toLowerCase().includes(query))) : rows.value;
 });
 
 let loadToken = 0;
@@ -625,7 +626,12 @@ onBeforeUnmount(() => {
           <div class="chapter-cell">
             <span class="strong">{{ row.chapter }}</span>
             <span class="muted tiny">{{ row.sector || 'No sector' }}</span>
-            <span class="tiny account"><span class="muted">{{ copy.column }}:</span> {{ row.identifier || 'Not set' }}</span>
+          </div>
+        </template>
+        <template #cell-accounts="{ row }">
+          <div class="chapter-cell">
+            <span class="tiny account"><span class="muted">OGD:</span> {{ row.ogdUsername || 'Not set' }}</span>
+            <span class="tiny account"><span class="muted">Gmail:</span> {{ row.gmailAddress || 'Not set' }}</span>
           </div>
         </template>
         <template #cell-status="{ row }">
@@ -735,7 +741,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.chapter-cell { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 220px; }
+.chapter-cell { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 140px; }
 .chapter-cell .account { word-break: break-all; }
 .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: min(288px, 100%); }
 .row-actions .btn { width: 100%; justify-content: flex-start; }
