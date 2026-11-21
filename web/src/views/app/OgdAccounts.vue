@@ -1,5 +1,5 @@
 <script setup>
-import { ArrowRight, ChevronDown, ChevronUp, GraduationCap, Info, KeyRound, LogIn, RefreshCw, Trash2, Undo2, UploadCloud } from 'lucide-vue-next';
+import { ArrowRight, ChevronDown, ChevronUp, GraduationCap, Info, KeyRound, LogIn, RefreshCw, Square, Trash2, Undo2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -85,6 +85,7 @@ async function load() {
     const chapters = await fetchOgdChapters(scope.value);
     if (token !== loadToken) return;
     rows.value = chapters;
+    applyBackgroundState(chapters);
     chapters.forEach(trackEta);
     Object.assign(loadState, { status: 'success', message: '' });
   } catch (error) {
@@ -142,22 +143,17 @@ async function testLogin(row) {
   }
 }
 
-// Each run signs in and works for a few minutes. Household heads need a popup
-// per member, so the server answers more: true until the last page is done
-// and this keeps starting the next run. Leaving the page stops the loop; the
-// next Sync Members resumes from the saved page.
-const MAX_SYNC_RUNS = 60;
+// Syncs run on the server in the background: Sync Members or Sync Formations
+// only starts one, the server keeps starting its next run until it is done,
+// and this page reads the progress it saves. Closing the page does not stop
+// it; Stop ends it after the current run.
 // The server writes progress every few seconds; this re-reads it while a sync runs.
 const PROGRESS_POLL_MS = 4000;
-// A run that could not sign in is tried again after OGD's one-minute spacing
-// between logins, a few times in a row, so a sync isn't lost to a hiccup. Wrong
-// credentials and Gmail problems still stop the sync straight away.
-const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found']);
-const MAX_SIGN_IN_RETRIES = 3;
-const RETRY_WAIT_MS = 65 * 1000;
 const syncRuns = ref({});
 const syncingParts = ref({});
 const syncWaiting = ref({});
+const startingIds = ref(new Set());
+const stoppingIds = ref(new Set());
 let isMounted = true;
 let pollTimer = null;
 
@@ -169,44 +165,58 @@ function updatePolling() {
   }
 }
 
+function isBackgroundActive(row) {
+  const background = row.memberSync?.background;
+  return Boolean(background && !background.stalled);
+}
+
+// Rebuilds which chapters are syncing from what the server reports.
+function applyBackgroundState(chapters) {
+  const active = chapters.filter(isBackgroundActive);
+  const next = new Set([...active.map((row) => row.areaId), ...startingIds.value]);
+  syncingIds.value.forEach((areaId) => {
+    if (!next.has(areaId)) resetEta(areaId);
+  });
+  syncingIds.value = next;
+  syncRuns.value = Object.fromEntries(active.map((row) => [row.areaId, row.memberSync.background.run]));
+  syncingParts.value = Object.fromEntries(active.map((row) => [row.areaId, row.memberSync.background.part]));
+  syncWaiting.value = Object.fromEntries(active.filter((row) => row.memberSync.progress?.stage === 'retry_wait').map((row) => [row.areaId, true]));
+  stoppingIds.value = new Set(active.filter((row) => row.memberSync.background.state === 'stopping').map((row) => row.areaId));
+  updatePolling();
+}
+
+function setStarting(areaId, isStarting) {
+  const next = new Set(startingIds.value);
+  if (isStarting) next.add(areaId);
+  else next.delete(areaId);
+  startingIds.value = next;
+}
+
 // part: 'info' (Members list and household heads) or 'formations'. Each is
 // started on its own and resumes from its own page.
 async function syncMembers(row, part) {
   notice.value = '';
   resetEta(row.areaId);
+  setStarting(row.areaId, true);
   syncingParts.value = { ...syncingParts.value, [row.areaId]: part };
   setSyncing(row.areaId, true);
   try {
-    let retries = 0;
-    for (let run = 1; run <= MAX_SYNC_RUNS && isMounted; run += 1) {
-      syncRuns.value = { ...syncRuns.value, [row.areaId]: run };
-      let result;
-      try {
-        result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId, part });
-      } catch (error) {
-        if (error.status !== 429 || retries >= MAX_SIGN_IN_RETRIES) throw error;
-        result = { status: 'failed', failureCode: 'cooldown' };
-      }
-      const canRetry = result.status === 'failed' && (result.failureCode === 'cooldown' || RETRYABLE_FAILURES.has(result.failureCode));
-      if (canRetry && retries < MAX_SIGN_IN_RETRIES) {
-        retries += 1;
-        await waitBeforeRetry(row.areaId);
-        continue;
-      }
-      if (result.status !== 'failed') retries = 0;
-      if (!result.more) break;
-    }
+    await syncOgdMembers({ scope: scope.value, areaId: row.areaId, part });
   } catch (error) {
     notice.value = `${row.chapter}: ${error.message}`;
   } finally {
-    const { [row.areaId]: _, ...rest } = syncRuns.value;
-    syncRuns.value = rest;
-    const { [row.areaId]: __, ...waiting } = syncWaiting.value;
-    syncWaiting.value = waiting;
-    const { [row.areaId]: ___, ...parts } = syncingParts.value;
-    syncingParts.value = parts;
-    setSyncing(row.areaId, false);
-    resetEta(row.areaId);
+    setStarting(row.areaId, false);
+    if (isMounted) await load();
+  }
+}
+
+async function stopSync(row) {
+  stoppingIds.value = new Set([...stoppingIds.value, row.areaId]);
+  try {
+    await syncOgdMembers({ scope: scope.value, areaId: row.areaId, action: 'stop' });
+  } catch (error) {
+    notice.value = `${row.chapter}: ${error.message}`;
+  } finally {
     if (isMounted) load();
   }
 }
@@ -294,13 +304,6 @@ function timeLeftLabel(row) {
   return `${text[0].toUpperCase()}${text.slice(1)} for ${SYNC_PARTS[currentPart(row)]}.`;
 }
 
-async function waitBeforeRetry(areaId) {
-  syncWaiting.value = { ...syncWaiting.value, [areaId]: Date.now() + RETRY_WAIT_MS };
-  await new Promise((resolve) => setTimeout(resolve, RETRY_WAIT_MS));
-  const { [areaId]: _, ...rest } = syncWaiting.value;
-  syncWaiting.value = rest;
-}
-
 function setSyncing(areaId, isSyncing) {
   const next = new Set(syncingIds.value);
   if (isSyncing) next.add(areaId);
@@ -309,7 +312,10 @@ function setSyncing(areaId, isSyncing) {
   updatePolling();
 }
 
-const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…', skipping: 'Going back to where it stopped' };
+const STAGE_LABELS = {
+  queued: 'Starting the next run…', signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…',
+  skipping: 'Going back to where it stopped', retry_wait: 'Sign-in failed, trying again in about a minute…',
+};
 // Members (list + household heads) and Formations sync separately.
 const SYNC_PARTS = { info: 'Members', formations: 'Formations' };
 
@@ -336,7 +342,8 @@ function progressLabel(row) {
   const progress = row.memberSync?.progress;
   const run = syncRuns.value[row.areaId];
   const runText = run > 1 ? ` · run ${run}` : '';
-  if (syncWaiting.value[row.areaId]) return `Sign-in failed, trying again in about a minute…${runText}`;
+  if (stoppingIds.value.has(row.areaId)) return `Stopping after this run…${runText}`;
+  if (syncWaiting.value[row.areaId]) return `${STAGE_LABELS.retry_wait}${runText}`;
   if (!progress) return `Starting…${runText}`;
   if (progress.stage === 'skipping') return `${STAGE_LABELS.skipping} · page ${progress.page ?? '…'}${runText}`;
   if (progress.stage !== 'reading') return `${STAGE_LABELS[progress.stage] ?? 'Working…'}${runText}`;
@@ -505,6 +512,13 @@ function pushStatus(row) {
 }
 
 // Each run signs in once and pushes as many members as fit; the server says
+// A push run that could not sign in is tried again after OGD's one-minute
+// spacing between logins, a few times in a row. Wrong credentials and Gmail
+// problems still stop it straight away.
+const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found']);
+const MAX_SIGN_IN_RETRIES = 3;
+const RETRY_WAIT_MS = 65 * 1000;
+
 // more: true when changes are left over and this starts the next run.
 async function pushChanges(row) {
   const count = changeCount(row.areaId);
@@ -624,10 +638,11 @@ onBeforeUnmount(() => {
               </div>
               <p class="muted tiny">{{ progressLabel(row) }}</p>
               <p class="tiny strong-ish" aria-live="polite">{{ timeLeftLabel(row) }}</p>
-              <p class="muted tiny">Keep this page open until it finishes.</p>
+              <p class="muted tiny">Runs in the background. You can close this page.</p>
             </template>
             <template v-else-if="row.memberSync">
               <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
+              <p v-if="row.memberSync.background?.stalled" class="small text-danger">The background {{ SYNC_PARTS[row.memberSync.background.part] ?? '' }} sync stopped unexpectedly. Start it again to continue.</p>
               <p v-if="row.memberSync.status === 'failed' && FAILURE_MESSAGES[row.memberSync.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.memberSync.failureCode] }}</p>
               <p v-if="row.memberSync.statusDetail" class="muted tiny">{{ row.memberSync.statusDetail }}</p>
               <p v-for="note in resumeNotes(row.memberSync)" :key="note" class="muted tiny">{{ note }}</p>
@@ -641,6 +656,7 @@ onBeforeUnmount(() => {
             <button class="link-btn" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
             <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId) || pushingIds.has(row.areaId)" class="spinner sm" role="status" :aria-label="pushingIds.has(row.areaId) ? 'Pushing to OGD' : 'Working'" />
             <span v-if="pushingIds.has(row.areaId)" class="muted small" aria-live="polite">{{ pushStatus(row) }}</span>
+            <button v-else-if="syncingIds.has(row.areaId) && !startingIds.has(row.areaId)" class="link-btn" :disabled="stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop' }}</button>
             <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
               <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
               <button class="link-btn" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>

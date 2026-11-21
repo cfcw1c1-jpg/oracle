@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 // AES-256-GCM for the Gmail and OGD passwords. The additional data binds each
 // ciphertext to its chapter and credential type, so a value copied onto
@@ -32,4 +32,32 @@ export function decryptSecret(encoded, areaId, kind) {
   decipher.setAAD(additionalData(areaId, kind));
   decipher.setAuthTag(Buffer.from(tag, 'base64url'));
   return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]).toString('utf8');
+}
+
+// Short-lived signed tokens for the server calling itself (a background sync
+// starting its next stretch). Signed with a key derived from the same secret,
+// so no extra setting is needed and a token cannot be forged from outside.
+function tokenKey() {
+  return createHmac('sha256', loadKey()).update('ogd-internal-token').digest();
+}
+
+export function signToken(payload, ttlMs) {
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + ttlMs }), 'utf8').toString('base64url');
+  const signature = createHmac('sha256', tokenKey()).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+// Returns the payload, or null when the token is malformed, forged or expired.
+export function verifyToken(token) {
+  const [body, signature] = String(token ?? '').split('.');
+  if (!body || !signature) return null;
+  const expected = createHmac('sha256', tokenKey()).update(body).digest();
+  const given = Buffer.from(signature, 'base64url');
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    return typeof payload.exp === 'number' && payload.exp > Date.now() ? payload : null;
+  } catch {
+    return null;
+  }
 }

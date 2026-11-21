@@ -19,9 +19,9 @@ export class HttpError extends Error {
 
 // Wraps a handler so an unexpected error never leaks internals to the client.
 export function route(handler) {
-  return async (request) => {
+  return async (request, ...rest) => {
     try {
-      return Response.json(await handler(request));
+      return Response.json(await handler(request, ...rest));
     } catch (error) {
       if (error instanceof HttpError) return Response.json({ error: error.message }, { status: error.status });
       console.error('[ogd] request failed:', error?.message);
@@ -30,7 +30,7 @@ export function route(handler) {
   };
 }
 
-function createAdminClient() {
+export function createAdminClient() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRoleKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set.');
   return createClient(SUPABASE_URL, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
