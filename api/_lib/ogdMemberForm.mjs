@@ -1,4 +1,4 @@
-import { closePopup, openMemberPopup, waitForPopupContent } from './ogdMembers.mjs';
+import { closePopup, openMemberPopup, readHouseholdHead, waitForPopupContent } from './ogdMembers.mjs';
 
 // Writes Oracle changes into a member's details on OGD: member popup >
 // Personal tab (or whichever tab the popup opens on). Fields are found by
@@ -25,7 +25,26 @@ export const PUSH_FIELDS = {
   AreaName: { label: 'Area', match: /^area\b/i },
   NameOfHouseholdHead: { label: 'Household head', match: /(household|hh)\s*head/i },
   YearRegistered: { label: 'Year registered', match: /year\s*(registered|joined)|date\s*(registered|joined)/i },
+  Birthday: { label: 'Birthday', match: /^(birth\s*day|birth\s*date|date\s*of\s*birth)/i, date: true },
 };
+
+// OGD shows dates as m/d/yyyy; Oracle stores yyyy-mm-dd.
+export function toOracleDate(siteValue) {
+  const match = /^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/.exec(String(siteValue ?? ''));
+  if (!match) return null;
+  const [, month, day, year] = match.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function toSiteDate(oracleValue) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(oracleValue ?? ''));
+  return match ? `${Number(match[2])}/${Number(match[3])}/${match[1]}` : String(oracleValue ?? '');
+}
+
+// The value as OGD's form should hold it.
+const toSiteValue = (field, value) => (PUSH_FIELDS[field]?.date ? toSiteDate(value) : value);
 
 export const fieldLabel = (field) => PUSH_FIELDS[field]?.label ?? field;
 
@@ -33,6 +52,8 @@ const normalize = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9
 
 // True when OGD's shown value already equals what Oracle wants.
 export function sameValue(siteValue, wanted) {
+  const siteDate = toOracleDate(siteValue);
+  if (siteDate && /^\d{4}-\d{2}-\d{2}/.test(String(wanted ?? ''))) return siteDate === String(wanted).slice(0, 10);
   return normalize(siteValue) === normalize(wanted);
 }
 
@@ -193,7 +214,7 @@ export async function pushMemberChanges(page, member, changes) {
       else if (!field.editable) finish(change, 'failed', `OGD does not allow editing ${fieldLabel(change.field)} here.`);
       else if (sameValue(field.value, change.new_value)) finish(change, 'pushed', 'OGD already had this value.');
       else {
-        const problem = await fillField(frame, field, change.new_value);
+        const problem = await fillField(frame, field, toSiteValue(change.field, change.new_value));
         if (problem) finish(change, 'failed', problem);
         else toSave.push(change);
       }
@@ -234,4 +255,26 @@ export async function pushMemberChanges(page, member, changes) {
   } finally {
     await closePopup(page, member.memberId, framesBefore);
   }
+}
+
+// Per-member step for the Members sync: the birthday from the Personal tab the
+// popup opens on, then the household head from the Service tab, in one visit.
+// A birthday that cannot be read never holds up the household head, and after
+// a few members in a row without one the run stops looking, so a form OGD
+// changed cannot slow the whole sync down.
+const BIRTHDAY_WAIT_MS = 4000;
+const BIRTHDAY_GIVE_UP_AFTER = 5;
+const birthdayMisses = new WeakMap();
+
+export async function readMemberInfo(page, member) {
+  let birthday = null;
+  const misses = birthdayMisses.get(page) ?? 0;
+  const readBirthday = misses >= BIRTHDAY_GIVE_UP_AFTER ? null : async (framesBefore) => {
+    const found = await findForm(page, member.memberId, framesBefore, BIRTHDAY_WAIT_MS);
+    const field = found && matchField(found.result.fields, 'Birthday');
+    birthday = field ? toOracleDate(field.value) : null;
+  };
+  const head = await readHouseholdHead(page, member, readBirthday);
+  if (readBirthday) birthdayMisses.set(page, birthday ? 0 : misses + 1);
+  return head || birthday ? { head, birthday } : undefined;
 }

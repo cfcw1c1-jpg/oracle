@@ -11,7 +11,7 @@ import StatCard from '@/components/StatCard.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { exportCsv, fetchAllRows, showAlert } from '@/lib/data';
 import { parseTrainingName, TRAINING_COLUMNS } from '@/lib/formation';
-import { buildSuggestions, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, ROLE_OPTION_CODES, STATUS_OPTIONS, STATUS_TONE } from '@/lib/members';
+import { buildSuggestions, formatBirthday, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, ROLE_OPTION_CODES, STATUS_OPTIONS, STATUS_TONE } from '@/lib/members';
 import { supabase } from '@/lib/supabase';
 
 const props = defineProps({ roleName: { type: String, default: null } });
@@ -104,7 +104,7 @@ const columns = [
 const EXPORT_COLUMNS = [
   { key: 'MemberIDNo', label: 'Member ID' }, { key: 'Lastname', label: 'Last Name' }, { key: 'Firstname', label: 'First Name' },
   { key: 'Status', label: 'Status', value: statusOf }, { key: 'PastoralService', label: 'Role', value: (member) => memberRoleLabel(member.PastoralService) },
-  { key: 'AreaName', label: 'Area' }, { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'SpouseName', label: 'Spouse' },
+  { key: 'AreaName', label: 'Area' }, { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'SpouseName', label: 'Spouse' }, { key: 'Birthday', label: 'Birthday' },
   { key: 'MobileNo', label: 'Mobile' }, { key: 'Phone', label: 'Phone' }, { key: 'Email', label: 'Email' }, { key: 'YearRegistered', label: 'Year Registered' },
 ];
 const exportRows = computed(() => (selectedIds.value.size ? filteredMembers.value.filter((member) => selectedIds.value.has(member.MemberIDNo)) : filteredMembers.value));
@@ -330,7 +330,8 @@ onMounted(async () => {
           <p v-if="row.MobileNo || row.Phone">{{ row.MobileNo || row.Phone }}</p>
           <p v-if="row.Email" class="muted small">{{ row.Email }}</p>
           <p v-if="row.SpouseName" class="muted small">Spouse: {{ row.SpouseName }}</p>
-          <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName" class="muted small">No contact info</p>
+          <p v-if="row.Birthday" class="muted small">Birthday: {{ formatBirthday(row.Birthday) }}</p>
+          <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName && !row.Birthday" class="muted small">No contact info</p>
         </template>
         <template #cell-status="{ row }">
           <select class="pill pill-select" :class="STATUS_TONE[statusOf(row)]" :value="statusOf(row)" :disabled="busyId === row.MemberIDNo" aria-label="Status" @change="changeField(row, 'Status', $event.target.value, 'Status', $event)">

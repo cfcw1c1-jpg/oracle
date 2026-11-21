@@ -2,7 +2,8 @@ import { TRAINING_COLUMNS } from '../../../web/src/lib/formation.js';
 import { waitUntil } from '@vercel/functions';
 import { authorize, createAdminClient, HttpError, route } from '../access.mjs';
 import { countChapterMembers, keepPendingFields } from '../ogdChanges.mjs';
-import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../ogdMembers.mjs';
+import { readMemberInfo } from '../ogdMemberForm.mjs';
+import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations } from '../ogdMembers.mjs';
 import { isBackgroundStalled } from '../backgroundSync.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 import { signToken, verifyToken } from '../secrets.mjs';
@@ -16,8 +17,9 @@ const COLUMNS_BY_CODE = groupTrainingColumns(TRAINING_COLUMNS.map((column) => co
 
 // A chapter has two syncs, each started on its own from the OGD Accounts page
 // and each running over as many runs as it needs:
-//   info        Members Database list plus each member's present household
-//               head (Service tab); resumes at hh_next_page
+//   info        Members Database list plus each member's birthday (Personal
+//               tab) and present household head (Service tab); resumes at
+//               hh_next_page
 //   formations  each member's formation talks (Formation tab) into
 //               pfo_members; resumes at fm_next_page
 // One finishing does not start the other. sync_part records which ran last.
@@ -89,7 +91,7 @@ async function syncStretch({ db, areaId, chapter, userId, part, startedAt }) {
     deadline: startedAt + READ_BUDGET_MS,
     chapterName: chapter.chapter,
     startPage,
-    perMember: part === 'info' ? readHouseholdHead : readFormations,
+    perMember: part === 'info' ? readMemberInfo : readFormations,
     onProgress: ({ done, page, skipping }) => writeProgress({ progress_stage: skipping ? 'skipping' : 'reading', progress_done: done, progress_total: Math.max(total, done), progress_page: page }),
   });
   const run = await runChapterLogin({ db, areaId, userId, afterLogin: reader });

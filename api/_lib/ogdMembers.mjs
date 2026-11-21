@@ -60,8 +60,9 @@ export function toMemberRow(headers, cells) {
 // A chapter's sync only writes members whose OGD Area belongs to it. OGD names
 // sub-units by suffix ("West 1C1A" under "West 1C1"), matching the Directory's
 // prefix scoping.
-// households maps Member ID to a household head; members without one leave
-// NameOfHouseholdHead out, so a stored value is never blanked.
+// households maps Member ID to a household head, or to { head, birthday } read
+// from the member's popup. Missing values are left out, so a stored value is
+// never blanked.
 export function planMemberSync({ headers, records, households = new Map() }, chapterName) {
   const members = new Map();
   const skipped = { outside: 0, missingId: 0, unknownStatus: new Set() };
@@ -71,8 +72,14 @@ export function planMemberSync({ headers, records, households = new Map() }, cha
     else if (result.skip === 'unknown_status') skipped.unknownStatus.add(result.value);
     else if (!result.member.AreaName?.toUpperCase().startsWith(chapterName.toUpperCase())) skipped.outside += 1;
     else {
-      const head = households.get(result.member.MemberIDNo);
-      members.set(result.member.MemberIDNo, head ? { ...result.member, NameOfHouseholdHead: head } : result.member);
+      const info = households.get(result.member.MemberIDNo);
+      const head = typeof info === 'string' ? info : info?.head;
+      const birthday = typeof info === 'object' ? info?.birthday : null;
+      members.set(result.member.MemberIDNo, {
+        ...result.member,
+        ...(head ? { NameOfHouseholdHead: head } : {}),
+        ...(birthday ? { Birthday: birthday } : {}),
+      });
     }
   }
   return { members: [...members.values()], skipped: { ...skipped, unknownStatus: [...skipped.unknownStatus] } };
@@ -345,11 +352,13 @@ export async function closePopup(page, memberId, framesBefore) {
 // the tab the popup opened with, that is used as is. Returns the frames that
 // existed before, which the popup helpers use to tell the popup's own frames
 // apart.
-async function openMemberTab(page, member, tabLabel, alreadyShown = null) {
+async function openMemberTab(page, member, tabLabel, alreadyShown = null, onOpen = null) {
   const framesBefore = new Set(page.frames());
   const cell = member.listFrame.locator(`tr[data-oracle-row="${member.rowIndex}"] > td`).nth(member.nameColumn);
   const link = cell.locator('a, [onclick]').first();
   await ((await link.count()) ? link : cell).click({ timeout: CLICK_TIMEOUT_MS });
+  // Reads the tab the popup opened on (Personal) before moving away from it.
+  if (onOpen) await onOpen(framesBefore).catch(() => null);
   const tab = await findInPopup(page, framesBefore, tabLabel);
   if (!tab) {
     if (alreadyShown && (await waitForPopupContent(page, alreadyShown, 3000))) return framesBefore;
@@ -409,11 +418,11 @@ function readServiceRecord(frame, memberId) {
 }
 
 // Per-member step for Part 1: the present household head, or undefined when
-// the record has none.
-export async function readHouseholdHead(page, member) {
+// the record has none. onOpen(framesBefore) runs on the popup's first tab.
+export async function readHouseholdHead(page, member, onOpen = null) {
   let framesBefore = new Set(page.frames());
   try {
-    framesBefore = await openMemberTab(page, member, 'service');
+    framesBefore = await openMemberTab(page, member, 'service', null, onOpen);
     const found = await waitForPopupContent(page, (frame) => readServiceRecord(frame, member.memberId));
     if (!found) throw new Error('The Service tab showed no Pastoral Service Record for this member.');
     return presentHouseholdHead(found.result.rows);

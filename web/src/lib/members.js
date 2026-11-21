@@ -1,6 +1,6 @@
 import { ROLE_LABELS } from './formation';
 
-export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, YearRegistered, Status, SpouseName, Phone, MobileNo, Email';
+export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, YearRegistered, Status, SpouseName, Phone, MobileNo, Email, Birthday';
 export const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
 export const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
 export const STATUS_TONE = { Active: 'success', SOLD: 'warning', HANDMAID: 'accent' };
@@ -28,6 +28,7 @@ export function formFromMember(member = {}) {
     MobileNo: member.MobileNo || '',
     Phone: member.Phone || '',
     Email: member.Email || '',
+    Birthday: member.Birthday || '',
   };
 }
 
@@ -54,8 +55,16 @@ export function payloadFromForm(form) {
       MobileNo: form.MobileNo.trim() || null,
       Phone: form.Phone.trim() || null,
       Email: form.Email.trim() || null,
+      Birthday: form.Birthday || null,
     },
   };
+}
+
+// "1954-01-21" -> "Jan 21, 1954", read as a calendar date (no time zone shift).
+export function formatBirthday(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+  if (!match) return value || '';
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 export function buildSuggestions(members) {

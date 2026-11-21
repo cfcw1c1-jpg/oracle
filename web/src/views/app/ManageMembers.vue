@@ -8,7 +8,7 @@ import MemberForm from '@/components/MemberForm.vue';
 import PageHead from '@/components/PageHead.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, exportCsv, fetchAllRows, showAlert } from '@/lib/data';
-import { buildSuggestions, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, STATUS_TONE } from '@/lib/members';
+import { buildSuggestions, formatBirthday, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, STATUS_TONE } from '@/lib/members';
 import { supabase } from '@/lib/supabase';
 
 const members = ref([]);
@@ -114,7 +114,7 @@ function handleExport() {
   exportCsv('members', [
     { key: 'MemberIDNo', label: 'Member ID' }, { key: 'Lastname', label: 'Last Name' }, { key: 'Firstname', label: 'First Name' },
     { key: 'Status', label: 'Status' }, { key: 'AreaName', label: 'Area' },
-    { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'PastoralService', label: 'Pastoral Service' }, { key: 'SpouseName', label: 'Spouse' },
+    { key: 'NameOfHouseholdHead', label: 'Household Head' }, { key: 'PastoralService', label: 'Pastoral Service' }, { key: 'SpouseName', label: 'Spouse' }, { key: 'Birthday', label: 'Birthday' },
     { key: 'MobileNo', label: 'Mobile' }, { key: 'Phone', label: 'Phone' }, { key: 'Email', label: 'Email' }, { key: 'SiteStatus', label: 'CFC Global Data Status' },
   ], filtered.value);
 }
@@ -143,7 +143,8 @@ onMounted(fetchMembers);
           <p v-if="row.MobileNo || row.Phone">{{ row.MobileNo || row.Phone }}</p>
           <p v-if="row.Email" class="muted small">{{ row.Email }}</p>
           <p v-if="row.SpouseName" class="muted small">Spouse: {{ row.SpouseName }}</p>
-          <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName" class="muted small">No contact info</p>
+          <p v-if="row.Birthday" class="muted small">Birthday: {{ formatBirthday(row.Birthday) }}</p>
+          <p v-if="!row.MobileNo && !row.Phone && !row.Email && !row.SpouseName && !row.Birthday" class="muted small">No contact info</p>
         </template>
         <template #cell-Status="{ row }"><span class="pill" :class="STATUS_TONE[row.Status || 'Active']">{{ row.Status || 'Active' }}</span></template>
         <template #cell-PastoralService="{ value }"><span class="pill">{{ value }}</span></template>
