@@ -21,7 +21,8 @@ defineEmits(['select']);
 </template>
 
 <style scoped>
-.stat { padding: 18px; text-align: left; width: 100%; font: inherit; color: inherit; display: block; }
+.stat { padding: 18px; text-align: left; width: 100%; font: inherit; color: inherit; display: block; transition: transform 0.25s, box-shadow 0.3s, border-color 0.25s; }
+.stat:hover { transform: translateY(-3px); box-shadow: 0 18px 36px -20px rgba(0, 32, 96, 0.35); }
 button.stat:hover { border-color: var(--accent); }
 .stat.active { border-color: var(--primary); }
 .stat-label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }

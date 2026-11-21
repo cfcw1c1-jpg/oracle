@@ -142,6 +142,8 @@ th { text-align: left; padding: 9px 14px; font-size: 11.5px; font-weight: 500; c
 .th-sort:hover { color: var(--ink); }
 td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; color: var(--ink-2); }
 tbody tr:last-child td { border-bottom: 0; }
+tbody tr td { transition: background 0.18s; }
+tbody tr:hover td { background: var(--surface-hover); }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface-hover); }
 tr.selected td { background: var(--accent-soft); }
@@ -152,7 +154,8 @@ tr.expanded td { background: var(--surface-hover); }
 .dt-sizes { margin-right: 6px; }
 .dt-sizes .muted { margin-right: 4px; }
 .chip { display: inline-flex; align-items: center; justify-content: center; min-width: 27px; height: 27px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 12px; font-weight: var(--fw-medium); }
-.chip:hover:not(:disabled) { background: var(--surface-soft); }
+.chip { transition: background 0.2s, color 0.2s, transform 0.15s; }
+.chip:hover:not(:disabled) { background: var(--surface-soft); transform: translateY(-1px); }
 .chip.on { background: var(--primary); color: var(--primary-ink); }
 
 @media (max-width: 767.98px) {
