@@ -63,9 +63,8 @@ function setupLabel(row) {
 }
 
 const columns = computed(() => [
-  { key: 'sector', label: 'Sector' },
-  { key: 'chapter', label: 'Chapter' },
-  { key: 'identifier', label: copy.value.column },
+  // Sector, chapter and the account in one cell; sorted by sector, then chapter.
+  { key: 'chapter', label: 'Chapter', value: (row) => `${row.sector ?? ''} ${row.chapter}` },
   { key: 'setup', label: 'Setup', value: setupLabel },
   { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label },
   { key: 'lastAttemptAt', label: 'Last Attempt' },
@@ -608,10 +607,14 @@ onBeforeUnmount(() => {
         <p class="text-danger">{{ loadState.message }}</p>
         <div><button class="btn btn-sm" @click="load">Try again</button></div>
       </div>
-      <DataTable v-else :columns="columns" :rows="visibleRows" row-key="areaId" :initial-sort="{ key: 'sector', ascending: true }" :empty-text="rows.length ? 'No chapters match your search.' : 'No chapters are assigned to your account yet.'">
-        <template #cell-sector="{ value }">{{ value || '—' }}</template>
-        <template #cell-chapter="{ value }"><span class="strong">{{ value }}</span></template>
-        <template #cell-identifier="{ value }">{{ value || 'Not set' }}</template>
+      <DataTable v-else :columns="columns" :rows="visibleRows" row-key="areaId" :initial-sort="{ key: 'chapter', ascending: true }" :empty-text="rows.length ? 'No chapters match your search.' : 'No chapters are assigned to your account yet.'">
+        <template #cell-chapter="{ row }">
+          <div class="chapter-cell">
+            <span class="strong">{{ row.chapter }}</span>
+            <span class="muted tiny">{{ row.sector || 'No sector' }}</span>
+            <span class="tiny account"><span class="muted">{{ copy.column }}:</span> {{ row.identifier || 'Not set' }}</span>
+          </div>
+        </template>
         <template #cell-status="{ row }">
           <div class="status">
             <span class="pill" :class="STATUS[row.status].tone">{{ STATUS[row.status].label }}</span>
@@ -724,6 +727,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.chapter-cell { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 150px; }
+.chapter-cell .account { word-break: break-all; }
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 220px; }
 .guide { background: var(--accent-soft); box-shadow: none; }
 .guide-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 16px; border: 0; background: none; font-size: 13.5px; font-weight: var(--fw-heading); text-align: left; }
