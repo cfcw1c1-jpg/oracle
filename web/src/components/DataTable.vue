@@ -102,7 +102,7 @@ defineExpose({ sortedRows });
               @click="clickable && emit('row-click', row)"
             >
               <td v-for="column in columns" :key="column.key" :data-label="column.label" :class="{ 'td-action': column.action }" :style="{ textAlign: column.align }">
-                <slot :name="`cell-${column.key}`" :row="row" :value="valueOf(column, row)">{{ valueOf(column, row) ?? '—' }}</slot>
+                <div class="td-val"><slot :name="`cell-${column.key}`" :row="row" :value="valueOf(column, row)">{{ valueOf(column, row) ?? '—' }}</slot></div>
               </td>
             </tr>
             <tr v-if="expandedKey !== null && keyOf(row) === expandedKey" class="expanded">
@@ -149,6 +149,8 @@ tr.clickable:hover td { background: var(--surface-hover); }
 tr.selected td { background: var(--accent-soft); }
 tr.expanded td { background: var(--surface-hover); }
 .td-action { white-space: nowrap; }
+/* Desktop: the wrapper is invisible to layout, so cells behave as before. */
+.td-val { display: contents; }
 .dt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .dt-sizes, .dt-pages { gap: 3px; }
 .dt-sizes { margin-right: 6px; }
@@ -165,10 +167,24 @@ tr.expanded td { background: var(--surface-hover); }
   tbody tr:last-child { border-bottom: 0; }
   td { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 4px 0; border: 0; text-align: right !important; }
   td::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex: none; max-width: 45%; }
-  td:empty::after { content: '—'; }
   td.td-action::before { content: none; }
   tr.expanded td::before { content: none; }
   tr.expanded td { display: block; text-align: left !important; }
-  td.td-action { justify-content: flex-start; flex-wrap: wrap; padding-top: 8px; }
+  td.td-action { padding-top: 8px; }
+
+  /* Every value sits on the card's right edge, whatever the page puts in the cell:
+     multi-line stacks, pills, avatar + name rows. */
+  .td-val { display: block; min-width: 0; margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+  .td-val:empty::after { content: '—'; }
+  .td-val > :deep(*) { min-width: 0 !important; margin-left: auto; text-align: right; }
+  .td-val :deep(.row) { justify-content: flex-end; }
+  .td-val :deep(.grow) { min-width: 0; }
+
+  /* Unlabelled controls (tick boxes, expand arrows) keep to the left. */
+  td.td-action[data-label=""] .td-val { margin-left: 0; text-align: left; }
+  /* Labelled actions span the card; text buttons share the width evenly. */
+  td.td-action:not([data-label=""]) .td-val { width: 100%; }
+  td.td-action:not([data-label=""]) .td-val :deep(.row) { width: 100%; }
+  td.td-action:not([data-label=""]) .td-val :deep(.btn) { flex: 1 1 0; justify-content: center; }
 }
 </style>

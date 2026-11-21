@@ -290,6 +290,13 @@ onBeforeUnmount(() => supabase.removeChannel(channel));
 .select.sm { width: auto; padding: 4px 8px; font-size: 12px; }
 @media (max-width: 767.98px) {
   .item-row, .diff { padding-left: 16px; padding-right: 16px; }
-  .item-member, .item-date, .item-actions { width: auto; }
+  /* Card: name | status, then the fields, then date | actions, right edge shared. */
+  .item-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .item-member { grid-area: 1 / 1; width: auto; }
+  .item-row > .pill { grid-area: 1 / 2; justify-self: end; }
+  .item-changes { grid-area: 2 / 1 / 3 / 3; min-width: 0; }
+  .item-date { grid-area: 3 / 1; width: auto; }
+  .item-actions { grid-area: 3 / 2; width: auto; justify-self: end; justify-content: flex-end; text-align: right; }
+  .item-row > svg { display: none; }
 }
 </style>
