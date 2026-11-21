@@ -113,7 +113,7 @@ onMounted(load);
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" :rows="5" />
   <div v-else class="stack gap">
     <p class="muted">Finds Directory records whose Area doesn't line up with the Areas hierarchy. These members are invisible to any area-restricted account and don't count toward that Area's totals.</p>
     <section class="grid grid-4">

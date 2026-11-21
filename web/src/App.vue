@@ -14,7 +14,7 @@ onBeforeUnmount(stopSession);
 
 <template>
   <RouterView v-if="route.meta.public" />
-  <LoadingBlock v-else-if="!sessionState.authChecked" full />
+  <LoadingBlock v-else-if="!sessionState.authChecked" variant="splash" full />
   <ResetPassword v-else-if="sessionState.passwordRecovery" />
   <Login v-else-if="!sessionState.session" />
   <LoadingBlock v-else-if="sessionState.accessLoading" full />

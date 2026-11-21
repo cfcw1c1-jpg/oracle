@@ -225,7 +225,7 @@ onBeforeUnmount(() => stopPresence?.());
     </PageHead>
 
     <section class="card">
-      <LoadingBlock v-if="isLoading" />
+      <LoadingBlock v-if="isLoading" variant="list" :rows="7" />
       <DataTable v-else :columns="columns" :rows="profiles" empty-text="No portal accounts yet.">
         <template #cell-name="{ row }">
           <div class="row user">

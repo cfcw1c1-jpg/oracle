@@ -162,7 +162,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="5" />
   <div v-else class="page">
     <PageHead title="PFO Formation Statistics" subtitle="Auto-computed completion rates across every formation stage, based on the current member roster.">
       <button class="btn" @click="generateStats"><RefreshCw :size="14" />Refresh</button>

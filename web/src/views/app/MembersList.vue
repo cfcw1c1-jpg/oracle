@@ -284,7 +284,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="8" />
   <div v-else class="page">
     <PageHead title="CFC Members Directory" subtitle="Manage and browse active community profiles, assigned chapters, and household groups.">
       <span v-if="selectedIds.size" class="pill row">{{ selectedIds.size }} selected

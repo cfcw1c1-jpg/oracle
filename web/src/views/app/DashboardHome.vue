@@ -156,7 +156,7 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="4" />
   <div v-else class="page">
     <section class="hero">
       <div class="grow">
@@ -213,7 +213,7 @@ onBeforeUnmount(() => clearInterval(clockTimer));
 
       <article class="card card-pad stack">
         <h2 class="card-title">Gospel of the Day</h2>
-        <LoadingBlock v-if="gospel.loading" />
+        <LoadingBlock v-if="gospel.loading" variant="text" :rows="4" />
         <p v-else-if="gospel.error" class="muted small">{{ gospel.error }}</p>
         <template v-else>
           <p v-if="gospel.liturgicalDay" class="strong">{{ gospel.liturgicalDay }}</p>

@@ -56,7 +56,7 @@ onMounted(load);
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="text" :rows="5" />
   <section v-else class="card card-pad stack">
     <div>
       <h2 class="card-title">App Update</h2>

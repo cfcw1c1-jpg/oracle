@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
           <span class="strong">Conversations</span>
           <button class="btn btn-primary btn-sm" @click="isNewOpen = true"><PenSquare :size="13" />New</button>
         </header>
-        <LoadingBlock v-if="isLoadingConversations" />
+        <LoadingBlock v-if="isLoadingConversations" variant="list" :rows="7" />
         <p v-else-if="!conversations.length" class="empty">No conversations yet. Start one with "New".</p>
         <div v-else class="list-scroll">
           <button v-for="conversation in conversations" :key="conversation.conversation_id" class="convo" :class="{ on: conversation.conversation_id === selectedId }" @click="openConversation(conversation.conversation_id)">
@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
             <span v-else class="avatar">{{ initials(selected.other_full_name, selected.other_email) }}</span>
             <span class="strong clamp">{{ conversationName(selected) }}</span>
           </header>
-          <LoadingBlock v-if="isLoadingMessages" />
+          <LoadingBlock v-if="isLoadingMessages" variant="chat" :rows="6" />
           <div v-else ref="scroller" class="thread-scroll">
             <p v-if="!messages.length" class="empty">No messages yet. Say hello!</p>
             <div v-for="(message, index) in messages" :key="message.id" class="bubble-row" :class="{ mine: message.sender_id === currentUserId }">
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
       <div class="stack">
         <SearchInput v-model="userQuery" placeholder="Search by name or email..." />
         <button class="btn" :disabled="isStartingGroup" @click="startModeratorGroup"><Users :size="14" />{{ isStartingGroup ? 'Starting…' : 'Message All Moderators' }}</button>
-        <LoadingBlock v-if="isStarting" />
+        <LoadingBlock v-if="isStarting" variant="list" :rows="5" />
         <template v-else>
           <button v-for="profile in userResults" :key="profile.id" class="result" @click="startConversation(profile)">
             <img v-if="profile.avatar_url" :src="profile.avatar_url" class="avatar" alt="" />

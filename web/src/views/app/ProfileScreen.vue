@@ -95,7 +95,7 @@ onMounted(loadUser);
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="4" />
   <div v-else class="page">
     <PageHead title="My Profile" subtitle="Manage your account picture and password." />
     <div class="grid grid-2">

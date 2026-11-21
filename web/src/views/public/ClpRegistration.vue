@@ -97,7 +97,7 @@ onMounted(async () => {
   <PrivacyConsentGate purpose="register for this CLP training batch">
     <PublicShell subtitle="CLP TRAINING REGISTRATION">
       <section class="card card-pad stack">
-        <LoadingBlock v-if="isLoadingTraining" />
+        <LoadingBlock v-if="isLoadingTraining" variant="text" :rows="3" />
         <div v-else-if="!training" class="center">
           <LinkIcon :size="40" class="muted" />
           <h1 class="page-title">Invalid or Expired Link</h1>

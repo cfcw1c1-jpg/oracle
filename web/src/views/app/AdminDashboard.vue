@@ -60,7 +60,7 @@ onMounted(loadData);
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="4" />
   <div v-else class="page">
     <PageHead title="Admin Dashboard" subtitle="Page popularity across the portal, admin-only.">
       <button class="btn" @click="loadData"><RefreshCw :size="14" />Refresh</button>

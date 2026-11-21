@@ -123,7 +123,7 @@ onMounted(fetchMembers);
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="8" />
   <div v-else class="page">
     <PageHead title="Manage Members" subtitle="Every member, unfiltered by Area. Add, edit, or remove records directly.">
       <button class="btn" @click="handleExport"><Download :size="14" />Export</button>

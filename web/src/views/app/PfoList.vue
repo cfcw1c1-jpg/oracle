@@ -86,7 +86,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <LoadingBlock v-if="isLoading" />
+  <LoadingBlock v-if="isLoading" variant="page" :rows="8" />
   <div v-else class="page">
     <PageHead title="Pastoral Formation Grid Matrix" subtitle="Manage qualifications and course milestones instantly across the roster." />
 
