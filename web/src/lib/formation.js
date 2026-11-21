@@ -307,14 +307,39 @@ export function scopedTracks(stage, today = new Date()) {
   return stage.tracks.map((track) => (maxYear == null ? track : { ...track, maxYear }));
 }
 
-export function computeTrackStat(track, pfoRows, members) {
+//
+// mode 'complete' (default): only members who finished every talk count.
+// mode 'partial': each member counts for the share of talks done (4 of 5 talks
+// = 0.8), so credit can be fractional.
+export const COUNTING_MODES = [
+  { value: 'complete', label: 'Completed only', hint: 'A member counts only after finishing every talk; 4 of 5 talks counts as 0.' },
+  { value: 'partial', label: 'Include partial', hint: 'A member counts for the share of talks done; 4 of 5 talks counts as 0.8.' },
+];
+
+export function computeTrackStat(track, pfoRows, members, mode = 'complete') {
   if (!track.group) return { tracked: false };
   const eligible = members.filter((member) => inTrackScope(track, member));
   const rows = pfoRows.filter((row) => inTrackScope(track, row.members));
   const columnIds = COLUMN_IDS_BY_GROUP[track.group] || [];
-  const completedCount = rows.filter((row) => columnIds.length > 0 && columnIds.every((id) => row[id] === 'Y' || row[id] === 'y')).length;
+  let completedCount = 0;
+  let partialCount = 0;
+  let credit = 0;
+  if (columnIds.length) {
+    for (const row of rows) {
+      const done = columnIds.filter((id) => row[id] === 'Y' || row[id] === 'y').length;
+      if (done === columnIds.length) completedCount += 1;
+      else if (done > 0) partialCount += 1;
+      credit += mode === 'partial' ? done / columnIds.length : done === columnIds.length ? 1 : 0;
+    }
+  }
   const total = eligible.length;
-  return { tracked: true, completedCount, total, percent: total > 0 ? (completedCount / total) * 100 : 0 };
+  return { tracked: true, mode, completedCount, partialCount, credit, total, percent: total > 0 ? (credit / total) * 100 : 0 };
+}
+
+// The page's overall formation percentage: the average across tracked trainings.
+export function overallPercent(trackResults) {
+  const tracked = trackResults.filter((track) => track.tracked);
+  return tracked.length ? tracked.reduce((sum, track) => sum + track.percent, 0) / tracked.length : null;
 }
 
 // Members in a track's scope who have not finished it, with how many of its

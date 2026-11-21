@@ -7,7 +7,7 @@ import MultiSelect from '@/components/MultiSelect.vue';
 import PageHead from '@/components/PageHead.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { confirmAction, downloadBlob, exportCsv, fetchAllRows, isActiveStatus, showAlert } from '@/lib/data';
-import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, scopedTracks, stageMaxYear, trackPendingMembers, trackRolesLabel } from '@/lib/formation';
+import { buildStageInsight, computeTrackStat, COUNTING_MODES, FORMATION_STAGES, overallPercent, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, scopedTracks, stageMaxYear, trackPendingMembers, trackRolesLabel } from '@/lib/formation';
 import { supabase } from '@/lib/supabase';
 
 const SNAPSHOT_COLUMNS = 'id, created_at, created_by_email, note, area_filter, role_filter, total_members, track_results';
@@ -18,6 +18,10 @@ const pfoRows = ref([]);
 const assignedAreaNames = ref([]);
 const areaFilter = ref('All');
 const selectedRoles = ref([]);
+const countingMode = ref('complete');
+const countingHint = computed(() => COUNTING_MODES.find((mode) => mode.value === countingMode.value)?.hint);
+const modeOf = (snapshot) => snapshot?.track_results?.find((track) => track.mode)?.mode || 'complete';
+const modeLabel = (mode) => COUNTING_MODES.find((item) => item.value === mode)?.label || mode;
 const snapshots = ref([]);
 const snapshotsLoading = ref(true);
 const snapshotNote = ref('');
@@ -44,16 +48,21 @@ const activePfoRows = computed(() => pfoRows.value.filter((row) => isActiveStatu
 const denominatorLabel = computed(() => (selectedRoles.value.length ? `Total Active Members (${selectedRoles.value.map(getRoleLabel).join(', ')})` : 'Total Active Members'));
 
 const stageResults = computed(() => FORMATION_STAGES.map((stage) => {
-  const trackResults = scopedTracks(stage).map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, activeMembers.value) }));
+  const trackResults = scopedTracks(stage).map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, activeMembers.value, countingMode.value) }));
   return { ...stage, maxYear: stageMaxYear(stage), trackResults, insight: buildStageInsight(trackResults.filter((track) => track.tracked).map((track) => track.percent)) };
 }));
 
-// A trend only means something against a snapshot taken under the same filters.
+const overall = computed(() => overallPercent(stageResults.value.flatMap((stage) => stage.trackResults)));
+// Credit with decimals only when it has them (Include partial).
+const creditText = (value) => (Number.isInteger(value) ? String(value) : value.toFixed(1));
+
+// A trend only means something against a snapshot taken under the same filters
+// and the same way of counting.
 const comparableSnapshot = computed(() => {
   const current = [...selectedRoles.value].sort();
   return snapshots.value.find((snapshot) => {
     const roles = [...(snapshot.role_filter || [])].sort();
-    return snapshot.area_filter === areaFilter.value && roles.length === current.length && roles.every((role, index) => role === current[index]);
+    return snapshot.area_filter === areaFilter.value && modeOf(snapshot) === countingMode.value && roles.length === current.length && roles.every((role, index) => role === current[index]);
   }) || null;
 });
 
@@ -71,6 +80,7 @@ function deltaLabel(delta) {
 const compareSnapshot = ref(null);
 const sameRoles = (a = [], b = []) => a.length === b.length && [...a].sort().every((role, index) => role === [...b].sort()[index]);
 const compareFiltersMatch = computed(() => Boolean(compareSnapshot.value) && sameRoles(compareSnapshot.value.role_filter || [], selectedRoles.value));
+const compareModeMatch = computed(() => Boolean(compareSnapshot.value) && modeOf(compareSnapshot.value) === countingMode.value);
 const comparison = computed(() => {
   const snapshot = compareSnapshot.value;
   if (!snapshot) return null;
@@ -82,8 +92,8 @@ const comparison = computed(() => {
     rows: stage.trackResults.map((track) => {
       const then = saved.get(track.code);
       const thenTracked = Boolean(then?.tracked);
-      const before = thenTracked ? { count: then.completedCount, total: then.total ?? snapshot.total_members, percent: then.percent } : null;
-      const now = track.tracked ? { count: track.completedCount, total: track.total, percent: track.percent } : null;
+      const before = thenTracked ? { count: then.credit ?? then.completedCount, total: then.total ?? snapshot.total_members, percent: then.percent } : null;
+      const now = track.tracked ? { count: track.credit, total: track.total, percent: track.percent } : null;
       return { code: track.code, name: track.name, before, now, change: before && now ? now.percent - before.percent : null, countChange: before && now ? now.count - before.count : null };
     }),
   }));
@@ -98,10 +108,14 @@ const comparison = computed(() => {
 });
 const changeTone = (change) => (change === null ? 'muted' : change > 0.05 ? 'text-success' : change < -0.05 ? 'text-danger' : 'muted');
 const signed = (value, digits = 0) => `${value > 0 ? '+' : ''}${value.toFixed(digits)}`;
-const cellText = (value) => (value ? `${value.count} / ${value.total} · ${value.percent.toFixed(1)}%` : 'Not tracked');
+const cellText = (value) => (value ? `${creditText(value.count)} / ${value.total} · ${value.percent.toFixed(1)}%` : 'Not tracked');
 
 function useSnapshotRoles() {
   selectedRoles.value = [...(compareSnapshot.value?.role_filter || [])];
+}
+
+function useSnapshotMode() {
+  countingMode.value = modeOf(compareSnapshot.value);
 }
 
 function exportComparison() {
@@ -184,6 +198,7 @@ async function saveSnapshot() {
       track_results: stageResults.value.flatMap((stage) => stage.trackResults.map((track) => ({
         stageKey: stage.key, stageLabel: stage.label, code: track.code, name: track.name, tracked: track.tracked,
         completedCount: track.tracked ? track.completedCount : null, total: track.tracked ? track.total : null, percent: track.tracked ? track.percent : null,
+        mode: countingMode.value, credit: track.tracked ? track.credit : null, partialCount: track.tracked ? track.partialCount : null,
       }))),
     }]);
     if (error) throw error;
@@ -212,12 +227,12 @@ async function deleteSnapshot(snapshot) {
 }
 
 function exportReport() {
-  const lines = [`${denominatorLabel.value}: ${totalActive.value}`, ''];
+  const lines = [`${denominatorLabel.value}: ${totalActive.value}`, `Counting: ${modeLabel(countingMode.value)} (${countingHint.value})`, `Overall formation: ${overall.value === null ? '—' : `${overall.value.toFixed(1)}%`}`, ''];
   stageResults.value.forEach((stage) => {
     lines.push(`${stage.marker} ${stage.label}:`, '');
     stage.trackResults.forEach((track, index) => {
       const prefix = `${index + 1}. ${track.name} (${track.code})`;
-      lines.push(track.tracked ? `${prefix}: ${track.completedCount} / ${track.total} → ${track.percent.toFixed(1)}%` : `${prefix}: Not tracked in current data`);
+      lines.push(track.tracked ? `${prefix}: ${creditText(track.credit)} / ${track.total} → ${track.percent.toFixed(1)}%${countingMode.value === 'partial' && track.partialCount ? ` (${track.completedCount} finished, ${track.partialCount} partial)` : ''}` : `${prefix}: Not tracked in current data`);
     });
     lines.push('', `Insight: ${stage.insight}`, '');
   });
@@ -249,6 +264,10 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         <p class="muted small">{{ denominatorLabel }}</p>
         <p class="summary-value">{{ totalActive }}</p>
       </div>
+      <div class="overall">
+        <p class="muted small">Overall formation</p>
+        <p class="summary-value">{{ overall === null ? '—' : `${overall.toFixed(1)}%` }}</p>
+      </div>
       <div class="row row-wrap filters">
         <label class="field"><span class="field-label">Area</span>
           <select v-model="areaFilter" class="select"><option v-for="option in areaOptions" :key="option">{{ option }}</option></select>
@@ -256,11 +275,17 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         <div class="field"><span class="field-label">Roles</span>
           <MultiSelect v-model="selectedRoles" :options="roleOptions" all-label="All Roles" noun="role" />
         </div>
+        <div class="field"><span class="field-label">Counting</span>
+          <div class="seg" role="radiogroup" aria-label="Counting">
+            <button v-for="mode in COUNTING_MODES" :key="mode.value" class="seg-btn" :class="{ on: countingMode === mode.value }" role="radio" :aria-checked="countingMode === mode.value" :title="mode.hint" @click="countingMode = mode.value">{{ mode.label }}</button>
+          </div>
+        </div>
       </div>
+      <p class="muted small counting-hint">{{ countingHint }}</p>
     </section>
 
     <p class="muted small">
-      {{ comparableSnapshot ? `Comparing against the snapshot saved ${formatStamp(comparableSnapshot.created_at)} (same Area/Roles filters).` : 'No comparable snapshot yet for these filters — save one below to start tracking trends over time.' }}
+      {{ comparableSnapshot ? `Comparing against the snapshot saved ${formatStamp(comparableSnapshot.created_at)} (same Area/Roles filters and counting).` : 'No comparable snapshot yet for these filters — save one below to start tracking trends over time.' }}
     </p>
 
     <section class="grid grid-2">
@@ -283,7 +308,8 @@ watch(areaFilter, loadSnapshots, { immediate: true });
             <p class="muted small">{{ track.code }}<template v-if="track.roles"> · {{ trackRolesLabel(track) }} only</template></p>
           </div>
           <div v-if="track.tracked" class="track-stat">
-            <span class="muted small">{{ track.completedCount }} / {{ track.total }}</span>
+            <span class="muted small">{{ creditText(track.credit) }} / {{ track.total }}</span>
+            <span v-if="countingMode === 'partial' && track.partialCount" class="muted tiny">{{ track.completedCount }} finished · {{ track.partialCount }} partial</span>
             <strong class="track-pct">{{ track.percent.toFixed(1) }}%</strong>
             <span v-if="deltaFor(track) !== null" class="small" :class="deltaFor(track) > 0.05 ? 'text-success' : deltaFor(track) < -0.05 ? 'text-danger' : 'muted'">{{ deltaLabel(deltaFor(track)) }}</span>
           </div>
@@ -310,7 +336,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
           <button class="snap-toggle grow" :aria-expanded="expandedId === snapshot.id" @click="expandedId = expandedId === snapshot.id ? null : snapshot.id">
             <span class="grow">
               <span class="strong snap-date">{{ formatStamp(snapshot.created_at) }}</span>
-              <span class="muted small snap-meta">{{ snapshot.total_members }} members · Roles: {{ snapshot.role_filter?.length ? snapshot.role_filter.join(', ') : 'All' }}{{ snapshot.note ? ` · "${snapshot.note}"` : '' }}</span>
+              <span class="muted small snap-meta">{{ snapshot.total_members }} members · Roles: {{ snapshot.role_filter?.length ? snapshot.role_filter.join(', ') : 'All' }} · {{ modeLabel(modeOf(snapshot)) }}{{ snapshot.note ? ` · "${snapshot.note}"` : '' }}</span>
             </span>
             <component :is="expandedId === snapshot.id ? ChevronUp : ChevronDown" :size="16" />
           </button>
@@ -320,7 +346,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         <ul v-if="expandedId === snapshot.id" class="snap-detail">
           <li v-for="track in snapshot.track_results || []" :key="track.code">
             <span class="clamp grow">{{ track.name }} ({{ track.code }})</span>
-            <span class="muted nowrap">{{ track.tracked ? `${track.completedCount} / ${track.total ?? snapshot.total_members} · ${track.percent.toFixed(1)}%` : 'Not tracked' }}</span>
+            <span class="muted nowrap">{{ track.tracked ? `${creditText(track.credit ?? track.completedCount)} / ${track.total ?? snapshot.total_members} · ${track.percent.toFixed(1)}%` : 'Not tracked' }}</span>
           </li>
         </ul>
       </div>
@@ -334,6 +360,10 @@ watch(areaFilter, loadSnapshots, { immediate: true });
       @close="compareSnapshot = null"
     >
       <div class="stack">
+        <div v-if="!compareModeMatch" class="compare-warn">
+          <span>This snapshot counted <b>{{ modeLabel(modeOf(compareSnapshot)) }}</b>; the numbers now count <b>{{ modeLabel(countingMode) }}</b>.</span>
+          <button class="btn btn-sm" @click="useSnapshotMode">Use the snapshot's counting</button>
+        </div>
         <div v-if="!compareFiltersMatch" class="compare-warn">
           <span>This snapshot used Roles: <b>{{ compareSnapshot.role_filter?.length ? compareSnapshot.role_filter.map(getRoleLabel).join(', ') : 'All' }}</b>; the numbers now use <b>{{ selectedRoles.length ? selectedRoles.map(getRoleLabel).join(', ') : 'All' }}</b>.</span>
           <button class="btn btn-sm" @click="useSnapshotRoles">Use the snapshot's roles</button>
@@ -353,15 +383,15 @@ watch(areaFilter, loadSnapshots, { immediate: true });
               <tr v-for="row in stage.rows" :key="row.code">
                 <td data-label="Training"><span class="strong">{{ row.name }}</span> <span class="muted small">{{ row.code }}</span></td>
                 <td data-label="Snapshot">
-                  <template v-if="row.before"><b>{{ row.before.percent.toFixed(1) }}%</b><span class="muted tiny">{{ row.before.count }} / {{ row.before.total }}</span></template>
+                  <template v-if="row.before"><b>{{ row.before.percent.toFixed(1) }}%</b><span class="muted tiny">{{ creditText(row.before.count) }} / {{ row.before.total }}</span></template>
                   <span v-else class="muted small">Not tracked</span>
                 </td>
                 <td data-label="Now">
-                  <template v-if="row.now"><b>{{ row.now.percent.toFixed(1) }}%</b><span class="muted tiny">{{ row.now.count }} / {{ row.now.total }}</span></template>
+                  <template v-if="row.now"><b>{{ row.now.percent.toFixed(1) }}%</b><span class="muted tiny">{{ creditText(row.now.count) }} / {{ row.now.total }}</span></template>
                   <span v-else class="muted small">Not tracked</span>
                 </td>
                 <td data-label="Change" :class="changeTone(row.change)">
-                  <template v-if="row.change !== null"><b>{{ row.change > 0.05 ? '▲' : row.change < -0.05 ? '▼' : '—' }} {{ signed(row.change, 1) }} pts</b><span class="tiny">{{ signed(row.countChange) }} members</span></template>
+                  <template v-if="row.change !== null"><b>{{ row.change > 0.05 ? '▲' : row.change < -0.05 ? '▼' : '—' }} {{ signed(row.change, 1) }} pts</b><span class="tiny">{{ signed(row.countChange, Number.isInteger(row.countChange) ? 0 : 1) }} members</span></template>
                   <span v-else class="muted small">—</span>
                 </td>
               </tr>
@@ -410,6 +440,12 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 .summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
 .summary-value { font-size: 30px; font-weight: var(--fw-medium); letter-spacing: -0.02em; }
 .filters { align-items: flex-start; }
+.overall { margin-right: auto; padding-left: 18px; border-left: 1px solid var(--line); }
+.counting-hint { flex-basis: 100%; margin-top: -6px; }
+.seg { display: inline-flex; padding: 3px; gap: 3px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line); }
+.seg-btn { border: 0; background: none; padding: 7px 12px; border-radius: 9px; font-size: 12.5px; font-weight: var(--fw-medium); color: var(--ink-2); white-space: nowrap; transition: background 0.15s, color 0.15s; }
+.seg-btn.on { background: var(--surface); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 32, 96, 0.15); }
+.track-stat .tiny { font-size: 11px; }
 .filters .select { min-width: 190px; }
 .stage-scope { margin-top: 3px; padding-left: 17px; }
 .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
