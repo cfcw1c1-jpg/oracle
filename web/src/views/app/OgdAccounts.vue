@@ -756,6 +756,15 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .guide-body a { display: block; font-weight: var(--fw-medium); }
 .status { text-align: left; min-width: 160px; }
 .status p { margin: 3px 0 0; }
+/* Phones stack each row as label | value. Every value block lines up on the
+   right edge, and the buttons take the card's full width. */
+@media (max-width: 767.98px) {
+  .chapter-cell, .status { min-width: 0; align-items: flex-end; text-align: right; }
+  .status { display: flex; flex-direction: column; }
+  .status .progress { width: 100%; }
+  .row-actions { width: 100%; }
+  .row-actions .btn { justify-content: center; }
+}
 .tiny { font-size: 11px; margin-top: 2px; }
 .strong-ish { color: var(--ink-2); font-weight: var(--fw-medium); }
 .progress { position: relative; height: 6px; margin-top: 6px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; min-width: 140px; }
