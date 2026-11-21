@@ -322,13 +322,15 @@ const handleUserRequest = route(async (request, body) => {
   // Older app versions send no part and sync member info.
   const part = body.part === 'formations' ? 'formations' : 'info';
   const now = new Date().toISOString();
-  const { error } = await db.from('ogd_member_syncs').upsert(
-    {
-      area_id: areaId, status: background ? undefined : 'partial', bg_state: 'running', bg_part: part, bg_started_by: userId, bg_started_at: now,
-      bg_run: 1, bg_retries: 0, progress_part: part, progress_stage: 'queued', progress_done: 0, progress_page: null, progress_at: now,
-    },
-    { onConflict: 'area_id' },
-  );
+  const columns = {
+    bg_state: 'running', bg_part: part, bg_started_by: userId, bg_started_at: now,
+    bg_run: 1, bg_retries: 0, progress_part: part, progress_stage: 'queued', progress_done: 0, progress_page: null, progress_at: now,
+  };
+  // An upsert would need status even for an existing row (Postgres checks
+  // NOT NULL before it sees the conflict), so the two cases are separate.
+  const { error } = background
+    ? await db.from('ogd_member_syncs').update(columns).eq('area_id', areaId)
+    : await db.from('ogd_member_syncs').insert({ area_id: areaId, status: 'partial', ...columns });
   if (error) throw error;
 
   inBackground(runBackgroundStretch({ db, areaId, chapter: chapter.chapter, userId, part, run: 1, retries: 0, url: selfUrl(request) }));
