@@ -291,6 +291,22 @@ export function computeTrackStat(track, pfoRows, members) {
   return { tracked: true, completedCount, total, percent: total > 0 ? (completedCount / total) * 100 : 0 };
 }
 
+// Members in a track's scope who have not finished it, with how many of its
+// talks each has done. Members with no PFO record have done none.
+export function trackPendingMembers(track, members, pfoRows) {
+  const columnIds = COLUMN_IDS_BY_GROUP[track.group] || [];
+  const rowsById = new Map(pfoRows.map((row) => [row.MemberIDNo, row]));
+  return members
+    .filter((member) => !track.roles || track.roles.includes(normalizeRole(member.PastoralService)))
+    .map((member) => {
+      const row = rowsById.get(member.MemberIDNo);
+      const talksDone = row ? columnIds.filter((id) => row[id] === 'Y' || row[id] === 'y').length : 0;
+      return { ...member, talksDone, talkCount: columnIds.length };
+    })
+    .filter((member) => !member.talkCount || member.talksDone < member.talkCount)
+    .sort((a, b) => b.talksDone - a.talksDone || `${a.Lastname} ${a.Firstname}`.localeCompare(`${b.Lastname} ${b.Firstname}`));
+}
+
 // "Household Head, Household Leader, …" for a track limited to roles.
 export const trackRolesLabel = (track) => (track.roles ? track.roles.map((code) => ROLE_LABELS[code] || code).join(', ') : '');
 

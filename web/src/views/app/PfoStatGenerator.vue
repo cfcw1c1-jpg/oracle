@@ -1,12 +1,13 @@
 <script setup>
-import { ChevronDown, ChevronUp, Download, Info, RefreshCw, Save, Trash2 } from 'lucide-vue-next';
+import { ChevronDown, ChevronRight, ChevronUp, Download, Info, RefreshCw, Save, Trash2 } from 'lucide-vue-next';
 import { computed, onMounted, ref, watch } from 'vue';
+import AppModal from '@/components/AppModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import MultiSelect from '@/components/MultiSelect.vue';
 import PageHead from '@/components/PageHead.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
-import { confirmAction, downloadBlob, fetchAllRows, isActiveStatus, showAlert } from '@/lib/data';
-import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, trackRolesLabel } from '@/lib/formation';
+import { confirmAction, downloadBlob, exportCsv, fetchAllRows, isActiveStatus, showAlert } from '@/lib/data';
+import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, trackPendingMembers, trackRolesLabel } from '@/lib/formation';
 import { supabase } from '@/lib/supabase';
 
 const SNAPSHOT_COLUMNS = 'id, created_at, created_by_email, note, area_filter, role_filter, total_members, track_results';
@@ -66,11 +67,36 @@ function deltaLabel(delta) {
   return `${delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '—'} ${Math.abs(delta).toFixed(1)}%`;
 }
 
+// ---------- Leaders Track: who has not finished a training yet ----------
+const pendingTrack = ref(null);
+const pendingSearch = ref('');
+const pendingMembers = computed(() => (pendingTrack.value ? trackPendingMembers(pendingTrack.value, activeMembers.value, activePfoRows.value) : []));
+const shownPending = computed(() => {
+  const query = pendingSearch.value.trim().toLowerCase();
+  if (!query) return pendingMembers.value;
+  return pendingMembers.value.filter((member) => [member.Lastname, member.Firstname, member.MemberIDNo, member.AreaName, getRoleLabel(normalizeRole(member.PastoralService))].filter(Boolean).join(' ').toLowerCase().includes(query));
+});
+const memberName = (member) => [member.Lastname, member.Firstname].filter(Boolean).join(', ') || member.MemberIDNo;
+
+function openPending(track) {
+  pendingSearch.value = '';
+  pendingTrack.value = track;
+}
+
+function exportPending() {
+  const track = pendingTrack.value;
+  exportCsv(`${track.code.toLowerCase()}-not-yet-finished-${new Date().toISOString().slice(0, 10)}`, [
+    { key: 'MemberIDNo', label: 'Member ID' }, { key: 'Lastname', label: 'Last Name' }, { key: 'Firstname', label: 'First Name' },
+    { key: 'PastoralService', label: 'Role', value: (member) => getRoleLabel(normalizeRole(member.PastoralService)) },
+    { key: 'AreaName', label: 'Area' }, { key: 'talksDone', label: `${track.code} Talks Done`, value: (member) => `${member.talksDone} of ${member.talkCount}` },
+  ], shownPending.value);
+}
+
 async function generateStats() {
   isLoading.value = true;
   try {
     const [members, pfo] = await Promise.all([
-      fetchAllRows('members', 'MemberIDNo, PastoralService, Status, AreaName', { orderBy: 'MemberIDNo' }),
+      fetchAllRows('members', 'MemberIDNo, Lastname, Firstname, PastoralService, Status, AreaName', { orderBy: 'MemberIDNo' }),
       fetchAllRows('pfo_members', `${PFO_TRAINING_SELECT}, members (PastoralService, Status, AreaName)`, { orderBy: 'MemberIDNo' }),
     ]);
     membersRows.value = members;
@@ -191,7 +217,15 @@ watch(areaFilter, loadSnapshots, { immediate: true });
     <section class="grid grid-2">
       <article v-for="stage in stageResults" :key="stage.key" class="card card-pad stack" :style="{ '--stage': stage.color }">
         <h2 class="card-title row"><span class="stage-dot" />{{ stage.label }}</h2>
-        <div v-for="track in stage.trackResults" :key="track.code" class="track">
+        <component
+          :is="stage.key === 'leadersTrack' && track.tracked ? 'button' : 'div'"
+          v-for="track in stage.trackResults"
+          :key="track.code"
+          class="track"
+          :class="{ 'track-link': stage.key === 'leadersTrack' && track.tracked }"
+          :aria-label="stage.key === 'leadersTrack' && track.tracked ? `Show members who have not finished ${track.name}` : undefined"
+          @click="stage.key === 'leadersTrack' && track.tracked && openPending(track)"
+        >
           <div class="grow">
             <p class="strong">{{ track.name }}</p>
             <p class="muted small">{{ track.code }}<template v-if="track.roles"> · {{ trackRolesLabel(track) }} only</template></p>
@@ -202,7 +236,8 @@ watch(areaFilter, loadSnapshots, { immediate: true });
             <span v-if="deltaFor(track) !== null" class="small" :class="deltaFor(track) > 0.05 ? 'text-success' : deltaFor(track) < -0.05 ? 'text-danger' : 'muted'">{{ deltaLabel(deltaFor(track)) }}</span>
           </div>
           <span v-else class="pill">Not Tracked</span>
-        </div>
+          <ChevronRight v-if="stage.key === 'leadersTrack' && track.tracked" :size="16" class="muted track-chevron" />
+        </component>
         <p class="insight"><Info :size="14" />{{ stage.insight }}</p>
       </article>
     </section>
@@ -237,6 +272,35 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         </ul>
       </div>
     </section>
+
+    <AppModal
+      v-if="pendingTrack"
+      :title="`Not yet finished: ${pendingTrack.name}`"
+      :subtitle="`${pendingMembers.length} of ${pendingTrack.total} ${pendingTrack.roles ? trackRolesLabel(pendingTrack) : 'members'} · Area: ${areaFilter}`"
+      :width="620"
+      @close="pendingTrack = null"
+    >
+      <div class="stack">
+        <div class="pending-tools">
+          <input v-model="pendingSearch" class="input" type="search" placeholder="Search name, ID, area or role" aria-label="Search members" />
+          <button class="btn" :disabled="!shownPending.length" @click="exportPending"><Download :size="14" />Export CSV</button>
+        </div>
+        <p v-if="!pendingMembers.length" class="muted small">Everyone in scope has finished {{ pendingTrack.code }}.</p>
+        <p v-else-if="!shownPending.length" class="muted small">No one matches "{{ pendingSearch }}".</p>
+        <ul v-else class="pending-list">
+          <li v-for="member in shownPending" :key="member.MemberIDNo" class="pending-item">
+            <div class="grow">
+              <p class="strong clamp">{{ memberName(member) }}</p>
+              <p class="muted small">{{ getRoleLabel(normalizeRole(member.PastoralService)) }} · {{ member.AreaName || 'No area' }} · {{ member.MemberIDNo }}</p>
+            </div>
+            <div class="pending-count">
+              <span class="pill" :class="member.talksDone ? 'warning' : 'danger'">{{ member.talksDone ? 'In progress' : 'Not started' }}</span>
+              <p class="muted tiny">{{ member.talksDone }} of {{ member.talkCount }} talks</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </AppModal>
   </div>
 </template>
 
@@ -247,6 +311,17 @@ watch(areaFilter, loadSnapshots, { immediate: true });
 .filters .select { min-width: 190px; }
 .stage-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
 .track { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.track-link { border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; color: inherit; font: inherit; font-size: 13px; cursor: pointer; border-radius: 8px; padding-inline: 6px; margin-inline: -6px; width: calc(100% + 12px); transition: background 0.15s; }
+.track-link:hover { background: var(--surface-hover); }
+.track-link:hover .track-chevron { transform: translateX(2px); }
+.track-chevron { flex: none; transition: transform 0.15s; }
+.pending-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pending-tools .input { flex: 1; min-width: 160px; }
+.pending-list { list-style: none; margin: 0; padding: 0; max-height: min(60vh, 520px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.pending-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.pending-item:last-child { border-bottom: 0; }
+.pending-count { flex: none; text-align: right; }
+.pending-count .tiny { font-size: 11px; margin-top: 3px; }
 .track-stat { display: flex; flex-direction: column; align-items: flex-end; flex: none; }
 .track-pct { font-size: 14px; }
 .insight { display: flex; gap: 7px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--link); font-size: 12.5px; }
