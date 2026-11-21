@@ -1,5 +1,5 @@
 import { authorize, fetchAllRows, HttpError, route } from '../_lib/access.mjs';
-import { STALLED_AFTER_MS } from '../_lib/backgroundSync.mjs';
+import { isBackgroundStalled } from '../_lib/backgroundSync.mjs';
 
 // A run this old has outlived the function that started it.
 const STALE_RUN_MS = 5 * 60 * 1000;
@@ -7,7 +7,7 @@ const STALE_RUN_MS = 5 * 60 * 1000;
 // A background sync, flagged stalled once it has shown no progress for a while.
 function backgroundOf(sync) {
   if (!sync.bg_state) return null;
-  const stalled = !sync.progress_at || Date.now() - new Date(sync.progress_at).getTime() > STALLED_AFTER_MS;
+  const stalled = isBackgroundStalled(sync);
   return { state: sync.bg_state, part: sync.bg_part, run: sync.bg_run, retries: sync.bg_retries, startedAt: sync.bg_started_at, stalled };
 }
 

@@ -209,6 +209,8 @@ async function syncMembers(row, part) {
   }
 }
 
+// The first press stops after the current run; pressing again (Force stop)
+// clears the sync at once.
 async function stopSync(row) {
   stoppingIds.value = new Set([...stoppingIds.value, row.areaId]);
   try {
@@ -672,7 +674,7 @@ onBeforeUnmount(() => {
               <span class="span-2 push-status muted small" aria-live="polite"><span class="spinner sm" role="status" aria-label="Pushing to OGD" />{{ pushStatus(row) }}</span>
             </template>
             <template v-else-if="syncingIds.has(row.areaId)">
-              <button class="btn btn-sm btn-danger" :disabled="startingIds.has(row.areaId) || stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop Sync' }}</button>
+              <button class="btn btn-sm btn-danger" :disabled="startingIds.has(row.areaId)" :title="stoppingIds.has(row.areaId) ? 'Clears the sync now instead of waiting for the current run to end' : 'Stops after the current run'" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Force stop' : 'Stop Sync' }}</button>
             </template>
             <template v-else-if="row.ownConfigured && row.otherConfigured">
               <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="testLogin(row)"><LogIn :size="13" />{{ testingIds.has(row.areaId) ? 'Testing…' : 'Test Login' }}</button>

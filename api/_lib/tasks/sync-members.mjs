@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions';
 import { authorize, createAdminClient, HttpError, route } from '../access.mjs';
 import { countChapterMembers, keepPendingFields } from '../ogdChanges.mjs';
 import { buildPfoRow, createMemberListReader, groupTrainingColumns, planMemberSync, readFormations, readHouseholdHead } from '../ogdMembers.mjs';
-import { STALLED_AFTER_MS } from '../backgroundSync.mjs';
+import { isBackgroundStalled } from '../backgroundSync.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 import { signToken, verifyToken } from '../secrets.mjs';
 
@@ -171,7 +171,10 @@ async function syncStretch({ db, areaId, chapter, userId, part, startedAt }) {
 // done, fails for good, or is stopped. The page only reads the progress.
 
 // Failures worth another go, a few times in a row, after OGD's login spacing.
-const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found', 'cooldown']);
+const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found', 'cooldown', 'run_interrupted']);
+// A stretch still going this long after it started is given up before the
+// function's 300-second limit kills it, so the sync is always tidied up.
+const STRETCH_LIMIT_MS = 265 * 1000;
 const MAX_RETRIES = 3;
 const RETRY_SPACING_MS = 65 * 1000;
 const MAX_RUNS = 80;
@@ -237,12 +240,31 @@ async function startNextRun(url, payload) {
 async function runBackgroundStretch({ db, areaId, chapter, userId, part, run, retries, url }) {
   const startedAt = Date.now();
   let outcome;
+  let limitTimer;
   try {
-    outcome = await syncStretch({ db, areaId, chapter, userId, part, startedAt });
+    const timedOut = new Promise((resolve) => {
+      limitTimer = setTimeout(() => resolve('timed_out'), STRETCH_LIMIT_MS);
+    });
+    const result = await Promise.race([syncStretch({ db, areaId, chapter, userId, part, startedAt }), timedOut]);
+    if (result === 'timed_out') {
+      console.error('[ogd] background stretch ran out of time');
+      outcome = { status: 'failed', more: false, failureCode: 'run_interrupted' };
+      // The stuck sign-in still marks the chapter as running; free it for the retry.
+      await db.from('ogd_chapter_connections')
+        .update({ status: 'failed', failure_code: 'run_interrupted', status_detail: 'The sign-in took too long and was stopped.' })
+        .eq('area_id', areaId).eq('status', 'running');
+      await db.from('ogd_member_syncs')
+        .update({ status: 'failed', failure_code: 'run_interrupted', status_detail: 'A run took too long and was stopped; it is tried again.' })
+        .eq('area_id', areaId);
+    } else {
+      outcome = result;
+    }
   } catch (error) {
     const isCooldown = error instanceof HttpError && error.status === 429;
     if (!isCooldown) console.error('[ogd] background stretch failed:', error?.message);
     outcome = { status: 'failed', more: false, failureCode: isCooldown ? 'cooldown' : 'automation_error' };
+  } finally {
+    clearTimeout(limitTimer);
   }
 
   const background = await readBackground(db, areaId).catch(() => null);
@@ -309,11 +331,13 @@ const handleUserRequest = route(async (request, body) => {
   if (!chapter) throw new HttpError(403, 'You cannot manage this chapter.');
 
   const background = await readBackground(db, areaId);
-  const isStalled = !background?.progress_at || Date.now() - new Date(background.progress_at).getTime() > STALLED_AFTER_MS;
-  const isRunning = Boolean(background?.bg_state) && !isStalled;
+  const isRunning = Boolean(background?.bg_state) && !isBackgroundStalled(background);
 
+  // The first Stop lets the current stretch finish; Stop on a sync that is
+  // already stopping (Force stop) clears it at once. A stretch still running
+  // then sees it was stopped and does not start another.
   if (body.action === 'stop') {
-    if (isRunning) await updateBackground(db, areaId, { bg_state: 'stopping' });
+    if (isRunning && background.bg_state === 'running') await updateBackground(db, areaId, { bg_state: 'stopping' });
     else if (background?.bg_state) await finishBackground(db, areaId, 'Stopped.');
     return { ok: true };
   }
