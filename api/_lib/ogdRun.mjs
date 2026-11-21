@@ -46,7 +46,7 @@ async function claimRun(db, areaId, userId, cooldownMs) {
 }
 
 // The saved cookies, or null when there are none worth trying.
-function savedSession(row, areaId, now) {
+export function savedSession(row, areaId, now) {
   if (!row.ogd_session_enc || !row.ogd_session_saved_at) return null;
   if (now - new Date(row.ogd_session_saved_at).getTime() > SESSION_MAX_AGE_MS) return null;
   try {
@@ -56,7 +56,7 @@ function savedSession(row, areaId, now) {
   }
 }
 
-function isReuseOff(row, now) {
+export function isReuseOff(row, now) {
   return Boolean(row.ogd_session_reuse_off_until && new Date(row.ogd_session_reuse_off_until).getTime() > now);
 }
 

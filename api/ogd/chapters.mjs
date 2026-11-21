@@ -45,7 +45,7 @@ export const GET = route(async (request) => {
         lastAttemptAt: row?.last_attempt_at ?? null,
         lastSuccessAt: row?.last_success_at ?? null,
         memberSync: sync
-          ? { status: sync.status, part: sync.sync_part, membersSaved: sync.members_saved, householdsSaved: sync.households_saved, formationsSaved: sync.formations_saved, failureCode: sync.failure_code, statusDetail: sync.status_detail, syncedAt: sync.synced_at,
+          ? { status: sync.status, part: sync.sync_part, infoNextPage: sync.hh_next_page ?? 1, formationsNextPage: sync.fm_next_page ?? 1, membersSaved: sync.members_saved, householdsSaved: sync.households_saved, formationsSaved: sync.formations_saved, failureCode: sync.failure_code, statusDetail: sync.status_detail, syncedAt: sync.synced_at,
               progress: sync.progress_stage ? { part: sync.progress_part, stage: sync.progress_stage, done: sync.progress_done, total: sync.progress_total, page: sync.progress_page, at: sync.progress_at } : null }
           : null,
       };

@@ -25,6 +25,11 @@ export function runOgdTestLogin(values) {
   return request('/api/ogd/browser?task=test-login', { method: 'POST', body: JSON.stringify(values) });
 }
 
+// Touches each saved OGD session so it does not time out while Oracle is open.
+export function keepOgdSessionsAlive() {
+  return request('/api/ogd/keepalive', { method: 'POST', body: '{}' });
+}
+
 export function syncOgdMembers(values) {
   return request('/api/ogd/browser?task=sync-members', { method: 'POST', body: JSON.stringify(values) });
 }

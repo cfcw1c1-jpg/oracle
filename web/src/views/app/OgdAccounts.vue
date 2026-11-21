@@ -1,5 +1,5 @@
 <script setup>
-import { ArrowRight, Check, ChevronDown, ChevronUp, Info, KeyRound, LogIn, RefreshCw, Trash2, Undo2, UploadCloud } from 'lucide-vue-next';
+import { ArrowRight, ChevronDown, ChevronUp, GraduationCap, Info, KeyRound, LogIn, RefreshCw, Trash2, Undo2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -69,7 +69,7 @@ const columns = computed(() => [
   { key: 'setup', label: 'Setup', value: setupLabel },
   { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label },
   { key: 'lastAttemptAt', label: 'Last Attempt' },
-  { key: 'memberSync', label: 'Members Sync', value: (row) => row.memberSync?.syncedAt ?? '' },
+  { key: 'memberSync', label: 'Last Sync', value: (row) => row.memberSync?.syncedAt ?? '' },
   { key: 'actions', label: 'Actions', action: true },
 ]);
 
@@ -156,6 +156,7 @@ const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'memb
 const MAX_SIGN_IN_RETRIES = 3;
 const RETRY_WAIT_MS = 65 * 1000;
 const syncRuns = ref({});
+const syncingParts = ref({});
 const syncWaiting = ref({});
 let isMounted = true;
 let pollTimer = null;
@@ -168,9 +169,12 @@ function updatePolling() {
   }
 }
 
-async function syncMembers(row) {
+// part: 'info' (Members list and household heads) or 'formations'. Each is
+// started on its own and resumes from its own page.
+async function syncMembers(row, part) {
   notice.value = '';
   resetEta(row.areaId);
+  syncingParts.value = { ...syncingParts.value, [row.areaId]: part };
   setSyncing(row.areaId, true);
   try {
     let retries = 0;
@@ -178,7 +182,7 @@ async function syncMembers(row) {
       syncRuns.value = { ...syncRuns.value, [row.areaId]: run };
       let result;
       try {
-        result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId });
+        result = await syncOgdMembers({ scope: scope.value, areaId: row.areaId, part });
       } catch (error) {
         if (error.status !== 429 || retries >= MAX_SIGN_IN_RETRIES) throw error;
         result = { status: 'failed', failureCode: 'cooldown' };
@@ -199,6 +203,8 @@ async function syncMembers(row) {
     syncRuns.value = rest;
     const { [row.areaId]: __, ...waiting } = syncWaiting.value;
     syncWaiting.value = waiting;
+    const { [row.areaId]: ___, ...parts } = syncingParts.value;
+    syncingParts.value = parts;
     setSyncing(row.areaId, false);
     resetEta(row.areaId);
     if (isMounted) load();
@@ -285,8 +291,7 @@ function trackEta(row) {
 function timeLeftLabel(row) {
   const text = etaText.value[row.areaId];
   if (!text) return syncingIds.value.has(row.areaId) ? 'Working out the time left…' : '';
-  const part = currentPart(row);
-  return part === 'info' ? `${text[0].toUpperCase()}${text.slice(1)} for Member info, then Formations.` : `${text[0].toUpperCase()}${text.slice(1)} for Formations.`;
+  return `${text[0].toUpperCase()}${text.slice(1)} for ${SYNC_PARTS[currentPart(row)]}.`;
 }
 
 async function waitBeforeRetry(areaId) {
@@ -305,20 +310,18 @@ function setSyncing(areaId, isSyncing) {
 }
 
 const STAGE_LABELS = { signing_in: 'Signing in to OGD…', reading: 'Reading members', saving: 'Saving to Oracle…', skipping: 'Going back to where it stopped' };
-// The server syncs Member info (list + household heads) first, then Formations.
-const SYNC_PARTS = [
-  { key: 'info', label: 'Member info' },
-  { key: 'formations', label: 'Formations' },
-];
+// Members (list + household heads) and Formations sync separately.
+const SYNC_PARTS = { info: 'Members', formations: 'Formations' };
 
 function currentPart(row) {
-  return row.memberSync?.progress?.part ?? row.memberSync?.part ?? 'info';
+  return syncingParts.value[row.areaId] ?? row.memberSync?.progress?.part ?? row.memberSync?.part ?? 'info';
 }
 
-function partState(row, key) {
-  const current = SYNC_PARTS.findIndex((part) => part.key === currentPart(row));
-  const index = SYNC_PARTS.findIndex((part) => part.key === key);
-  return index < current ? 'done' : index === current ? 'active' : 'pending';
+// "Members continues from page 4" for each sync that stopped part-way.
+function resumeNotes(sync) {
+  return [['info', sync.infoNextPage], ['formations', sync.formationsNextPage]]
+    .filter(([, page]) => page > 1)
+    .map(([part, page]) => `${SYNC_PARTS[part]} continues from page ${page}.`);
 }
 
 // Percent for the bar, or null while the total is unknown (indeterminate bar).
@@ -607,17 +610,12 @@ onBeforeUnmount(() => {
         <template #cell-memberSync="{ row }">
           <div class="status">
             <template v-if="syncingIds.has(row.areaId)">
-              <span class="pill info">{{ SYNC_STATUS.syncing.label }}</span>
-              <ol class="sync-parts" aria-label="Sync parts">
-                <li v-for="(part, index) in SYNC_PARTS" :key="part.key" :class="partState(row, part.key)" :aria-current="partState(row, part.key) === 'active' ? 'step' : undefined">
-                  <span class="part-dot"><Check v-if="partState(row, part.key) === 'done'" :size="10" /><template v-else>{{ index + 1 }}</template></span>{{ part.label }}
-                </li>
-              </ol>
+              <span class="pill info">Syncing {{ SYNC_PARTS[currentPart(row)] }}…</span>
               <div
                 class="progress"
                 :class="{ indeterminate: progressPercent(row.memberSync?.progress) === null }"
                 role="progressbar"
-                aria-label="Members sync progress"
+                :aria-label="`${SYNC_PARTS[currentPart(row)]} sync progress`"
                 aria-valuemin="0"
                 aria-valuemax="100"
                 :aria-valuenow="progressPercent(row.memberSync?.progress) ?? undefined"
@@ -632,6 +630,7 @@ onBeforeUnmount(() => {
               <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
               <p v-if="row.memberSync.status === 'failed' && FAILURE_MESSAGES[row.memberSync.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.memberSync.failureCode] }}</p>
               <p v-if="row.memberSync.statusDetail" class="muted tiny">{{ row.memberSync.statusDetail }}</p>
+              <p v-for="note in resumeNotes(row.memberSync)" :key="note" class="muted tiny">{{ note }}</p>
               <p class="muted tiny">{{ formatDateTime(row.memberSync.syncedAt) }}</p>
             </template>
             <span v-else class="muted small">Never synced</span>
@@ -644,7 +643,8 @@ onBeforeUnmount(() => {
             <span v-if="pushingIds.has(row.areaId)" class="muted small" aria-live="polite">{{ pushStatus(row) }}</span>
             <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
               <button class="link-btn" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
-              <button class="link-btn" @click="syncMembers(row)"><RefreshCw :size="13" />Sync Members</button>
+              <button class="link-btn" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
+              <button class="link-btn" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
               <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="link-btn" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
             </template>
           </div>
@@ -716,13 +716,6 @@ ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .status { text-align: left; min-width: 150px; }
 .tiny { font-size: 11px; margin-top: 2px; }
 .strong-ish { color: var(--ink-2); font-weight: var(--fw-medium); }
-.sync-parts { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
-.sync-parts li { display: inline-flex; align-items: center; gap: 5px; }
-.sync-parts li.active { color: var(--ink); font-weight: var(--fw-medium); }
-.sync-parts li.done { color: var(--success); }
-.part-dot { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; border: 1px solid currentColor; }
-.sync-parts li.active .part-dot { background: var(--accent); border-color: var(--accent); color: var(--surface); }
-.sync-parts li.done .part-dot { background: var(--success); border-color: var(--success); color: var(--surface); }
 .progress { position: relative; height: 6px; margin-top: 6px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; min-width: 140px; }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
 .progress.indeterminate .progress-fill { position: absolute; animation: progress-slide 1.4s ease-in-out infinite; }

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { FAILURE_MESSAGES, fetchOgdChapters } from '@/lib/ogdApi';
+import { FAILURE_MESSAGES, fetchOgdChapters, keepOgdSessionsAlive } from '@/lib/ogdApi';
 import { sessionState } from '@/stores/session';
 
 // Header lights for the caller's chapters: green (blinking) when the last OGD
@@ -9,10 +9,23 @@ import { sessionState } from '@/stores/session';
 // missing or the last sign-in could not read it.
 const emit = defineEmits(['open']);
 const REFRESH_MS = 60 * 1000;
+// OGD ends idle sessions, so the saved one is touched this often while Oracle
+// is open (hidden tabs included). Syncs then reuse it with no login or OTP.
+const KEEP_ALIVE_MS = 4 * 60 * 1000;
 const GMAIL_FAILURES = new Set(['gmail_bad_password', 'gmail_connection_error', 'otp_not_found']);
 
 const chapters = ref(null);
 let timer = null;
+let keepAliveTimer = null;
+
+async function keepAlive() {
+  if (sessionState.ogdSignInPending) return;
+  try {
+    await keepOgdSessionsAlive();
+  } catch {
+    // The next tick tries again.
+  }
+}
 
 async function load() {
   if (document.visibilityState === 'hidden') return;
@@ -59,10 +72,12 @@ const ogd = computed(() => light(ogdProblem));
 onMounted(() => {
   load();
   timer = setInterval(load, REFRESH_MS);
+  keepAliveTimer = setInterval(keepAlive, KEEP_ALIVE_MS);
   document.addEventListener('visibilitychange', load);
 });
 onBeforeUnmount(() => {
   clearInterval(timer);
+  clearInterval(keepAliveTimer);
   document.removeEventListener('visibilitychange', load);
 });
 // Re-reads once the sign-in screen has finished.

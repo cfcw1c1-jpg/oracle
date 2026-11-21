@@ -130,8 +130,15 @@ async function logOut(page) {
 // after afterLogin, even when afterLogin fails, so the caller can save them.
 // With keepSession the run does not log out, leaving those cookies valid.
 async function runSignedIn(page, flags, afterLogin, { keepSession, session }) {
+  // The browser's user agent is kept with the cookies so the keep-alive
+  // request (ogdSession.mjs) looks like the same browser.
   const capture = async () => {
-    if (keepSession) session.state = await page.context().storageState().catch(() => session.state ?? null);
+    if (!keepSession) return;
+    const [state, userAgent] = await Promise.all([
+      page.context().storageState().catch(() => null),
+      page.evaluate(() => navigator.userAgent).catch(() => null),
+    ]);
+    if (state) session.state = { ...state, userAgent: userAgent ?? session.state?.userAgent ?? null };
   };
   await capture();
   try {
@@ -163,7 +170,7 @@ export async function loginToOgd({
   browser, username, password, readOtp, afterLogin, loginUrl = OGD_LOGIN_URL,
   storageState = null, notBeforeMs = 0, keepSession = false, session = {},
 }) {
-  const context = await browser.newContext(storageState ? { storageState } : undefined);
+  const context = await browser.newContext(storageState ? { storageState: { cookies: storageState.cookies ?? [], origins: storageState.origins ?? [] } } : undefined);
   const page = await context.newPage();
   const homeUrl = new URL('/default.aspx', loginUrl).href;
   const signedIn = { keepSession, session };

@@ -11,29 +11,28 @@ const UPSERT_CHUNK = 100;
 const PROGRESS_EVERY_MS = 3000;
 const COLUMNS_BY_CODE = groupTrainingColumns(TRAINING_COLUMNS.map((column) => column.id));
 
-// A chapter syncs in two parts, each over as many runs as it needs:
+// A chapter has two syncs, each started on its own from the OGD Accounts page
+// and each running over as many runs as it needs:
 //   info        Members Database list plus each member's present household
 //               head (Service tab); resumes at hh_next_page
 //   formations  each member's formation talks (Formation tab) into
 //               pfo_members; resumes at fm_next_page
-// Part 1 finishing hands over to Part 2; Part 2 finishing completes the sync.
-const PARTS = { info: { number: 1, label: 'Member info' }, formations: { number: 2, label: 'Formations' } };
+// One finishing does not start the other. sync_part records which ran last.
+const PARTS = { info: { label: 'Members' }, formations: { label: 'Formations' } };
 
 function plural(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
-function describe({ part, saved, households, formations, pagesRead, skipped, issues, stopReason, more, nextPage, handover }) {
-  const { number, label } = PARTS[part];
-  const parts = [`Part ${number} of 2 (${label}):`];
+function describe({ part, saved, households, formations, pagesRead, skipped, issues, stopReason, more, nextPage }) {
+  const parts = [`${PARTS[part].label} sync:`];
   if (part === 'info') parts.push(`saved ${plural(saved, 'member')} from ${plural(pagesRead, 'page')}, ${plural(households, 'household head')}.`);
   else parts.push(`saved formations for ${plural(formations, 'member')} from ${plural(pagesRead, 'page')}.`);
   if (skipped.outside) parts.push(`${skipped.outside} outside this chapter were left alone.`);
   if (skipped.unknownStatus.length) parts.push(`Skipped members with an unrecognized status: ${skipped.unknownStatus.join(', ')}.`);
   if (skipped.missingId) parts.push(`${skipped.missingId} rows had no Member ID.`);
   if (issues.length) parts.push(`Left unchanged: ${issues.slice(0, 3).join('; ')}${issues.length > 3 ? `; and ${issues.length - 3} more` : ''}.`);
-  if (handover) parts.push('Formations are next.');
-  else if (more) parts.push(`Continues from page ${nextPage}.`);
+  if (more) parts.push(`Continues from page ${nextPage}.`);
   else if (stopReason) parts.push(`Not every page was read: ${stopReason}`);
   return parts.join(' ').slice(0, 500);
 }
@@ -87,7 +86,8 @@ export const POST = route(async (request) => {
     .eq('area_id', areaId)
     .maybeSingle();
   if (previousError) throw previousError;
-  const part = previous?.sync_part === 'formations' ? 'formations' : 'info';
+  // Older app versions send no part and sync member info.
+  const part = body.part === 'formations' ? 'formations' : 'info';
   const startPage = (part === 'info' ? previous?.hh_next_page : previous?.fm_next_page) ?? 1;
 
   const total = await countChapterMembers(db, chapter.chapter);
@@ -109,11 +109,10 @@ export const POST = route(async (request) => {
   let more = false;
   if (!list) {
     // Keeps the part and its page so the next attempt resumes where it was.
-    record = { status: 'failed', failure_code: run.failure_code, status_detail: run.status_detail };
+    record = { status: 'failed', sync_part: part, failure_code: run.failure_code, status_detail: run.status_detail };
   } else {
-    const handover = part === 'info' && list.complete;
     const nextPage = list.complete ? 1 : (list.nextPage ?? startPage);
-    more = list.timedOut || handover;
+    more = list.timedOut;
     const shared = { pages_read: list.pagesRead, failure_code: null };
 
     if (part === 'info') {
@@ -123,13 +122,12 @@ export const POST = route(async (request) => {
       const households = members.filter((member) => member.NameOfHouseholdHead).length;
       record = {
         ...shared,
-        status: 'partial',
-        sync_part: handover ? 'formations' : 'info',
+        status: list.complete ? 'synced' : 'partial',
+        sync_part: 'info',
         hh_next_page: nextPage,
-        fm_next_page: 1,
         members_saved: members.length,
         households_saved: households,
-        status_detail: describe({ part, saved: members.length, households, pagesRead: list.pagesRead, skipped, issues: [], stopReason: list.stopReason, more, nextPage, handover }),
+        status_detail: describe({ part, saved: members.length, households, pagesRead: list.pagesRead, skipped, issues: [], stopReason: list.stopReason, more, nextPage }),
       };
     } else {
       // The list is read again on the way, so member info is refreshed too.
@@ -149,7 +147,7 @@ export const POST = route(async (request) => {
       record = {
         ...shared,
         status: list.complete ? 'synced' : 'partial',
-        sync_part: list.complete ? 'info' : 'formations',
+        sync_part: 'formations',
         fm_next_page: nextPage,
         formations_saved: pfoRows.length,
         status_detail: describe({ part, formations: pfoRows.length, pagesRead: list.pagesRead, skipped, issues, stopReason: list.stopReason, more, nextPage }),
@@ -165,12 +163,11 @@ export const POST = route(async (request) => {
     );
   if (error) throw error;
 
-  const nextPart = record.sync_part ?? part;
   return {
     status: record.status,
     more,
-    part: nextPart,
-    nextPage: (nextPart === 'info' ? record.hh_next_page : record.fm_next_page) ?? startPage,
+    part,
+    nextPage: (part === 'info' ? record.hh_next_page : record.fm_next_page) ?? startPage,
     failureCode: record.failure_code,
     statusDetail: record.status_detail,
   };
