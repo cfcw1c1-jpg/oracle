@@ -23,7 +23,7 @@ const now = ref(new Date());
 const members = ref([]);
 const pfoRows = ref([]);
 const clpTrainings = ref([]);
-const gospel = reactive({ loading: true, error: null, liturgicalDay: '', citation: '', text: '', attribution: '' });
+const gospel = reactive({ loading: true, error: null, liturgicalDay: '', citation: '', text: '', attribution: '', sourceUrl: '' });
 
 const user = computed(() => sessionState.session?.user);
 const email = computed(() => user.value?.email || 'Portal Administrator');
@@ -132,13 +132,29 @@ async function fetchFeed(dateText, type, content) {
   return response.text();
 }
 
+// English reading straight from Evangelizo, used when the Tagalog one fails.
+async function loadEnglishGospel(dateText) {
+  const [liturgic, citation, reading] = await Promise.all([fetchFeed(dateText, 'liturgic_t'), fetchFeed(dateText, 'reading_st', 'GSP'), fetchFeed(dateText, 'reading', 'GSP')]);
+  const { body, attribution } = parseGospel(reading);
+  return { liturgicalDay: cleanFeedText(liturgic).trim(), citation: cleanFeedText(citation).replace(/\s+/g, ' ').trim(), text: body, attribution, sourceUrl: '' };
+}
+
+// Tagalog (Magandang Balita Biblia) through /api/gospel; English if that fails.
 async function loadGospel() {
+  const today = new Date();
+  const dateText = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
   try {
-    const today = new Date();
-    const dateText = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
-    const [liturgic, citation, reading] = await Promise.all([fetchFeed(dateText, 'liturgic_t'), fetchFeed(dateText, 'reading_st', 'GSP'), fetchFeed(dateText, 'reading', 'GSP')]);
-    const { body, attribution } = parseGospel(reading);
-    Object.assign(gospel, { loading: false, liturgicalDay: cleanFeedText(liturgic).trim(), citation: cleanFeedText(citation).replace(/\s+/g, ' ').trim(), text: body, attribution });
+    let reading;
+    try {
+      const response = await fetch(`/api/gospel?date=${dateText}`);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.text) throw new Error(body.error || `Gospel request failed (${response.status})`);
+      reading = body;
+    } catch (error) {
+      console.warn('Tagalog Gospel unavailable, showing English:', error.message);
+      reading = await loadEnglishGospel(dateText);
+    }
+    Object.assign(gospel, { loading: false, ...reading });
   } catch (error) {
     console.error('Error loading Gospel of the Day:', error.message);
     Object.assign(gospel, { loading: false, error: "Unable to load today's Gospel reading." });
@@ -184,7 +200,10 @@ onBeforeUnmount(() => clearInterval(clockTimer));
       <p v-else-if="gospel.error" class="muted small">{{ gospel.error }}</p>
       <template v-else>
         <p class="gospel">{{ gospel.text }}</p>
-        <p v-if="gospel.attribution" class="muted tiny">{{ gospel.attribution }}</p>
+        <p v-if="gospel.attribution" class="muted tiny">
+          {{ gospel.attribution }}
+          <a v-if="gospel.sourceUrl" :href="gospel.sourceUrl" target="_blank" rel="noopener">Mula sa Bible Gateway</a>
+        </p>
       </template>
     </article>
 
