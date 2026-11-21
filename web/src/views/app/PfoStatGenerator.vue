@@ -267,7 +267,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
       <article v-for="stage in stageResults" :key="stage.key" class="card card-pad stack" :style="{ '--stage': stage.color }">
         <div>
           <h2 class="card-title row"><span class="stage-dot" />{{ stage.label }}</h2>
-          <p class="muted small stage-scope">{{ stage.maxYear ? `Members registered ${stage.maxYear} and earlier` : stage.key === 'firstYear' ? 'All members' : 'All members, by role where noted' }}</p>
+          <p class="muted small stage-scope">{{ stage.maxYear ? `Active members registered ${stage.maxYear} and earlier` : stage.key === 'firstYear' ? 'All active members' : 'Active members, by role where noted' }}</p>
         </div>
         <component
           :is="track.tracked ? 'button' : 'div'"
@@ -378,7 +378,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
     <AppModal
       v-if="pendingTrack"
       :title="`Not yet finished: ${pendingTrack.name}`"
-      :subtitle="`${pendingMembers.length} of ${pendingTrack.total} ${pendingTrack.roles ? trackRolesLabel(pendingTrack) : 'members'}${pendingTrack.maxYear ? ` registered ${pendingTrack.maxYear} and earlier` : ''} · Area: ${areaFilter}`"
+      :subtitle="`${pendingMembers.length} of ${pendingTrack.total} active ${pendingTrack.roles ? trackRolesLabel(pendingTrack) : 'members'}${pendingTrack.maxYear ? ` registered ${pendingTrack.maxYear} and earlier` : ''} · Area: ${areaFilter}`"
       :width="620"
       @close="pendingTrack = null"
     >
