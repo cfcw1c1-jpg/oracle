@@ -243,9 +243,10 @@ export const FORMATION_STAGES = [
     marker: '🟥',
     color: '#ef4444',
     tracks: [
-      { code: 'HLT', name: 'Household Leaders Training', group: 'Household Leaders Training' },
-      { code: 'ULT', name: 'Unit Leaders Training', group: 'Unit Leaders Training' },
-      { code: 'CLT', name: 'Chapter Leaders Training', group: 'Chapter Leaders Training' },
+      // Leader trainings count only the members serving at that level.
+      { code: 'HLT', name: 'Household Leaders Training', group: 'Household Leaders Training', roles: ['HH', 'HHL', 'FMHH', 'FMHHL'] },
+      { code: 'ULT', name: 'Unit Leaders Training', group: 'Unit Leaders Training', roles: ['UH', 'UL'] },
+      { code: 'CLT', name: 'Chapter Leaders Training', group: 'Chapter Leaders Training', roles: ['CH', 'CL'] },
       { code: 'MCR', name: 'Mission Core Retreat', group: 'Mission Core Retreats' },
       { code: 'STW', name: 'Speakers Training Workshop', group: 'Speakers Training Workshops' },
     ],
@@ -276,12 +277,22 @@ export function getRoleLabel(code) {
 }
 
 // A track is complete for a member only when every column in its group is Y.
-export function computeTrackStat(track, pfoRows, totalMembers) {
+// members: the active members in scope. A track with roles (HLT, ULT, CLT)
+// counts only members with those roles, on both sides of the percentage.
+// pfoRows carry the member's role as row.members.PastoralService.
+export function computeTrackStat(track, pfoRows, members) {
   if (!track.group) return { tracked: false };
+  const inTrack = (role) => !track.roles || track.roles.includes(normalizeRole(role));
+  const eligible = members.filter((member) => inTrack(member.PastoralService));
+  const rows = pfoRows.filter((row) => inTrack(row.members?.PastoralService));
   const columnIds = COLUMN_IDS_BY_GROUP[track.group] || [];
-  const completedCount = pfoRows.filter((row) => columnIds.length > 0 && columnIds.every((id) => row[id] === 'Y' || row[id] === 'y')).length;
-  return { tracked: true, completedCount, percent: totalMembers > 0 ? (completedCount / totalMembers) * 100 : 0 };
+  const completedCount = rows.filter((row) => columnIds.length > 0 && columnIds.every((id) => row[id] === 'Y' || row[id] === 'y')).length;
+  const total = eligible.length;
+  return { tracked: true, completedCount, total, percent: total > 0 ? (completedCount / total) * 100 : 0 };
 }
+
+// "Household Head, Household Leader, …" for a track limited to roles.
+export const trackRolesLabel = (track) => (track.roles ? track.roles.map((code) => ROLE_LABELS[code] || code).join(', ') : '');
 
 export function buildStageInsight(percentages) {
   if (percentages.length === 0) return 'No trackable modules in this stage yet.';

@@ -6,7 +6,7 @@ import MultiSelect from '@/components/MultiSelect.vue';
 import PageHead from '@/components/PageHead.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { confirmAction, downloadBlob, fetchAllRows, isActiveStatus, showAlert } from '@/lib/data';
-import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT } from '@/lib/formation';
+import { buildStageInsight, computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT, trackRolesLabel } from '@/lib/formation';
 import { supabase } from '@/lib/supabase';
 
 const SNAPSHOT_COLUMNS = 'id, created_at, created_by_email, note, area_filter, role_filter, total_members, track_results';
@@ -43,7 +43,7 @@ const activePfoRows = computed(() => pfoRows.value.filter((row) => isActiveStatu
 const denominatorLabel = computed(() => (selectedRoles.value.length ? `Total Active Members (${selectedRoles.value.map(getRoleLabel).join(', ')})` : 'Total Active Members'));
 
 const stageResults = computed(() => FORMATION_STAGES.map((stage) => {
-  const trackResults = stage.tracks.map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, totalActive.value) }));
+  const trackResults = stage.tracks.map((track) => ({ ...track, ...computeTrackStat(track, activePfoRows.value, activeMembers.value) }));
   return { ...stage, trackResults, insight: buildStageInsight(trackResults.filter((track) => track.tracked).map((track) => track.percent)) };
 }));
 
@@ -108,7 +108,7 @@ async function saveSnapshot() {
       total_members: totalActive.value,
       track_results: stageResults.value.flatMap((stage) => stage.trackResults.map((track) => ({
         stageKey: stage.key, stageLabel: stage.label, code: track.code, name: track.name, tracked: track.tracked,
-        completedCount: track.tracked ? track.completedCount : null, percent: track.tracked ? track.percent : null,
+        completedCount: track.tracked ? track.completedCount : null, total: track.tracked ? track.total : null, percent: track.tracked ? track.percent : null,
       }))),
     }]);
     if (error) throw error;
@@ -142,7 +142,7 @@ function exportReport() {
     lines.push(`${stage.marker} ${stage.label}:`, '');
     stage.trackResults.forEach((track, index) => {
       const prefix = `${index + 1}. ${track.name} (${track.code})`;
-      lines.push(track.tracked ? `${prefix}: ${track.completedCount} / ${totalActive.value} → ${track.percent.toFixed(1)}%` : `${prefix}: Not tracked in current data`);
+      lines.push(track.tracked ? `${prefix}: ${track.completedCount} / ${track.total} → ${track.percent.toFixed(1)}%` : `${prefix}: Not tracked in current data`);
     });
     lines.push('', `Insight: ${stage.insight}`, '');
   });
@@ -194,10 +194,10 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         <div v-for="track in stage.trackResults" :key="track.code" class="track">
           <div class="grow">
             <p class="strong">{{ track.name }}</p>
-            <p class="muted small">{{ track.code }}</p>
+            <p class="muted small">{{ track.code }}<template v-if="track.roles"> · {{ trackRolesLabel(track) }} only</template></p>
           </div>
           <div v-if="track.tracked" class="track-stat">
-            <span class="muted small">{{ track.completedCount }} / {{ totalActive }}</span>
+            <span class="muted small">{{ track.completedCount }} / {{ track.total }}</span>
             <strong class="track-pct">{{ track.percent.toFixed(1) }}%</strong>
             <span v-if="deltaFor(track) !== null" class="small" :class="deltaFor(track) > 0.05 ? 'text-success' : deltaFor(track) < -0.05 ? 'text-danger' : 'muted'">{{ deltaLabel(deltaFor(track)) }}</span>
           </div>
@@ -232,7 +232,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
         <ul v-if="expandedId === snapshot.id" class="snap-detail">
           <li v-for="track in snapshot.track_results || []" :key="track.code">
             <span class="clamp grow">{{ track.name }} ({{ track.code }})</span>
-            <span class="muted nowrap">{{ track.tracked ? `${track.completedCount} / ${snapshot.total_members} · ${track.percent.toFixed(1)}%` : 'Not tracked' }}</span>
+            <span class="muted nowrap">{{ track.tracked ? `${track.completedCount} / ${track.total ?? snapshot.total_members} · ${track.percent.toFixed(1)}%` : 'Not tracked' }}</span>
           </li>
         </ul>
       </div>
