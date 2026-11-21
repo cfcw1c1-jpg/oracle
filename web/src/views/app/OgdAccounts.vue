@@ -64,12 +64,11 @@ function setupLabel(row) {
 
 const columns = computed(() => [
   // Sector, chapter and the account in one cell; sorted by sector, then chapter.
-  { key: 'chapter', label: 'Chapter', value: (row) => `${row.sector ?? ''} ${row.chapter}` },
+  { key: 'chapter', label: 'Chapter', value: (row) => `${row.sector ?? ''} ${row.chapter}`, width: '30%' },
   { key: 'setup', label: 'Setup', value: setupLabel },
-  { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label },
-  { key: 'lastAttemptAt', label: 'Last Attempt' },
-  { key: 'memberSync', label: 'Last Sync', value: (row) => row.memberSync?.syncedAt ?? '' },
-  { key: 'actions', label: 'Actions', action: true },
+  { key: 'status', label: 'OGD Status', value: (row) => STATUS[row.status].label, width: '190px' },
+  { key: 'memberSync', label: 'Last Sync', value: (row) => row.memberSync?.syncedAt ?? '', width: '210px' },
+  { key: 'actions', label: 'Actions', action: true, width: '316px' },
 ]);
 
 const visibleRows = computed(() => {
@@ -297,12 +296,6 @@ function trackEta(row) {
   etaText.value = { ...etaText.value, [row.areaId]: estimateTimeLeft(stats, progress) };
 }
 
-function timeLeftLabel(row) {
-  const text = etaText.value[row.areaId];
-  if (!text) return syncingIds.value.has(row.areaId) ? 'Working out the time left…' : '';
-  return `${text[0].toUpperCase()}${text.slice(1)} for ${SYNC_PARTS[currentPart(row)]}.`;
-}
-
 function setSyncing(areaId, isSyncing) {
   const next = new Set(syncingIds.value);
   if (isSyncing) next.add(areaId);
@@ -320,6 +313,26 @@ const SYNC_PARTS = { info: 'Members', formations: 'Formations' };
 
 function currentPart(row) {
   return syncingParts.value[row.areaId] ?? row.memberSync?.progress?.part ?? row.memberSync?.part ?? 'info';
+}
+
+// The pill's tooltip carries the detail the cell no longer shows.
+function loginDetail(row) {
+  if (row.status === 'failed') return [FAILURE_MESSAGES[row.failureCode], row.statusDetail].filter(Boolean).join(' ');
+  return row.statusDetail ?? '';
+}
+
+function syncPill(sync) {
+  if (sync.background?.stalled) return { label: 'Sync stopped', tone: 'danger' };
+  return SYNC_STATUS[sync.status];
+}
+
+function syncDetail(sync) {
+  const parts = [];
+  if (sync.background?.stalled) parts.push(`The background ${SYNC_PARTS[sync.background.part] ?? ''} sync stopped unexpectedly. Start it again to continue.`);
+  if (sync.status === 'failed' && FAILURE_MESSAGES[sync.failureCode]) parts.push(FAILURE_MESSAGES[sync.failureCode]);
+  if (sync.statusDetail) parts.push(sync.statusDetail);
+  parts.push(...resumeNotes(sync));
+  return parts.join(' ');
 }
 
 // "Members continues from page 4" for each sync that stopped part-way.
@@ -617,13 +630,11 @@ onBeforeUnmount(() => {
         </template>
         <template #cell-status="{ row }">
           <div class="status">
-            <span class="pill" :class="STATUS[row.status].tone">{{ STATUS[row.status].label }}</span>
-            <p v-if="row.status === 'failed' && FAILURE_MESSAGES[row.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.failureCode] }}</p>
-            <p v-if="row.statusDetail" class="muted tiny">{{ row.statusDetail }}</p>
-            <p v-if="row.lastSuccessAt" class="muted tiny">Last success: {{ formatDateTime(row.lastSuccessAt) }}</p>
+            <span class="pill" :class="STATUS[row.status].tone" :title="loginDetail(row)">{{ STATUS[row.status].label }}</span>
+            <p class="muted tiny">Updated: {{ formatDateTime(row.lastAttemptAt) }}</p>
+            <p class="muted tiny">Success: {{ formatDateTime(row.lastSuccessAt) }}</p>
           </div>
         </template>
-        <template #cell-lastAttemptAt="{ value }"><span class="nowrap">{{ formatDateTime(value) }}</span></template>
         <template #cell-memberSync="{ row }">
           <div class="status">
             <template v-if="syncingIds.has(row.areaId)">
@@ -639,32 +650,29 @@ onBeforeUnmount(() => {
               >
                 <div class="progress-fill" :style="{ width: `${progressPercent(row.memberSync?.progress) ?? 35}%` }" />
               </div>
-              <p class="muted tiny">{{ progressLabel(row) }}</p>
-              <p class="tiny strong-ish" aria-live="polite">{{ timeLeftLabel(row) }}</p>
-              <p class="muted tiny">Runs in the background. You can close this page.</p>
+              <p class="muted tiny" aria-live="polite">{{ progressLabel(row) }}{{ etaText[row.areaId] ? ` · ${etaText[row.areaId]}` : '' }}</p>
             </template>
             <template v-else-if="row.memberSync">
-              <span class="pill" :class="SYNC_STATUS[row.memberSync.status].tone">{{ SYNC_STATUS[row.memberSync.status].label }}</span>
-              <p v-if="row.memberSync.background?.stalled" class="small text-danger">The background {{ SYNC_PARTS[row.memberSync.background.part] ?? '' }} sync stopped unexpectedly. Start it again to continue.</p>
-              <p v-if="row.memberSync.status === 'failed' && FAILURE_MESSAGES[row.memberSync.failureCode]" class="small text-danger">{{ FAILURE_MESSAGES[row.memberSync.failureCode] }}</p>
-              <p v-if="row.memberSync.statusDetail" class="muted tiny">{{ row.memberSync.statusDetail }}</p>
-              <p v-for="note in resumeNotes(row.memberSync)" :key="note" class="muted tiny">{{ note }}</p>
-              <p class="muted tiny">{{ formatDateTime(row.memberSync.syncedAt) }}</p>
+              <span class="pill" :class="syncPill(row.memberSync).tone" :title="syncDetail(row.memberSync)">{{ syncPill(row.memberSync).label }}</span>
+              <p class="muted tiny">Updated: {{ formatDateTime(row.memberSync.syncedAt) }}</p>
             </template>
-            <span v-else class="muted small">Never synced</span>
+            <span v-else class="pill">Never synced</span>
           </div>
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
             <button class="btn btn-sm" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
-            <span v-if="testingIds.has(row.areaId) || syncingIds.has(row.areaId) || pushingIds.has(row.areaId)" class="spinner sm" role="status" :aria-label="pushingIds.has(row.areaId) ? 'Pushing to OGD' : 'Working'" />
-            <span v-if="pushingIds.has(row.areaId)" class="muted small" aria-live="polite">{{ pushStatus(row) }}</span>
-            <button v-else-if="syncingIds.has(row.areaId) && !startingIds.has(row.areaId)" class="btn btn-sm btn-danger" :disabled="stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop' }}</button>
-            <template v-else-if="row.ownConfigured && row.otherConfigured && row.status !== 'running' && !testingIds.has(row.areaId) && !syncingIds.has(row.areaId)">
-              <button class="btn btn-sm" @click="testLogin(row)"><LogIn :size="13" />Test Login</button>
-              <button class="btn btn-sm" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
-              <button class="btn btn-sm" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
-              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="btn btn-sm btn-primary" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
+            <template v-if="pushingIds.has(row.areaId)">
+              <span class="span-2 push-status muted small" aria-live="polite"><span class="spinner sm" role="status" aria-label="Pushing to OGD" />{{ pushStatus(row) }}</span>
+            </template>
+            <template v-else-if="syncingIds.has(row.areaId)">
+              <button class="btn btn-sm btn-danger" :disabled="startingIds.has(row.areaId) || stoppingIds.has(row.areaId)" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Stopping…' : 'Stop Sync' }}</button>
+            </template>
+            <template v-else-if="row.ownConfigured && row.otherConfigured">
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="testLogin(row)"><LogIn :size="13" />{{ testingIds.has(row.areaId) ? 'Testing…' : 'Test Login' }}</button>
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
+              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="btn btn-sm btn-primary span-2" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
             </template>
           </div>
         </template>
@@ -727,15 +735,19 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.chapter-cell { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 150px; }
+.chapter-cell { display: flex; flex-direction: column; gap: 2px; text-align: left; min-width: 220px; }
 .chapter-cell .account { word-break: break-all; }
-.row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 220px; }
+.row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: min(288px, 100%); }
+.row-actions .btn { width: 100%; justify-content: flex-start; }
+.row-actions .span-2 { grid-column: 1 / -1; }
+.push-status { display: inline-flex; align-items: center; gap: 6px; }
 .guide { background: var(--accent-soft); box-shadow: none; }
 .guide-head { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 16px; border: 0; background: none; font-size: 13.5px; font-weight: var(--fw-heading); text-align: left; }
 .guide-body { padding: 0 16px 14px; font-size: 13px; color: var(--ink-2); display: grid; gap: 8px; }
 ol, ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 .guide-body a { display: block; font-weight: var(--fw-medium); }
-.status { text-align: left; min-width: 150px; }
+.status { text-align: left; min-width: 160px; }
+.status p { margin: 3px 0 0; }
 .tiny { font-size: 11px; margin-top: 2px; }
 .strong-ish { color: var(--ink-2); font-weight: var(--fw-medium); }
 .progress { position: relative; height: 6px; margin-top: 6px; border-radius: 999px; background: var(--accent-soft); overflow: hidden; min-width: 140px; }
