@@ -67,7 +67,7 @@ function deltaLabel(delta) {
   return `${delta > 0.05 ? '▲' : delta < -0.05 ? '▼' : '—'} ${Math.abs(delta).toFixed(1)}%`;
 }
 
-// ---------- Leaders Track: who has not finished a training yet ----------
+// ---------- Any tracked training: who has not finished it yet ----------
 const pendingTrack = ref(null);
 const pendingSearch = ref('');
 const pendingMembers = computed(() => (pendingTrack.value ? trackPendingMembers(pendingTrack.value, activeMembers.value, activePfoRows.value) : []));
@@ -218,13 +218,13 @@ watch(areaFilter, loadSnapshots, { immediate: true });
       <article v-for="stage in stageResults" :key="stage.key" class="card card-pad stack" :style="{ '--stage': stage.color }">
         <h2 class="card-title row"><span class="stage-dot" />{{ stage.label }}</h2>
         <component
-          :is="stage.key === 'leadersTrack' && track.tracked ? 'button' : 'div'"
+          :is="track.tracked ? 'button' : 'div'"
           v-for="track in stage.trackResults"
           :key="track.code"
           class="track"
-          :class="{ 'track-link': stage.key === 'leadersTrack' && track.tracked }"
-          :aria-label="stage.key === 'leadersTrack' && track.tracked ? `Show members who have not finished ${track.name}` : undefined"
-          @click="stage.key === 'leadersTrack' && track.tracked && openPending(track)"
+          :class="{ 'track-link': track.tracked }"
+          :aria-label="track.tracked ? `Show members who have not finished ${track.name}` : undefined"
+          @click="track.tracked && openPending(track)"
         >
           <div class="grow">
             <p class="strong">{{ track.name }}</p>
@@ -236,7 +236,7 @@ watch(areaFilter, loadSnapshots, { immediate: true });
             <span v-if="deltaFor(track) !== null" class="small" :class="deltaFor(track) > 0.05 ? 'text-success' : deltaFor(track) < -0.05 ? 'text-danger' : 'muted'">{{ deltaLabel(deltaFor(track)) }}</span>
           </div>
           <span v-else class="pill">Not Tracked</span>
-          <ChevronRight v-if="stage.key === 'leadersTrack' && track.tracked" :size="16" class="muted track-chevron" />
+          <ChevronRight v-if="track.tracked" :size="16" class="muted track-chevron" />
         </component>
         <p class="insight"><Info :size="14" />{{ stage.insight }}</p>
       </article>
