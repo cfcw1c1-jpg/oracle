@@ -2,6 +2,7 @@
 import { Eye, LayoutGrid, RefreshCw, Trophy } from 'lucide-vue-next';
 import { computed, onMounted, ref } from 'vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
+import ServicesGrid from '@/components/ServicesGrid.vue';
 import PageHead from '@/components/PageHead.vue';
 import StatCard from '@/components/StatCard.vue';
 import { showAlert } from '@/lib/data';
@@ -65,6 +66,8 @@ onMounted(loadData);
     <PageHead title="Admin Dashboard" subtitle="Page popularity across the portal, admin-only.">
       <button class="btn" @click="loadData"><RefreshCw :size="14" />Refresh</button>
     </PageHead>
+
+    <ServicesGrid />
 
     <section class="grid grid-4">
       <StatCard label="Total Page Views" :value="totalViews" :icon="Eye" />

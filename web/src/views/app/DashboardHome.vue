@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import DonutChart from '@/components/DonutChart.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
+import ServicesGrid from '@/components/ServicesGrid.vue';
 import StatCard from '@/components/StatCard.vue';
 import { fetchAllRows, isActiveStatus } from '@/lib/data';
 import { computeTrackStat, FORMATION_STAGES, getRoleLabel, normalizeRole, PFO_TRAINING_SELECT } from '@/lib/formation';
@@ -184,6 +185,8 @@ onBeforeUnmount(() => clearInterval(clockTimer));
         <p v-if="gospel.attribution" class="muted tiny">{{ gospel.attribution }}</p>
       </template>
     </article>
+
+    <ServicesGrid />
 
     <section class="grid dash-stats">
       <StatCard label="Total Active Members" :value="totalMembers" :icon="Users" />

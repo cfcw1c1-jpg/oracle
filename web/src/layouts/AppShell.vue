@@ -6,7 +6,7 @@ import AppModal from '@/components/AppModal.vue';
 import CreditFooter from '@/components/CreditFooter.vue';
 import OgdStatus from '@/components/OgdStatus.vue';
 import { useIsWide } from '@/composables/useIsWide';
-import { mobileTabsForRole, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
+import { mobileTabsFor, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
 import { canView, isOgdRole, loadAccess, logPageView, sessionState, signOut } from '@/stores/session';
 
 const MODERATOR_EMAILS = ['jamesryanpatiag@gmail.com', 'markjosephreyes1513@gmail.com', 'bryanmunoz28@yahoo.com', 'bentiung02421@gmail.com'];
@@ -29,7 +29,6 @@ const route = useRoute();
 const router = useRouter();
 const isWide = useIsWide();
 const isCollapsed = ref(false);
-const openGroupKey = ref(null);
 const pageSearch = ref('');
 const previousTab = ref('home');
 
@@ -112,7 +111,6 @@ const screenProps = computed(() => {
 });
 
 function selectTab(tab) {
-  openGroupKey.value = null;
   pageSearch.value = '';
   router.push(`/${tab}`);
 }
@@ -131,18 +129,12 @@ function goToFirstMatch() {
   if (pageMatches.value[0]) selectTab(pageMatches.value[0].key);
 }
 
-const mobileTabs = computed(() => mobileTabsForRole(roleName.value)
-  .map((tab) => (tab.children ? { ...tab, children: tab.children.filter((child) => canView(child.key)) } : tab))
-  .filter((tab) => (tab.children ? tab.children.length > 0 : canView(tab.key))));
-const openGroup = computed(() => mobileTabs.value.find((tab) => tab.key === openGroupKey.value));
+const mobileTabs = computed(() => mobileTabsFor(roleName.value, canView));
 
-function isTabActive(tab) {
-  return tab.children ? tab.children.some((child) => child.key === currentTab.value) : currentTab.value === tab.key;
-}
-
-function pressMobileTab(tab) {
-  if (tab.children?.length > 1) openGroupKey.value = tab.key;
-  else selectTab(tab.children ? tab.children[0].key : tab.key);
+// Pages opened from the dashboard's Services grid keep the Dashboard tab lit.
+function isTabActive(tab, index) {
+  if (currentTab.value === tab.key) return true;
+  return index === 0 && !mobileTabs.value.some((other) => other.key === currentTab.value);
 }
 
 function openToast() {
@@ -286,11 +278,8 @@ function openMessagesFromDisclaimer() {
 
     <template v-if="!isWide && currentTab !== 'messages'">
       <nav class="bottom" aria-label="Main">
-        <button v-for="tab in mobileTabs" :key="tab.key" class="bottom-item" :class="{ on: isTabActive(tab) }" @click="pressMobileTab(tab)">
-          <span class="bottom-icon">
-            <component :is="tab.icon" :size="22" />
-            <span v-if="badgeCounts[tab.badgeKey]" class="badge">{{ badgeCounts[tab.badgeKey] > 9 ? '9+' : badgeCounts[tab.badgeKey] }}</span>
-          </span>
+        <button v-for="(tab, index) in mobileTabs" :key="tab.key" class="bottom-item" :class="{ on: isTabActive(tab, index) }" :aria-current="currentTab === tab.key ? 'page' : undefined" @click="selectTab(tab.key)">
+          <span class="bottom-icon"><component :is="tab.icon" :size="22" /></span>
           <span class="clamp">{{ tab.label }}</span>
         </button>
       </nav>
@@ -299,16 +288,6 @@ function openMessagesFromDisclaimer() {
         <span v-if="sessionState.unreadMessages" class="badge">{{ sessionState.unreadMessages > 9 ? '9+' : sessionState.unreadMessages }}</span>
       </button>
     </template>
-
-    <div v-if="openGroup" class="sheet-back" @click.self="openGroupKey = null">
-      <section class="sheet">
-        <p class="sheet-title">{{ openGroup.label }}</p>
-        <button v-for="child in openGroup.children" :key="child.key" class="sheet-item" :class="{ on: currentTab === child.key }" @click="selectTab(child.key)">
-          <component :is="child.icon" :size="17" />{{ child.label }}
-        </button>
-        <button class="sheet-cancel" @click="openGroupKey = null">Cancel</button>
-      </section>
-    </div>
 
     <div v-if="sessionState.messageToast" class="toast" role="status">
       <button class="toast-open" @click="openToast">
@@ -439,10 +418,9 @@ function openMessagesFromDisclaimer() {
 @keyframes side-drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(10%, 8%) scale(1.15); } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-10px) scale(0.97); } to { opacity: 1; transform: none; } }
-@keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .side-decor .blob, .top-results, .toast, .sheet, .sheet-back { animation: none; }
+  .side-decor .blob, .top-results, .toast { animation: none; }
 }
 
 /* ---------- Phone: glowing navy header, floating glass tab bar ---------- */
@@ -491,13 +469,5 @@ function openMessagesFromDisclaimer() {
   .fab:active { transform: scale(0.94); }
   .fab.tucked { transform: translateY(24px) scale(0.6); opacity: 0; pointer-events: none; }
   .fab .badge { top: -5px; right: -5px; min-width: 20px; height: 20px; font-size: 11px; border: 2px solid #fff; }
-  .sheet-back { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; background: rgba(0, 19, 61, 0.45); backdrop-filter: blur(2px); animation: fade-in 0.2s ease both; }
-  .sheet { width: 100%; background: #fff; border-radius: 26px 26px 0 0; padding: 10px 8px calc(24px + env(safe-area-inset-bottom)); animation: sheet-up 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-  .sheet::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 4px; background: #e2e8f0; margin: 0 auto 12px; }
-  .sheet-title { font-size: 11px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; padding: 0 14px; margin-bottom: 8px; }
-  .sheet-item { width: calc(100% - 12px); margin: 0 6px; display: flex; align-items: center; gap: 12px; border: 0; background: none; border-radius: 14px; padding: 13px 14px; font-size: 15px; font-weight: var(--fw-medium); color: #334155; text-align: left; transition: background 0.15s; }
-  .sheet-item:active { background: #f1f5f9; }
-  .sheet-item.on { background: linear-gradient(120deg, rgba(0, 32, 96, 0.08), rgba(59, 111, 216, 0.12)); color: var(--navy); font-weight: 700; }
-  .sheet-cancel { width: calc(100% - 12px); margin: 6px 6px 0; border: 0; background: #f1f5f9; border-radius: 14px; padding: 13px; font-size: 14px; font-weight: 700; color: #64748b; }
 }
 </style>
