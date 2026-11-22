@@ -64,6 +64,10 @@ export const FAILURE_MESSAGES = {
   run_interrupted: 'The last login did not finish. Please try again.',
   automation_error: 'The automated browser hit an error.',
   report_page_unexpected: 'Signed in, but could not read the Pastoral Report page.',
+  activities_page_unexpected: 'Signed in, but could not read the Activities page in OGD.',
+  activity_form_unexpected: 'Signed in, but could not fill in OGD\'s New Activity form. Nothing was saved in OGD.',
+  activity_save_failed: 'OGD did not save the new activity.',
+  activity_attendees_unexpected: 'Signed in, but could not add every attendee in OGD.',
 };
 
 export function formatDateTime(value) {

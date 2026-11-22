@@ -278,6 +278,79 @@ function readAttendeeTable(frame) {
   });
 }
 
+// Shows as many attendee rows per page as the list allows ("Show 10 entries"
+// lists and page-size dropdowns). Returns true when it changed something.
+function widenAttendeeTable(frame) {
+  return frame.evaluate(() => {
+    const selects = [...document.querySelectorAll('select')].filter((select) => select.getClientRects().length > 0
+      && (/_length$|pagesize|page_size|rows|perpage|per_page/i.test(`${select.name} ${select.id}`) || select.closest('.dataTables_length, .dt-length'))
+      && [...select.options].every((option) => /^(-1|\d+|all)$/i.test(option.value.trim()) || /^(\d+|all)$/i.test(option.text.trim())));
+    let changed = false;
+    for (const select of selects) {
+      const best = [...select.options].reduce((top, option) => {
+        const size = option.value.trim() === '-1' || /all/i.test(option.text) ? Infinity : Number(option.value || option.text);
+        return size > top.size ? { option, size } : top;
+      }, { option: null, size: -Infinity });
+      if (best.option && select.value !== best.option.value) {
+        select.value = best.option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        changed = true;
+      }
+    }
+    return changed;
+  });
+}
+
+// Moves an attendee list to its next page: a DataTables-style Next button,
+// else the ASP.NET GridView pager.
+async function nextAttendeePage(frame) {
+  const clicked = await frame.evaluate(() => {
+    const next = [...document.querySelectorAll('.paginate_button.next, .dt-paging-button.next, li.next > a, a[aria-label="Next"], button[aria-label="Next"]')]
+      .find((el) => el.getClientRects().length > 0);
+    if (!next) return null;
+    if (/disabled/.test(next.className) || next.closest('.disabled') || next.getAttribute('aria-disabled') === 'true' || next.disabled) return false;
+    next.click();
+    return true;
+  }).catch(() => null);
+  if (clicked !== null) return clicked;
+  return (await pagerAction(frame, 'next').catch(() => ({ moved: false }))).moved;
+}
+
+const MAX_ATTENDEE_LIST_PAGES = 50;
+const recordsKey = (table) => JSON.stringify(table?.records ?? []);
+
+// The whole attendee list across all its pages. A frame that also holds the
+// Activities list is read one page only, so its pager is never touched.
+async function readAllAttendees(frame) {
+  let table = await readAttendeeTable(frame);
+  if (!table) return null;
+  if (await readActivitiesTable(frame).catch(() => null)) return table;
+  const page = frame.page();
+  const waitForChange = async (before) => {
+    for (let wait = 0; wait < 30; wait += 1) {
+      await page.waitForTimeout(POLL_MS);
+      const now = await readAttendeeTable(frame).catch(() => null);
+      if (now && recordsKey(now) !== before) return now;
+    }
+    return null;
+  };
+  if (await widenAttendeeTable(frame).catch(() => false)) table = await waitForChange(recordsKey(table)) ?? table;
+  const seen = new Set(table.records.map((cells) => cells.join('|')));
+  const records = [...table.records];
+  let pages = 1;
+  for (; pages < MAX_ATTENDEE_LIST_PAGES; pages += 1) {
+    const before = recordsKey(await readAttendeeTable(frame).catch(() => null));
+    if (!(await nextAttendeePage(frame))) break;
+    const next = await waitForChange(before);
+    if (!next) break;
+    const fresh = next.records.filter((cells) => !seen.has(cells.join('|')));
+    if (!fresh.length) break;
+    fresh.forEach((cells) => seen.add(cells.join('|')));
+    records.push(...fresh);
+  }
+  return { headers: table.headers, records, pages };
+}
+
 function isRealHref(href) {
   return Boolean(href) && !/^(javascript:|#)/i.test(href);
 }
@@ -406,7 +479,7 @@ export function createActivitiesSync({ from, to, deadline }) {
 
           const row = list.table.records.find((candidate) => candidate.cells.join('|') === record.cells.join('|')) ?? record;
           if (row.hasAttendanceLink) {
-            const opened = await openAndRead(page, list, row, 'attendance', readAttendeeTable).catch((error) => ({ result: null, error }));
+            const opened = await openAndRead(page, list, row, 'attendance', readAllAttendees).catch((error) => ({ result: null, error }));
             if (opened.result) activity.attendeeTable = opened.result;
             else notes.push(`${record.name}: attendees not found${opened.error ? ` (${String(opened.error.message).split('\n')[0].slice(0, 120)})` : ''}`);
             if (opened.lost) throw new Error('the Activities list did not come back after opening an attendance list');
@@ -416,7 +489,7 @@ export function createActivitiesSync({ from, to, deadline }) {
             const opened = await openAndRead(page, list, freshRow, 'name', async (frame) => {
               const details = await readDetailFields(frame, record.name);
               if (!details) return null;
-              const attendees = activity.attendeeTable ? null : await readAttendeeTable(frame).catch(() => null);
+              const attendees = activity.attendeeTable ? null : await readAllAttendees(frame).catch(() => null);
               return { ...details, attendees, url: frame.url() };
             }).catch((error) => ({ result: null, error }));
             if (opened.result) {
@@ -778,20 +851,24 @@ async function scanAllPages(page, targets) {
   if (best.every((entry) => STATE_RANK[entry.state] === 4)) return best;
   for (const frame of page.frames()) {
     if (!(await readAttendeeTable(frame).catch(() => null)) || await readActivitiesTable(frame).catch(() => null)) continue;
+    const merge = (states) => states?.forEach((state, index) => {
+      if (STATE_RANK[state] === 4 && STATE_RANK[best[index].state] < 4) best[index] = { state, frame: null };
+    });
+    if (await widenAttendeeTable(frame).catch(() => false)) {
+      await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
+      merge(await scanFrame(frame, targets).catch(() => null));
+      if (best.every((entry) => STATE_RANK[entry.state] === 4)) break;
+    }
     for (let pageNumber = 2; pageNumber <= MAX_ATTENDEE_PAGES; pageNumber += 1) {
       const before = JSON.stringify((await readAttendeeTable(frame).catch(() => null))?.records ?? []);
-      const { moved } = await pagerAction(frame, 'next').catch(() => ({ moved: false }));
-      if (!moved) break;
+      if (!(await nextAttendeePage(frame))) break;
       let changed = false;
       for (let wait = 0; wait < 20 && !changed; wait += 1) {
         await page.waitForTimeout(POLL_MS);
         changed = JSON.stringify((await readAttendeeTable(frame).catch(() => null))?.records ?? []) !== before;
       }
       if (!changed) break;
-      const states = await scanFrame(frame, targets).catch(() => null);
-      states?.forEach((state, index) => {
-        if (STATE_RANK[state] === 4 && STATE_RANK[best[index].state] < 4) best[index] = { state, frame: null };
-      });
+      merge(await scanFrame(frame, targets).catch(() => null));
       if (best.every((entry) => STATE_RANK[entry.state] === 4)) break;
     }
   }

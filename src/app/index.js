@@ -39,6 +39,7 @@ import MemberChangeQueue from '../screens/MemberChangeQueue';
 import MembersList from '../screens/MembersList';
 import Messages from '../screens/Messages';
 import MonthlyPastoralReports from '../screens/MonthlyPastoralReports';
+import Activities from '../screens/Activities';
 import MyChangeRequests from '../screens/MyChangeRequests';
 import { OgdAccountsPage } from '../screens/OgdConnections';
 import PfoList from '../screens/PfoList';
@@ -65,6 +66,7 @@ const NAV_ITEMS = [
   { key: 'ogdAccounts', label: 'OGD Accounts', icon: 'key-outline' },
   { key: 'ogdChapters', label: 'OGD Accounts', icon: 'key-outline' },
   { key: 'monthlyPastoralReports', label: 'Monthly Pastoral Reports', icon: 'document-text-outline' },
+  { key: 'activities', label: 'Activities', icon: 'calendar-outline' },
   { key: 'portalUsers', label: 'Portal Users', icon: 'people-circle-outline' },
   { key: 'logs', label: 'Logs', icon: 'file-tray-full-outline' },
   { key: 'settings', label: 'Settings', icon: 'settings-outline' },
@@ -961,6 +963,7 @@ export default function Page() {
             <OgdAccountsPage scopes={[canView('ogdAccounts') && 'accounts', canView('ogdChapters') && 'sector'].filter(Boolean)} />
           )}
           {effectiveTab === 'monthlyPastoralReports' && canView('monthlyPastoralReports') && <MonthlyPastoralReports />}
+          {effectiveTab === 'activities' && canView('activities') && <Activities />}
           {effectiveTab === 'portalUsers' && canView('portalUsers') && (
             <PortalUsers onAccessChanged={() => loadAccess(session.user.id)} />
           )}
