@@ -650,11 +650,23 @@ function snapshotForm(frame) {
       }
       return clean(el.getAttribute('placeholder') || el.name || el.id);
     };
+    // A Select2 search box (OGD's Team Leader) hides its real list beside it.
+    const select2Of = (el) => {
+      if (el.tagName !== 'SELECT') return null;
+      if (!el.matches('.select2-hidden-accessible, .select2-offscreen') && isShown(el)) return null;
+      const next = el.nextElementSibling;
+      if (next?.matches('.select2, .select2-container') && isShown(next)) return next;
+      const old = el.id && document.getElementById(`s2id_${el.id}`);
+      return old && isShown(old) ? old : null;
+    };
     const controls = [...root.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')]
-      .filter(isShown)
+      .filter((el) => !el.closest('.select2-container, .select2-drop, .select2-dropdown') && (select2Of(el) || isShown(el)))
       .map((el, index) => {
         el.setAttribute('data-oracle-field', String(index));
+        const select2 = select2Of(el);
+        if (select2) select2.setAttribute('data-oracle-select2', String(index));
         return {
+          dressed: Boolean(select2),
           index, tag: el.tagName.toLowerCase(), type: (el.getAttribute('type') || '').toLowerCase(), id: el.id, name: el.name,
           label: labelOf(el).replace(/[:*]+$/, '').trim(), readOnly: el.readOnly, value: el.value,
           hint: clean(`${el.name} ${el.id} ${el.getAttribute('placeholder') || ''}`),
@@ -728,6 +740,57 @@ async function setControl(page, frame, control, value) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.blur();
   }, value);
+}
+
+// Picks a person in a Select2 search box (v4 or v3): opens it, types the
+// name (last name first, then the whole name) and clicks the result whose
+// text holds every part of the name. Returns { ok, text } or { ok: false, reason }.
+const SELECT2_SEARCH = '.select2-container--open .select2-search__field, .select2-drop-active input.select2-input, .select2-dropdown input[type=search], .select2-search input';
+const SELECT2_RESULTS = '.select2-results__option, .select2-results li.select2-result-selectable, .select2-result-selectable';
+const nameParts = (text) => normalizeText(text).split(' ').filter((part) => part.length > 1);
+
+async function chooseSearchOption(page, frame, control, wanted) {
+  const parts = nameParts(wanted);
+  if (!parts.length) return { ok: false, reason: 'no name to search for' };
+  const container = frame.locator(`[data-oracle-select2="${control.index}"]`).first();
+  const lastName = String(wanted).split(',')[0].trim();
+  const terms = [...new Set([lastName, String(wanted).trim()].filter((term) => term && term.length > 1))];
+  let seen = [];
+  for (const term of terms) {
+    await page.keyboard.press('Escape').catch(() => null);
+    await container.locator('.select2-selection, .select2-choice, .select2-choices, a, span').first().click({ timeout: 8000 }).catch(() => container.click({ timeout: 8000 }));
+    const search = frame.locator(SELECT2_SEARCH).locator('visible=true').first();
+    if (!(await search.isVisible({ timeout: 4000 }).catch(() => false))) return { ok: false, reason: 'its search box did not open' };
+    await search.fill('');
+    await search.pressSequentially(term, { delay: 60 });
+    // Results come from OGD as you type; wait for them to stop changing.
+    const end = Date.now() + 12000;
+    let last = '';
+    let stable = 0;
+    while (Date.now() < end) {
+      await page.waitForTimeout(500);
+      const texts = await frame.locator(SELECT2_RESULTS).locator('visible=true').allInnerTexts().catch(() => []);
+      const real = texts.map((text) => text.replace(/\s+/g, ' ').trim()).filter((text) => text && !/searching|loading|please enter|no results|not found|more characters/i.test(text));
+      const key = real.join('|');
+      stable = key && key === last ? stable + 1 : 0;
+      last = key;
+      seen = real;
+      if (stable >= 2) break;
+    }
+    const matches = seen.map((text, index) => ({ text, index })).filter(({ text }) => parts.every((part) => normalizeText(text).includes(part)));
+    if (matches.length) {
+      const pick = matches.find(({ text }) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
+      const option = frame.locator(SELECT2_RESULTS).locator('visible=true').filter({ hasNotText: /searching|loading/i }).filter({ hasText: pick.text }).first();
+      const loaded = page.waitForEvent('load', { timeout: 3000 }).catch(() => null);
+      await option.click({ timeout: 8000 });
+      await loaded;
+      const value = await frame.locator(`[data-oracle-field="${control.index}"]`).first().inputValue().catch(() => '');
+      if (value && value !== '0') return { ok: true, text: pick.text };
+      return { ok: false, reason: `clicked "${pick.text}" but OGD did not keep it` };
+    }
+  }
+  await page.keyboard.press('Escape').catch(() => null);
+  return { ok: false, reason: seen.length ? `not among OGD's matches (${seen.slice(0, 8).join(' / ')})` : 'OGD found nobody by that name' };
 }
 
 // Fills one Start or End group: a single date-time box, or a date box with
@@ -808,7 +871,8 @@ export function createActivityPush(activity) {
         }
       }
 
-      const areaControl = findControl(form, /^area|area\s*name/i, { tag: 'select' });
+      // OGD's own Area/Chapter search box already holds the signed-in chapter.
+      const areaControl = form.controls.find((control) => control.tag === 'select' && !control.dressed && /^area|area\s*name/i.test(control.label || control.hint));
       if (areaControl && activity.area_name) {
         const option = pickOption(areaControl, activity.area_name);
         if (option) { await setControl(formPage, frame, areaControl, option.value); filled.push(areaControl.label); form = await snapshotForm(frame); }
@@ -838,8 +902,20 @@ export function createActivityPush(activity) {
         if (activity.ends_at && !(await fillWhen(formPage, frame, form, /end|date\s*to|^to$/i, activity.ends_at, filled))) problems.push('no End Date box');
       }
 
+      // Team Leader: a search box that looks the name up as it is typed.
+      const leaderControl = findControl(form, /team\s*leader|leader/i, { tag: 'select' });
+      if (leaderControl?.dressed) {
+        if (!activity.team_leader) problems.push('OGD needs a Team Leader; add one in Oracle and push again');
+        else {
+          const chosen = await chooseSearchOption(formPage, frame, leaderControl, activity.team_leader);
+          if (chosen.ok) filled.push(`Team Leader (${chosen.text})`);
+          else problems.push(`Team Leader "${activity.team_leader}": ${chosen.reason}`);
+        }
+        form = await snapshotForm(frame);
+      }
+
       const optional = [
-        [/team\s*leader|leader/i, activity.team_leader],
+        [/team\s*leader|leader/i, leaderControl?.dressed ? null : activity.team_leader],
         [/venue|location|place/i, activity.venue],
         [/desc|remark|note|detail|purpose|agenda|objective/i, activity.description],
       ];
