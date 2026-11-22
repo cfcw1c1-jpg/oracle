@@ -32,7 +32,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const WIDE_LAYOUT_MIN_WIDTH = 860;
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
 const CONCURRENT_RUNS = 2;
-const DEFAULT_TYPES = ['CHAPTER PRAYER ASSEMBLY', 'FORMATION', 'MISSION', 'FIG ACTIVITY', 'HOUSEHOLD MEETING', 'TEAMBUILDING', 'EVANGELIZATION'];
+const DEFAULT_TYPES = ['CHAPTER PRAYER ASSEMBLY', 'FORMATION', 'TRAINING', 'TEACHING', 'FELLOWSHIP', 'OTHER MEETING', 'WORK WITH THE POOR', 'MISSION', 'CONFERENCE', 'OTHER ASSEMBLY', 'FIG ACTIVITY'];
 const SOURCE_LABELS = { ogd: 'OGD', oracle: 'Oracle', link: 'Attendance link' };
 const TONES = {
   success: { color: '#15803d', bg: '#dcfce7' },

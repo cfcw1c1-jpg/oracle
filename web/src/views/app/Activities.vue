@@ -14,7 +14,7 @@ import {
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
 const CONCURRENT_RUNS = 2;
 // OGD's types seen so far; types read from OGD are added to these.
-const DEFAULT_TYPES = ['CHAPTER PRAYER ASSEMBLY', 'FORMATION', 'MISSION', 'FIG ACTIVITY', 'HOUSEHOLD MEETING', 'TEAMBUILDING', 'EVANGELIZATION'];
+const DEFAULT_TYPES = ['CHAPTER PRAYER ASSEMBLY', 'FORMATION', 'TRAINING', 'TEACHING', 'FELLOWSHIP', 'OTHER MEETING', 'WORK WITH THE POOR', 'MISSION', 'CONFERENCE', 'OTHER ASSEMBLY', 'FIG ACTIVITY'];
 const TZ = 'Asia/Manila';
 
 // ---------- Dates (Manila) ----------
@@ -89,7 +89,17 @@ const formTypeField = computed(() => ogdForm.value?.fields?.find((field) => fiel
 // OGD's own Type choices once its form has been read; until then, the usual ones.
 const editorTypes = computed(() => (formTypeField.value
   ? formTypeField.value.options.map((option) => option.text).filter((text) => !isPlaceholder(text))
-  : typeOptions.value));
+  : DEFAULT_TYPES));
+// The editor's pick list, keeping an older activity's own type choosable.
+const editorTypeChoices = computed(() => {
+  const current = editor.form?.activityType;
+  return current && !editorTypes.value.includes(current) ? [...editorTypes.value, current] : editorTypes.value;
+});
+const editorAreaChoices = computed(() => {
+  const current = editor.form?.areaName;
+  const chapter = chapterById.value.get(editor.form?.areaId)?.chapter;
+  return [...new Set([chapter, current, ...editorAreas.value].filter(Boolean))];
+});
 const formAreaField = computed(() => ogdForm.value?.fields?.find((field) => field.kind === 'select' && /^area/i.test(field.label)) ?? null);
 const formSummary = computed(() => {
   const form = ogdForm.value;
@@ -804,24 +814,20 @@ onBeforeUnmount(() => {
           </label>
           <label class="field span2"><span class="field-label">Activity Name *</span><input v-model="editor.form.name" class="input" maxlength="200" required placeholder="e.g. Chapter Assembly" /></label>
           <label class="field"><span class="field-label">Type</span>
-            <select v-if="formTypeField" v-model="editor.form.activityType" class="select">
+            <select v-model="editor.form.activityType" class="select">
               <option value="">Choose a type…</option>
-              <option v-for="type in editorTypes" :key="type" :value="type">{{ type }}</option>
+              <option v-for="type in editorTypeChoices" :key="type" :value="type">{{ type }}</option>
             </select>
-            <template v-else>
-              <input v-model="editor.form.activityType" class="input" list="activity-types" placeholder="e.g. FORMATION" />
-              <datalist id="activity-types"><option v-for="type in typeOptions" :key="type" :value="type" /></datalist>
-            </template>
           </label>
           <label class="field"><span class="field-label">Area</span>
             <select v-if="formAreaField" v-model="editor.form.areaName" class="select">
               <option value="">Choose an area…</option>
               <option v-for="option in choicesOf(formAreaField)" :key="option.value" :value="option.text">{{ option.text }}</option>
             </select>
-            <template v-else>
-              <input v-model="editor.form.areaName" class="input" list="activity-areas" />
-              <datalist id="activity-areas"><option v-for="area in editorAreas" :key="area" :value="area" /></datalist>
-            </template>
+            <select v-else v-model="editor.form.areaName" class="select">
+              <option value="">Choose an area…</option>
+              <option v-for="area in editorAreaChoices" :key="area" :value="area">{{ area }}</option>
+            </select>
           </label>
           <div v-if="extraFields.length" class="extra span2">
             <p class="field-label">{{ editor.form.activityType }} details (OGD asks for these)</p>
