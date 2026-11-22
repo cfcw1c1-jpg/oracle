@@ -8,7 +8,7 @@ import PageHead from '@/components/PageHead.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, exportCsv, formatDateTime } from '@/lib/data';
 import {
-  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, pushActivity, saveActivity, syncActivities, updateActivityAttendees,
+  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, pushActivity, pushActivityAttendees, saveActivity, syncActivities, updateActivityAttendees,
 } from '@/lib/ogdApi';
 
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
@@ -65,6 +65,7 @@ const runningIds = ref(new Set());
 const rowErrors = ref({});
 const isSyncingAll = ref(false);
 const pushingIds = ref(new Set());
+const sendingIds = ref(new Set());
 const actionErrors = ref({});
 const copied = ref('');
 let isActive = true;
@@ -218,6 +219,8 @@ async function push(activity) {
   try {
     const result = await pushActivity(activity.id);
     if (isActive) replaceActivity(result.activity);
+    // Its attendees follow it into OGD.
+    if (result.activity.pushStatus === 'pushed' && result.activity.pendingInOgd) sendAttendees(result.activity);
     return result.activity;
   } catch (error) {
     if (isActive) actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
@@ -226,6 +229,33 @@ async function push(activity) {
   } finally {
     if (isActive) setIn(pushingIds, activity.id, false);
   }
+}
+
+// Adds the attendees OGD does not have yet to the activity's attendees in OGD.
+async function sendAttendees(activity) {
+  if (sendingIds.value.has(activity.id) || !chapterById.value.get(activity.areaId)?.isReady) return;
+  setIn(sendingIds, activity.id, true);
+  actionErrors.value = { ...actionErrors.value, [activity.id]: null };
+  try {
+    const result = await pushActivityAttendees(activity.id);
+    if (isActive) replaceActivity(result.activity);
+  } catch (error) {
+    if (isActive) actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
+    load();
+  } finally {
+    if (isActive) setIn(sendingIds, activity.id, false);
+  }
+}
+
+function ogdStateOf(activity, attendee) {
+  if (attendee.source === 'ogd') return { label: 'In OGD', tone: 'success' };
+  if (attendee.ogd === 'added') return { label: attendee.ogdNote ? 'Already in OGD' : 'Added to OGD', tone: 'success' };
+  if (!activity.isInOgd) return { label: 'Goes with push', tone: '' };
+  if (!attendee.memberId) return { label: 'No Member ID', tone: 'warning' };
+  if (!attendee.isPendingInOgd) return { label: 'Already in OGD', tone: 'success' };
+  if (sendingIds.value.has(activity.id)) return { label: 'Adding…', tone: 'info' };
+  if (attendee.ogd === 'failed') return { label: 'Not added', tone: 'danger' };
+  return { label: 'Waiting', tone: 'warning' };
 }
 
 async function remove(activity) {
@@ -415,8 +445,11 @@ async function confirmAddAttendees() {
   const activity = addingFor.value;
   if (!activity || !addSelection.value.length) return;
   try {
-    replaceActivity(await updateActivityAttendees(activity.id, { add: addSelection.value }));
+    const updated = await updateActivityAttendees(activity.id, { add: addSelection.value });
+    replaceActivity(updated);
     addingFor.value = null;
+    // Added in Oracle means added in OGD too, when the activity is there.
+    if (updated.isInOgd && updated.pendingInOgd) sendAttendees(updated);
   } catch (error) {
     actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
     addingFor.value = null;
@@ -509,7 +542,11 @@ onBeforeUnmount(() => {
         <template #cell-startsAt="{ row }"><span class="nowrap">{{ formatWhen(row.startsAt) }}</span></template>
         <template #cell-endsAt="{ row }"><span class="nowrap">{{ formatWhen(row.endsAt) }}</span></template>
         <template #cell-attendance="{ row }"><span class="nowrap">{{ attendeeCount(row) }} member{{ attendeeCount(row) === 1 ? '' : 's' }}</span></template>
-        <template #cell-status="{ row }"><span class="pill" :class="statusOf(row).tone">{{ statusOf(row).label }}</span></template>
+        <template #cell-status="{ row }">
+          <span class="pill" :class="statusOf(row).tone">{{ statusOf(row).label }}</span>
+          <span v-if="sendingIds.has(row.id)" class="pill info tiny-pill">adding attendees…</span>
+          <span v-else-if="row.pendingInOgd" class="pill warning tiny-pill" :title="`${row.pendingInOgd} attendee(s) not in OGD yet`">{{ row.pendingInOgd }} not in OGD</span>
+        </template>
         <template #expanded="{ row }">
           <div class="expanded stack" @click.stop>
             <div class="detail-grid">
@@ -551,13 +588,23 @@ onBeforeUnmount(() => {
             <div class="section-head sub">
               <h3 class="section-title small-title">Attendees ({{ row.attendees.length }}<template v-if="row.attendanceCount && row.attendanceCount !== row.attendees.length"> listed, OGD counts {{ row.attendanceCount }}</template>)</h3>
               <div class="row gap">
+                <button v-if="row.isInOgd && (row.pendingInOgd || sendingIds.has(row.id))" class="btn btn-sm btn-primary" :disabled="sendingIds.has(row.id) || !chapterById.get(row.areaId)?.isReady" @click="sendAttendees(row)">
+                  <Send :size="13" />{{ sendingIds.has(row.id) ? 'Adding in OGD…' : `Add ${row.pendingInOgd} to OGD` }}
+                </button>
                 <button class="btn btn-sm" @click="openAddAttendees(row)"><UserPlus :size="13" />Add attendees</button>
                 <button class="btn btn-sm" :disabled="!row.attendees.length" @click="exportAttendees([row])"><Download :size="13" />CSV</button>
               </div>
             </div>
+            <p v-if="sendingIds.has(row.id)" class="notice">Signing in to OGD and adding the attendees to this activity there. This takes a minute or two; keep this page open.</p>
+            <template v-else-if="row.attendeePushStatus && row.attendeePushStatus !== 'pushing'">
+              <p v-if="row.attendeePushStatus === 'pushed'" class="small text-success">Attendees added in OGD {{ formatDateTime(row.attendeesPushedAt) }}.</p>
+              <p v-else class="small text-danger">{{ FAILURE_MESSAGES[row.attendeePushFailureCode] || 'Some attendees could not be added in OGD.' }}<template v-if="row.pendingInOgd"> Use "Add {{ row.pendingInOgd }} to OGD" to try again.</template></p>
+              <p v-if="row.attendeePushDetail" class="muted tiny detail wide">{{ row.attendeePushDetail }}</p>
+            </template>
+            <p v-if="row.isInOgd && row.pendingInOgd && !chapterById.get(row.areaId)?.isReady" class="muted tiny">This chapter needs its OGD login before attendees can be added in OGD.</p>
             <div v-if="row.attendees.length" class="table-scroll">
               <table class="mini">
-                <thead><tr><th>#</th><th>Name</th><th>Member ID</th><th>Area</th><th>Service</th><th>Added by</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th>Name</th><th>Member ID</th><th>Area</th><th>Service</th><th>Added by</th><th>In OGD</th><th></th></tr></thead>
                 <tbody>
                   <tr v-for="(attendee, index) in row.attendees" :key="attendeeKey(attendee)">
                     <td>{{ index + 1 }}</td>
@@ -566,7 +613,8 @@ onBeforeUnmount(() => {
                     <td>{{ attendee.area || '—' }}</td>
                     <td>{{ attendee.service || '—' }}</td>
                     <td>{{ SOURCE_LABELS[attendee.source] ?? attendee.source }}</td>
-                    <td><button v-if="attendee.source !== 'ogd'" class="icon-btn" aria-label="Remove attendee" @click="removeAttendee(row, attendee)"><X :size="14" /></button></td>
+                    <td><span class="pill tiny-pill" :class="ogdStateOf(row, attendee).tone" :title="attendee.ogdNote || ''">{{ ogdStateOf(row, attendee).label }}</span></td>
+                    <td><button v-if="attendee.source !== 'ogd' && attendee.ogd !== 'added'" class="icon-btn" aria-label="Remove attendee" @click="removeAttendee(row, attendee)"><X :size="14" /></button></td>
                   </tr>
                 </tbody>
               </table>

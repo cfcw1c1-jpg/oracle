@@ -94,6 +94,10 @@ export function pushActivity(activityId) {
   return request('/api/ogd/browser?task=push-activity', { method: 'POST', body: JSON.stringify({ activityId }) });
 }
 
+export function pushActivityAttendees(activityId) {
+  return request('/api/ogd/browser?task=push-attendees', { method: 'POST', body: JSON.stringify({ activityId }) });
+}
+
 export const FAILURE_MESSAGES = {
   ogd_bad_credentials: 'OGD did not accept this login.',
   otp_rejected: 'OGD did not accept the emailed code.',
@@ -111,4 +115,5 @@ export const FAILURE_MESSAGES = {
   activities_page_unexpected: 'Signed in, but could not read the Activities page in OGD.',
   activity_form_unexpected: 'Signed in, but could not fill in OGD\'s New Activity form. Nothing was saved in OGD.',
   activity_save_failed: 'OGD did not save the new activity.',
+  activity_attendees_unexpected: 'Signed in, but could not add every attendee in OGD.',
 };

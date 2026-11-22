@@ -4,7 +4,7 @@ import { normalizeText } from './ogdActivities.mjs';
 // Shared by the Activities routes: date checks, members lookups, attendee
 // matching and the shape the page receives.
 
-export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, push_status, push_failure_code, push_detail, pushed_at, synced_at, created_at, updated_at';
+export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, push_status, push_failure_code, push_detail, pushed_at, attendee_push_status, attendee_push_failure_code, attendee_push_detail, attendees_pushed_at, synced_at, created_at, updated_at';
 const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, AreaName, PastoralService, Status';
 const MAX_RANGE_DAYS = 400;
 
@@ -81,6 +81,21 @@ export function mergeAttendees(existing, fromOgd) {
   return [...fromOgd, ...kept.filter((attendee) => !seen.has(attendeeKey(attendee)))];
 }
 
+// The activity exists in OGD: read from it, or created there from Oracle.
+export function isInOgd(row) {
+  return row.source === 'ogd' || row.push_status === 'pushed';
+}
+
+// Attendees added in Oracle (by hand or by link) that OGD does not have yet.
+// Anyone OGD already lists (by Member ID or by name) is never pending.
+export function pendingForOgd(attendees) {
+  const list = attendees ?? [];
+  const inOgd = new Set(list.filter((attendee) => attendee.source === 'ogd')
+    .flatMap((attendee) => [attendee.memberId ? `id:${attendee.memberId.toUpperCase()}` : null, `name:${normalizeText(attendee.name)}`]).filter(Boolean));
+  return list.filter((attendee) => attendee.source !== 'ogd' && attendee.memberId && attendee.ogd !== 'added'
+    && !inOgd.has(`id:${attendee.memberId.toUpperCase()}`) && !inOgd.has(`name:${normalizeText(attendee.name)}`));
+}
+
 export function toActivity(row) {
   return {
     id: row.id,
@@ -96,7 +111,10 @@ export function toActivity(row) {
     venue: row.venue,
     description: row.description,
     attendanceCount: row.attendance_count,
-    attendees: row.attendees ?? [],
+    attendees: (() => {
+      const pending = new Set(pendingForOgd(row.attendees));
+      return (row.attendees ?? []).map((attendee) => ({ ...attendee, isPendingInOgd: pending.has(attendee) }));
+    })(),
     details: row.ogd_details ?? {},
     attendeeTable: row.ogd_attendee_table,
     ogdUrl: row.ogd_url,
@@ -105,6 +123,12 @@ export function toActivity(row) {
     pushFailureCode: row.push_failure_code,
     pushDetail: row.push_detail,
     pushedAt: row.pushed_at,
+    isInOgd: isInOgd(row),
+    attendeePushStatus: row.attendee_push_status,
+    attendeePushFailureCode: row.attendee_push_failure_code,
+    attendeePushDetail: row.attendee_push_detail,
+    attendeesPushedAt: row.attendees_pushed_at,
+    pendingInOgd: isInOgd(row) ? pendingForOgd(row.attendees).length : 0,
     syncedAt: row.synced_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

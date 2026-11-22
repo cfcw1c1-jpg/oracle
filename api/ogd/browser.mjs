@@ -1,6 +1,7 @@
 import { POST as celebrants } from '../_lib/tasks/celebrants.mjs';
 import { POST as checkReport } from '../_lib/tasks/check-report.mjs';
 import { POST as pushActivity } from '../_lib/tasks/push-activity.mjs';
+import { POST as pushAttendees } from '../_lib/tasks/push-attendees.mjs';
 import { POST as pushChanges } from '../_lib/tasks/push-changes.mjs';
 import { POST as syncActivities } from '../_lib/tasks/sync-activities.mjs';
 import { POST as syncMembers } from '../_lib/tasks/sync-members.mjs';
@@ -15,6 +16,7 @@ const TASKS = {
   celebrants,
   'check-report': checkReport,
   'push-activity': pushActivity,
+  'push-attendees': pushAttendees,
   'push-changes': pushChanges,
   'sync-activities': syncActivities,
   'sync-members': syncMembers,

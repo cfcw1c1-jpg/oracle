@@ -23,6 +23,7 @@ export const ACTIVITY_FAILURES = {
   page: 'activities_page_unexpected',
   form: 'activity_form_unexpected',
   save: 'activity_save_failed',
+  attendees: 'activity_attendees_unexpected',
 };
 
 // ---------- Dates ----------
@@ -689,5 +690,332 @@ export function createActivityPush(activity) {
       context.off('page', onPage);
       for (const shown of opened) await shown.close().catch(() => null);
     }
+  };
+}
+
+// ---------- Adding attendees to an activity in OGD ----------
+
+const SEARCH_BOX = /member|id\s*no|search|find|keyword|name|attendee|participant/i;
+const NOT_SEARCH_BOX = /activity|venue|leader|date|start|end|desc|remark|time/i;
+const ADD_BUTTON = /^\s*(add|add attendees?|add members?|add participants?|add to (list|attendance)|include|tag|enroll)\s*$/i;
+const SEARCH_BUTTON = /^\s*(search|find|go|look\s*up|search member)\s*$/i;
+const SAVE_BUTTON = /^\s*(save|update|submit|save attendance|save attendees|save changes|done|ok|confirm)\s*$/i;
+const OPEN_ADD_BUTTON = /add\s*(attendees?|members?|participants?|attendance)|encode|tag\s*attendees?|^\s*add\s*$/i;
+const ATTENDEE_STEP_WAIT_MS = 1500;
+
+// The text keys a member's row may show: the Member ID, "LAST FIRST" or "FIRST LAST".
+export function attendeeTargets(members) {
+  return members.map((member) => {
+    const last = normalizeText(member.Lastname ?? member.last);
+    const first = normalizeText(member.Firstname ?? member.first);
+    return { memberId: String(member.MemberIDNo ?? member.memberId ?? '').toUpperCase(), keys: [`${last} ${first}`, `${first} ${last}`].filter((key) => key.trim().includes(' ')) };
+  });
+}
+
+// Each member's row in one frame: 'listed' (shown, nothing to do), 'checked'
+// or 'checkable' (a picker row with a checkbox), 'addable' (a row with an Add
+// or Select link) or 'missing'. Marks the checkbox or link for clicking.
+function scanFrame(frame, targets) {
+  return frame.evaluate((list) => {
+    const norm = (value) => ` ${String(value ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()} `;
+    document.querySelectorAll('[data-oracle-pick]').forEach((el) => el.removeAttribute('data-oracle-pick'));
+    const rows = [...document.querySelectorAll('tr, li')].filter((row) => !row.querySelector('table, ul') && row.getClientRects().length > 0);
+    const texts = rows.map((row) => norm(row.innerText || row.textContent));
+    const showsIds = texts.some((text) => / [A-Z]{2} \d{4} \d+ /.test(text));
+    return list.map((target, index) => {
+      const id = target.memberId ? norm(target.memberId) : null;
+      // By Member ID, else by name. A name-only match on a page that shows
+      // Member IDs still counts as already listed (so nobody is added twice),
+      // but is not ticked or clicked, since it may be someone else's row.
+      let rowIndex = id ? texts.findIndex((text) => text.includes(id)) : -1;
+      const byNameOnly = rowIndex === -1;
+      if (byNameOnly) rowIndex = texts.findIndex((text) => target.keys.some((key) => text.includes(` ${key} `)));
+      if (rowIndex === -1) return 'missing';
+      const row = rows[rowIndex];
+      if (byNameOnly && showsIds) {
+        const box = row.querySelector('input[type=checkbox]');
+        if (box) return box.checked ? 'checked' : 'missing';
+        return row.querySelector('a, button, input[type=button], input[type=submit]') && /add|select|tag|include|choose/i.test(row.innerText || '') ? 'missing' : 'listed';
+      }
+      const box = row.querySelector('input[type=checkbox]');
+      if (box) {
+        box.setAttribute('data-oracle-pick', `${index}`);
+        return box.checked ? 'checked' : 'checkable';
+      }
+      const add = [...row.querySelectorAll('a, button, input[type=button], input[type=submit], input[type=image]')]
+        .find((el) => /add|select|tag|include|present|attend|choose/i.test(`${el.value || ''} ${el.innerText || ''} ${el.title || ''} ${el.alt || ''}`)
+          && !/remove|delete|absent/i.test(`${el.value || ''} ${el.innerText || ''} ${el.title || ''}`));
+      if (add) {
+        add.setAttribute('data-oracle-pick', `${index}`);
+        return 'addable';
+      }
+      return 'listed';
+    });
+  }, targets);
+}
+
+const STATE_RANK = { listed: 4, checked: 4, checkable: 3, addable: 2, missing: 0 };
+
+// The best state for each member across every frame of a page.
+async function scanPage(page, targets) {
+  const best = targets.map(() => ({ state: 'missing', frame: null }));
+  for (const frame of page.frames()) {
+    const states = await scanFrame(frame, targets).catch(() => null);
+    if (!states) continue;
+    states.forEach((state, index) => {
+      if (STATE_RANK[state] > STATE_RANK[best[index].state]) best[index] = { state, frame };
+    });
+  }
+  return best;
+}
+
+// scanPage across every page of a paged attendee list, so a member listed on
+// page 2 or later still counts as already in OGD. Frames that hold the
+// Activities list itself are not paged.
+const MAX_ATTENDEE_PAGES = 20;
+async function scanAllPages(page, targets) {
+  const best = await scanPage(page, targets);
+  if (best.every((entry) => STATE_RANK[entry.state] === 4)) return best;
+  for (const frame of page.frames()) {
+    if (!(await readAttendeeTable(frame).catch(() => null)) || await readActivitiesTable(frame).catch(() => null)) continue;
+    for (let pageNumber = 2; pageNumber <= MAX_ATTENDEE_PAGES; pageNumber += 1) {
+      const before = JSON.stringify((await readAttendeeTable(frame).catch(() => null))?.records ?? []);
+      const { moved } = await pagerAction(frame, 'next').catch(() => ({ moved: false }));
+      if (!moved) break;
+      let changed = false;
+      for (let wait = 0; wait < 20 && !changed; wait += 1) {
+        await page.waitForTimeout(POLL_MS);
+        changed = JSON.stringify((await readAttendeeTable(frame).catch(() => null))?.records ?? []) !== before;
+      }
+      if (!changed) break;
+      const states = await scanFrame(frame, targets).catch(() => null);
+      states?.forEach((state, index) => {
+        if (STATE_RANK[state] === 4 && STATE_RANK[best[index].state] < 4) best[index] = { state, frame: null };
+      });
+      if (best.every((entry) => STATE_RANK[entry.state] === 4)) break;
+    }
+  }
+  return best;
+}
+
+async function visibleButton(page, pattern, preferFrame) {
+  const frames = preferFrame ? [preferFrame, ...page.frames().filter((frame) => frame !== preferFrame)] : page.frames();
+  for (const frame of frames) {
+    const locator = frame.locator('input[type=submit], input[type=button], button, a');
+    const count = Math.min(await locator.count().catch(() => 0), 300);
+    for (let index = 0; index < count; index += 1) {
+      const element = locator.nth(index);
+      if (!(await element.isVisible().catch(() => false))) continue;
+      const label = await element.evaluate((el) => (el.value || el.innerText || el.textContent || el.title || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+      if (label && label.length <= 40 && pattern.test(label)) return element;
+    }
+  }
+  return null;
+}
+
+async function clickAndSettle(page, element) {
+  await submitAndSettle(page, () => element.click({ timeout: 10000 })).catch(() => null);
+  await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
+}
+
+// A member search box in any frame: a text box labelled for members, IDs or names.
+async function findSearchBox(page) {
+  for (const frame of page.frames()) {
+    const form = await snapshotForm(frame).catch(() => null);
+    if (!form) continue;
+    const boxes = form.controls.filter((control) => control.tag === 'input' && ['', 'text', 'search'].includes(control.type) && !control.readOnly
+      && SEARCH_BOX.test(`${control.label} ${control.hint}`) && !NOT_SEARCH_BOX.test(control.label || ''));
+    const box = boxes.find((control) => /member|id/i.test(`${control.label} ${control.hint}`)) ?? boxes[0];
+    if (box) return { frame, locator: frame.locator(`[data-oracle-field="${box.index}"]`) };
+  }
+  return null;
+}
+
+async function describeAttendeePage(page) {
+  const parts = [];
+  for (const frame of page.frames()) {
+    const form = await snapshotForm(frame).catch(() => null);
+    if (form && (form.controls.length || form.buttons.length)) parts.push(describeForm(form));
+    const table = await readAttendeeTable(frame).catch(() => null);
+    if (table) parts.push(`table: ${table.headers.join(' | ')} (${table.records.length} rows)`);
+  }
+  return parts.join(' || ').slice(0, DETAIL_LIMIT) || `nothing readable on ${page.url()}`;
+}
+
+// Adds one member through a search box: types the Member ID, picks it from a
+// suggestion list if one shows, then Add (or Search, then the member's row).
+async function addBySearch(page, search, target) {
+  const { frame, locator } = search;
+  await locator.click({ timeout: 5000 }).catch(() => null);
+  await locator.fill('').catch(() => null);
+  await locator.pressSequentially(target.memberId, { delay: 25 }).catch(() => locator.fill(target.memberId));
+  await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
+  const suggestion = frame.locator('.ui-autocomplete li, .ui-menu-item, [role=option], .autocomplete-suggestion, .tt-suggestion, .select2-results li')
+    .filter({ hasText: new RegExp(target.memberId.replace(/[-]/g, '.?'), 'i') }).first();
+  if (await suggestion.isVisible().catch(() => false)) {
+    await suggestion.click({ timeout: 5000 }).catch(() => null);
+    await page.waitForTimeout(500);
+  }
+  const add = await visibleButton(page, ADD_BUTTON, frame);
+  const searchButton = add ? null : await visibleButton(page, SEARCH_BUTTON, frame);
+  if (add) await clickAndSettle(page, add);
+  else if (searchButton) await clickAndSettle(page, searchButton);
+  else {
+    await submitAndSettle(page, () => locator.press('Enter')).catch(() => null);
+    await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
+  }
+  // A result row to tick or click, then Add or Save to confirm it.
+  const [found] = await scanPage(page, [target]);
+  if (found.state === 'checkable' || found.state === 'addable') {
+    const pick = found.frame.locator('[data-oracle-pick="0"]').first();
+    if (found.state === 'checkable') await pick.check({ timeout: 5000, force: true }).catch(() => null);
+    else await clickAndSettle(page, pick);
+    const confirm = await visibleButton(page, ADD_BUTTON, found.frame) ?? await visibleButton(page, SAVE_BUTTON, found.frame);
+    if (confirm) await clickAndSettle(page, confirm);
+  }
+}
+
+// Does the adding on an opened activity or attendance page.
+async function addOnPage(page, targets, deadline) {
+  const actions = [];
+  // Members already on OGD's attendee list (any page of it) are left alone.
+  const already = new Set((await scanAllPages(page, targets))
+    .map((entry, index) => (STATE_RANK[entry.state] === 4 ? index : -1)).filter((index) => index !== -1));
+  if (already.size) actions.push(`${already.size} already in OGD, not added again`);
+  if (already.size === targets.length) return { states: targets.map(() => ({ state: 'listed' })), actions, already };
+  // Paging may have moved the list off its first page, so scan afresh.
+  let states = (await scanPage(page, targets)).map((entry, index) => (already.has(index) ? { state: 'listed', frame: null } : entry));
+  const refresh = async () => (await scanPage(page, targets)).map((entry, index) => (already.has(index) ? { state: 'listed', frame: null } : entry));
+
+  // Picker rows already on the page: tick them all, or click each Add.
+  let ticked = 0;
+  for (let index = 0; index < targets.length; index += 1) {
+    if (Date.now() > deadline) break;
+    if (states[index].state === 'checkable') {
+      await states[index].frame.locator(`[data-oracle-pick="${index}"]`).first().check({ timeout: 5000, force: true }).catch(() => null);
+      ticked += 1;
+    } else if (states[index].state === 'addable') {
+      await clickAndSettle(page, states[index].frame.locator(`[data-oracle-pick="${index}"]`).first());
+      actions.push(`clicked add for ${targets[index].memberId}`);
+      states = await refresh();
+    }
+  }
+  if (ticked) {
+    const save = await visibleButton(page, SAVE_BUTTON) ?? await visibleButton(page, ADD_BUTTON);
+    if (save) await clickAndSettle(page, save);
+    actions.push(`ticked ${ticked}${save ? ' and saved' : ' (no Save button found)'}`);
+    states = await refresh();
+  }
+
+  // The rest through a member search box, opening the Add form first if needed.
+  const missing = targets.map((_, index) => index).filter((index) => states[index].state === 'missing');
+  if (missing.length && Date.now() < deadline) {
+    let search = await findSearchBox(page);
+    if (!search) {
+      const opener = await visibleButton(page, OPEN_ADD_BUTTON);
+      if (opener) {
+        await clickAndSettle(page, opener);
+        actions.push('opened the add form');
+        search = await findSearchBox(page);
+      }
+    }
+    if (!search) return { states: await refresh(), actions, already, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
+    for (const index of missing) {
+      if (Date.now() > deadline) break;
+      // Check again just before adding: an earlier add may have brought them in.
+      const [now] = await scanPage(page, [targets[index]]);
+      if (STATE_RANK[now.state] === 4) continue;
+      await addBySearch(page, search, targets[index]);
+      search = await findSearchBox(page) ?? search;
+    }
+    actions.push(`searched ${missing.length}`);
+    const save = await visibleButton(page, SAVE_BUTTON);
+    if (save) { await clickAndSettle(page, save); actions.push('saved'); }
+    states = await refresh();
+  }
+  return { states, actions, already };
+}
+
+async function findActivityRow(page, list, activity, deadline) {
+  const startMs = activity.starts_at ? new Date(activity.starts_at).getTime() : null;
+  const matches = (record) => {
+    const recordStart = parseOgdDate(record.start);
+    if (activity.ogd_key?.startsWith('id:') && activityKey({ ...record, startsAt: recordStart }) === activity.ogd_key) return true;
+    return normalizeText(record.name) === normalizeText(activity.name)
+      && (!startMs || Math.abs(new Date(recordStart ?? 0).getTime() - startMs) < 60 * 1000);
+  };
+  for (let pageNumber = 1; pageNumber <= MAX_PAGES; pageNumber += 1) {
+    const row = list.table.records.find(matches);
+    if (row) return row;
+    const allOlder = startMs && list.table.records.length && list.table.records.every((record) => {
+      const recordStart = parseOgdDate(record.start);
+      return recordStart && new Date(recordStart).getTime() < startMs - 60 * 1000;
+    });
+    if (allOlder || Date.now() > deadline) return null;
+    const key = firstKey(list.table);
+    const { moved } = await pagerAction(list.frame, 'next').catch(() => ({ moved: false }));
+    if (!moved) return null;
+    const next = await waitForNextPage(page, key);
+    if (!next) return null;
+    list.frame = next.frame;
+    list.table = next.table;
+  }
+  return null;
+}
+
+// Opens the activity's attendance (else its own) page and runs work(page) once it has loaded.
+async function onActivityPage(page, activity, deadline, work) {
+  const list = await openActivities(page);
+  const row = await findActivityRow(page, list, activity, deadline);
+  if (!row) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, `"${activity.name}" was not found in OGD's Activities list.`);
+  const tag = row.hasAttendanceLink ? 'attendance' : row.hasNameLink ? 'name' : null;
+  if (!tag) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, `"${activity.name}" has no link to open in OGD's Activities list.`);
+  let started = false;
+  const opened = await openAndRead(page, list, row, tag, async (frame) => {
+    if (started) return null;
+    const ready = await readAttendeeTable(frame).catch(() => null) || await readDetailFields(frame, activity.name).catch(() => null);
+    if (!ready) return null;
+    started = true;
+    try {
+      return { value: await work(frame.page()) };
+    } catch (error) {
+      return { error };
+    }
+  });
+  if (!opened.result) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, `"${activity.name}" did not open in OGD.`);
+  if (opened.result.error) throw opened.result.error;
+  return opened.result.value;
+}
+
+// Run on OGD's signed-in page: adds members to an activity's attendees, then
+// opens the activity again to check which ones OGD kept. members are rows
+// from the members table. Returns { added, failed: [{ memberId, reason }], detail }.
+export function createAttendeePush(activity, members, { deadline }) {
+  const targets = attendeeTargets(members);
+  return async function pushAttendees(page) {
+    const workDeadline = deadline - 45 * 1000;
+    const result = await onActivityPage(page, activity, workDeadline, (shown) => addOnPage(shown, targets, workDeadline));
+    // Read the attendee list fresh, so only what OGD saved counts.
+    let finalStates = result.states.map((entry) => entry.state);
+    let checked = false;
+    if (Date.now() < deadline) {
+      const fresh = await onActivityPage(page, activity, deadline, (shown) => scanAllPages(shown, targets)).catch(() => null);
+      if (fresh) { finalStates = fresh.map((entry) => entry.state); checked = true; }
+    }
+    const added = [];
+    const failed = [];
+    const alreadyIds = [...result.already].map((index) => targets[index].memberId);
+    targets.forEach((target, index) => {
+      if (result.already.has(index)) added.push(target.memberId);
+      else if (finalStates[index] === 'listed' || finalStates[index] === 'checked') added.push(target.memberId);
+      else failed.push({ memberId: target.memberId, reason: Date.now() > deadline && finalStates[index] === 'missing' ? 'not reached' : `not in OGD's list (${finalStates[index]})` });
+    });
+    const detail = [
+      `In OGD: ${added.length} of ${targets.length}${alreadyIds.length ? ` (${alreadyIds.length} already there, not added again)` : ''}${checked ? ', checked against OGD\'s attendee list' : ' (could not reopen the activity to check)'}.`,
+      result.actions.length ? `Steps: ${result.actions.join(', ')}.` : '',
+      result.problem ?? '',
+    ].filter(Boolean).join(' ').slice(0, DETAIL_LIMIT);
+    if (!added.length && result.problem) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, result.problem);
+    return { added, already: alreadyIds, failed, detail };
   };
 }
