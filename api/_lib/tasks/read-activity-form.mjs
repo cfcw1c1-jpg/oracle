@@ -15,12 +15,16 @@ export const POST = route(async (request) => {
   const areaId = Number(body.areaId);
   if (!chapters.some((chapter) => chapter.areaId === areaId)) throw new HttpError(403, 'You cannot manage this chapter.');
 
+  // A partial earlier read is continued from where it stopped.
+  const { data: earlier } = await db.from('ogd_activity_forms').select('schema, is_partial').eq('area_id', areaId).maybeSingle();
+  const previous = earlier?.is_partial && earlier.schema ? { ...earlier.schema, isPartial: true } : null;
+
   const { error: markError } = await db.from('ogd_activity_forms').upsert({ area_id: areaId, status: 'reading', failure_code: null, status_detail: null }, { onConflict: 'area_id', ignoreDuplicates: false });
   if (markError) throw markError;
 
   let run;
   try {
-    run = await runChapterLogin({ db, areaId, userId, afterLogin: createActivityFormReader({ deadline: startedAt + READ_BUDGET_MS }) });
+    run = await runChapterLogin({ db, areaId, userId, afterLogin: createActivityFormReader({ deadline: startedAt + READ_BUDGET_MS, previous }) });
   } catch (failure) {
     await db.from('ogd_activity_forms').update({ status: 'failed', failure_code: 'automation_error', status_detail: String(failure?.message ?? failure).slice(0, 3000) }).eq('area_id', areaId);
     throw failure;

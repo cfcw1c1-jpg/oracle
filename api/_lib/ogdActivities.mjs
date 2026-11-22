@@ -18,6 +18,7 @@ const DETAIL_LIMIT = 3000;
 const MODAL_CONTAINERS = '#simplemodal-container, .simplemodal-container, .simplemodal-wrap, .ui-dialog, .modal.show, [role=dialog]';
 const MODAL_CLOSE = '.simplemodal-close, .modalCloseImg, a.modalClose, #simplemodal-container a.close, .ui-dialog-titlebar-close, .modal.show [data-dismiss=modal], .modal.show .close';
 const MEMBER_ID = /^[A-Z]{2}-\d{4}-\d+$/i;
+const NEW_ACTIVITY_TEXT = /^\s*(\+\s*)?(add\s+)?new\s+activity\s*$|^\s*(\+\s*)?add\s+activity\s*$/i;
 
 export const ACTIVITY_FAILURES = {
   page: 'activities_page_unexpected',
@@ -603,9 +604,31 @@ export function createActivitiesSync({ from, to, deadline }) {
 // ---------- Creating an activity ----------
 
 function snapshotForm(frame) {
-  return frame.evaluate(() => {
+  return frame.evaluate((modalCss) => {
     const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
     const isShown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    // A popup form (OGD's Add New Activity) is read on its own, not with the page behind it.
+    const root = [...document.querySelectorAll(modalCss)].find((el) => isShown(el) && el.querySelector('input, select, textarea')) ?? document;
+    // Text written right before a control in the same cell ("Topic [list]").
+    // Stops at another control, so "to" between two date boxes is skipped.
+    const inlineLabel = (el) => {
+      for (let node = el; node && !/^(TD|TH|BODY|FORM|TR|TABLE)$/.test(node.tagName); node = node.parentElement) {
+        for (let prev = node.previousSibling; prev; prev = prev.previousSibling) {
+          if (prev.nodeType === 3) {
+            const text = clean(prev.textContent);
+            if (!text || /^(to|and|-|–|from|:)$/i.test(text)) continue;
+            return text.length <= 40 ? text : '';
+          }
+          if (prev.nodeType !== 1) continue;
+          if (prev.tagName === 'BR') continue;
+          if (prev.matches('input, select, textarea, button') || prev.querySelector('input, select, textarea')) return '';
+          const text = clean(prev.innerText || prev.textContent);
+          if (!text) continue;
+          return text.length <= 40 ? text : '';
+        }
+      }
+      return '';
+    };
     const labelOf = (el) => {
       if (el.id) {
         const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
@@ -613,6 +636,8 @@ function snapshotForm(frame) {
       }
       const wrapping = el.closest('label');
       if (wrapping) return clean(wrapping.innerText);
+      const inline = inlineLabel(el);
+      if (inline) return inline;
       const cell = el.closest('td, th');
       let previous = cell?.previousElementSibling;
       while (previous && !clean(previous.innerText)) previous = previous.previousElementSibling;
@@ -625,7 +650,7 @@ function snapshotForm(frame) {
       }
       return clean(el.getAttribute('placeholder') || el.name || el.id);
     };
-    const controls = [...document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')]
+    const controls = [...root.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')]
       .filter(isShown)
       .map((el, index) => {
         el.setAttribute('data-oracle-field', String(index));
@@ -636,13 +661,13 @@ function snapshotForm(frame) {
           options: el.tagName === 'SELECT' ? [...el.options].map((option) => ({ value: option.value, text: clean(option.text) })) : [],
         };
       });
-    const buttons = [...document.querySelectorAll('input[type=submit], input[type=button], button, a.btn, a[id*="btn" i]')]
+    const buttons = [...root.querySelectorAll('input[type=submit], input[type=button], button, a.btn, a[id*="btn" i]')]
       .filter(isShown).map((el, index) => {
         el.setAttribute('data-oracle-button', String(index));
         return { index, text: clean(el.value || el.innerText || el.textContent) };
       }).filter((button) => button.text);
-    return { path: location.pathname, controls, buttons, text: clean(document.body?.innerText).slice(0, 1500) };
-  });
+    return { path: location.pathname, controls, buttons, text: clean((root === document ? document.body : root)?.innerText).slice(0, 1500) };
+  }, MODAL_CONTAINERS);
 }
 
 function describeForm(form) {
@@ -751,8 +776,8 @@ export function createActivityPush(activity) {
     const onPage = (newPage) => opened.push(newPage);
     context.on('page', onPage);
     try {
-      const newButton = (frame) => frame.locator('input[type=submit], input[type=button], button, a').filter({ hasText: /^\s*new activity\s*$/i })
-        .or(frame.locator('input[type=submit][value="New Activity" i], input[type=button][value="New Activity" i]'));
+      const newButton = (frame) => frame.locator('input[type=submit], input[type=button], button, a').filter({ hasText: NEW_ACTIVITY_TEXT })
+        .or(frame.locator('input[type=submit][value="New Activity" i], input[type=button][value="New Activity" i], input[type=submit][value="Add New Activity" i], input[type=button][value="Add New Activity" i], input[type=button][value="Add Activity" i]'));
       if (!(await clickFirstVisible(page, newButton))) {
         throw new AutomationFailure(ACTIVITY_FAILURES.form, `No New Activity button on the Activities page. Buttons seen: ${await visibleLinkTexts(page)}`);
       }
@@ -799,8 +824,19 @@ export function createActivityPush(activity) {
         form = await snapshotForm(frame);
       }
 
-      if (!(await fillWhen(formPage, frame, form, /start|date\s*from|^from|^date$/i, activity.starts_at, filled))) problems.push('no Start Date box');
-      if (activity.ends_at && !(await fillWhen(formPage, frame, form, /end|date\s*to|^to$/i, activity.ends_at, filled))) problems.push('no End Date box');
+      // OGD's "Start/End Dates": one label, a start box and an end box, each "11/22/2026 07:00 PM".
+      const pair = form.controls.filter((control) => control.tag !== 'select' && /start\s*\/?\s*end|from\s*\/?\s*to/i.test(control.label));
+      if (pair.length === 2) {
+        const start = manilaParts(activity.starts_at);
+        // No end given: OGD's own default length, three hours.
+        const end = manilaParts(activity.ends_at ?? new Date(new Date(activity.starts_at).getTime() + 3 * 60 * 60 * 1000).toISOString());
+        await setControl(formPage, frame, pair[0], `${start.mdy} ${start.time12}`);
+        await setControl(formPage, frame, pair[1], `${end.mdy} ${end.time12}`);
+        filled.push('Start date', 'End date');
+      } else {
+        if (!(await fillWhen(formPage, frame, form, /start|date\s*from|^from|^date$/i, activity.starts_at, filled))) problems.push('no Start Date box');
+        if (activity.ends_at && !(await fillWhen(formPage, frame, form, /end|date\s*to|^to$/i, activity.ends_at, filled))) problems.push('no End Date box');
+      }
 
       const optional = [
         [/team\s*leader|leader/i, activity.team_leader],
@@ -1200,9 +1236,38 @@ export function createAttendeePush(activity, members, { deadline }) {
 // descriptions. A field's id is its name (else id, else label), which stays
 // the same across OGD's postbacks.
 function readFormFields(frame) {
-  return frame.evaluate(() => {
+  return frame.evaluate((modalCss) => {
     const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
     const isShown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const root = [...document.querySelectorAll(modalCss)].find((el) => isShown(el) && el.querySelector('input, select, textarea')) ?? document;
+    // Text written right before a control in the same cell ("Topic [list]").
+    // Stops at another control, so "to" between two date boxes is skipped.
+    const inlineLabel = (el) => {
+      for (let node = el; node && !/^(TD|TH|BODY|FORM|TR|TABLE)$/.test(node.tagName); node = node.parentElement) {
+        for (let prev = node.previousSibling; prev; prev = prev.previousSibling) {
+          if (prev.nodeType === 3) {
+            const text = clean(prev.textContent);
+            if (!text || /^(to|and|-|–|from|:)$/i.test(text)) continue;
+            return text.length <= 40 ? text : '';
+          }
+          if (prev.nodeType !== 1) continue;
+          if (prev.tagName === 'BR') continue;
+          if (prev.matches('input, select, textarea, button') || prev.querySelector('input, select, textarea')) return '';
+          const text = clean(prev.innerText || prev.textContent);
+          if (!text) continue;
+          return text.length <= 40 ? text : '';
+        }
+      }
+      return '';
+    };
+    // Lists dressed up by a script (Select2 search boxes, "None selected"
+    // pick-several buttons) hide the real <select> next to what is shown.
+    const dressed = (el) => {
+      if (el.tagName !== 'SELECT') return false;
+      if (el.classList.contains('select2-hidden-accessible')) return true;
+      const next = el.nextElementSibling;
+      return Boolean(next && isShown(next) && /select2|multiselect|btn-group|chosen|selectize|dropdown/i.test(`${next.className} ${next.querySelector('button')?.className ?? ''}`));
+    };
     const strip = (text) => clean(text).replace(/[:*]+$/, '').trim();
     const before = (el) => {
       const cell = el.closest('td, th');
@@ -1224,28 +1289,33 @@ function readFormFields(frame) {
       }
       const wrapping = el.closest('label');
       if (wrapping) return clean(wrapping.innerText);
-      return before(el) || clean(el.getAttribute('placeholder') || el.name || el.id);
+      return inlineLabel(el) || before(el) || clean(el.getAttribute('placeholder') || el.name || el.id);
     };
     const tidyName = (name) => String(name || '').replace(/^.*\$/, '').replace(/^(txt|cbo|ddl|chk|rbl|cbl|rdo|opt|lst)/i, '').replace(/([a-z])([A-Z])/g, '$1 $2');
     const fields = [];
-    for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')) {
-      if (!isShown(el)) continue;
+    for (const el of root.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')) {
+      if (el.closest('.multiselect-container, .select2-container, .dropdown-menu')) continue;
+      const isDressed = dressed(el);
+      if (!isShown(el) && !isDressed) continue;
       fields.push({
         id: el.name || el.id || strip(labelOf(el)), label: strip(labelOf(el)) || tidyName(el.name || el.id), name: el.name || null,
-        kind: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.getAttribute('type') || 'text').toLowerCase(),
+        kind: el.tagName === 'SELECT' ? (el.multiple ? 'multiselect' : 'select') : el.tagName === 'TEXTAREA' ? 'textarea' : (el.getAttribute('type') || 'text').toLowerCase(),
+        dressed: isDressed || undefined,
         required: el.required || /\*/.test(labelOf(el)), readOnly: el.readOnly || false,
         options: el.tagName === 'SELECT' ? [...el.options].map((option) => ({ value: option.value, text: clean(option.text) })) : undefined,
       });
     }
     // Checkbox and radio groups: ASP.NET lists share a name stem (…$chkTalks$0) or a radio name.
     const groups = new Map();
-    for (const el of document.querySelectorAll('input[type=checkbox], input[type=radio]')) {
-      if (!isShown(el)) continue;
+    for (const el of root.querySelectorAll('input[type=checkbox], input[type=radio]')) {
+      if (!isShown(el) || el.closest('.multiselect-container, .select2-container, .dropdown-menu')) continue;
       const stem = el.type === 'radio' ? el.name : String(el.name || el.id).replace(/[$_]\d+$/, '');
       const optionLabel = (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.closest('label')?.innerText || el.nextSibling?.textContent || el.value;
       if (!groups.has(stem)) {
-        const box = el.closest('table, span[id], div[id]');
-        const grouped = box && box.querySelectorAll('input[type=checkbox], input[type=radio]').length > 1;
+        // The group's own wrapper (ASP.NET puts a list in a span or table with an id), never the whole form.
+        const box = el.closest('span[id], div[id], table[id]');
+        const grouped = box && root.contains(box) && !box.querySelector('input[type=text], select, textarea')
+          && box.querySelectorAll('input[type=checkbox], input[type=radio]').length > 1;
         groups.set(stem, {
           id: stem, name: stem, kind: el.type === 'radio' ? 'radio' : 'checkboxes',
           label: strip((grouped ? before(box) : '') || before(el) || tidyName(stem)) || tidyName(stem), options: [],
@@ -1254,11 +1324,11 @@ function readFormFields(frame) {
       groups.get(stem).options.push({ value: el.value, text: clean(optionLabel) });
     }
     for (const group of groups.values()) {
-      if (group.kind === 'checkboxes' && group.options.length === 1) fields.push({ ...group, kind: 'checkbox', label: group.label || group.options[0].text });
+      if (group.kind === 'checkboxes' && group.options.length === 1) fields.push({ ...group, kind: 'checkbox', label: strip(group.options[0].text) || group.label });
       else fields.push(group);
     }
     return fields.filter((field) => field.label && field.label.length <= 80);
-  });
+  }, MODAL_CONTAINERS);
 }
 
 const isTimeSelect = (field) => {
@@ -1287,10 +1357,13 @@ async function settledFields(page, frame) {
   let last = '';
   let fields = null;
   let current = frame;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     await page.waitForTimeout(attempt === 0 ? 1200 : POLL_MS);
     current = await locateForm(page, current);
     if (!current) return { frame: null, fields: null };
+    // Lists filled by a background request (Formation -> Talk(s)) are read once it finishes.
+    const busy = await current.evaluate(() => (window.jQuery?.active ?? 0) > 0 || (window.Sys?.WebForms?.PageRequestManager?.getInstance?.()?.get_isInAsyncPostBack?.() ?? false)).catch(() => false);
+    if (busy) continue;
     fields = await readFormFields(current).catch(() => null);
     const signature = JSON.stringify(fields);
     if (fields && signature === last) break;
@@ -1300,17 +1373,21 @@ async function settledFields(page, frame) {
 }
 
 async function chooseOption(page, frame, field, option) {
-  const locator = field.name ? frame.locator(`select[name="${field.name}"]`) : frame.locator(`select[id="${field.id}"]`);
+  const locator = (field.name ? frame.locator(`select[name="${field.name}"]`) : frame.locator(`select[id="${field.id}"]`)).first();
   const loaded = page.waitForEvent('load', { timeout: 4000 }).catch(() => null);
-  await locator.first().selectOption(option.value, { timeout: 8000 });
+  // force: Select2 and similar keep the real list hidden.
+  await locator.selectOption(option.value, { timeout: 8000, force: true });
+  if (field.dressed) await locator.evaluate((el) => window.jQuery?.(el).trigger?.('change.select2')).catch(() => null);
   await loaded;
 }
+
+const optionsKey = (field) => JSON.stringify((field.options ?? []).map((option) => option.text));
 
 // Run on OGD's signed-in page. Opens Activities > New Activity and reads every
 // field; then picks each Type option (and each option of any list that
 // appears because of it) to see which extra fields each one brings. Never
 // presses Save. Returns the form description stored in Oracle.
-export function createActivityFormReader({ deadline }) {
+export function createActivityFormReader({ deadline, previous = null }) {
   return async function readActivityForm(page) {
     await openActivities(page);
     const context = page.context();
@@ -1318,29 +1395,37 @@ export function createActivityFormReader({ deadline }) {
     const onPage = (newPage) => opened.push(newPage);
     context.on('page', onPage);
     try {
-      const newButton = (frame) => frame.locator('input[type=submit], input[type=button], button, a').filter({ hasText: /^\s*new activity\s*$/i })
-        .or(frame.locator('input[type=submit][value="New Activity" i], input[type=button][value="New Activity" i]'));
+      const newButton = (frame) => frame.locator('input[type=submit], input[type=button], button, a').filter({ hasText: NEW_ACTIVITY_TEXT })
+        .or(frame.locator('input[type=submit][value="New Activity" i], input[type=button][value="New Activity" i], input[type=submit][value="Add New Activity" i], input[type=button][value="Add New Activity" i], input[type=button][value="Add Activity" i]'));
       if (!(await clickFirstVisible(page, newButton))) {
         throw new AutomationFailure(ACTIVITY_FAILURES.form, `No New Activity button on the Activities page. Buttons seen: ${await visibleLinkTexts(page)}`);
       }
       const { page: formPage, frame: firstFrame } = await waitForNewActivityForm(page, opened);
       let frame = firstFrame;
       const base = await readFormFields(frame);
-      const baseIds = new Set(base.map((field) => field.id));
       const typeField = base.find((field) => field.kind === 'select' && /type/i.test(field.label) && !isTimeSelect(field))
         ?? base.find((field) => field.kind === 'select' && /type|category|kind/i.test(`${field.label} ${field.name}`));
       const buttons = (await snapshotForm(frame)).buttons.map((button) => button.text);
-      const dependents = {};
+      // A partial earlier run is continued: its findings are kept and its finished paths skipped.
+      const dependents = { ...(previous?.isPartial ? previous.dependents : {}) };
+      const finished = new Set(previous?.isPartial ? previous.finished ?? [] : []);
+      // Every field each Type shows, to tell fields every Type has from those only some have.
+      const typePresent = { ...(previous?.isPartial ? previous.typePresent ?? {} : {}) };
       const notes = [];
       let isPartial = false;
 
-      // Picks each option of a list and records the fields it adds, then goes one
-      // level deeper. Keys are paths: "Type::FORMATION", then
-      // "Type::FORMATION >> Track::CLP" for a list that FORMATION brought.
-      async function explore(field, knownIds, depth, prefix = '') {
-        const options = (field.options ?? []).filter((option) => option.value && !/^-+|^select|^choose/i.test(option.text));
+      // Picks each option of a list and records what it changes: fields that
+      // appear, and lists whose choices change (Formation -> its Talk(s)).
+      // Then goes deeper for lists that changed, up to three levels (FIG
+      // ACTIVITY -> Program -> Formation -> Talk(s)). Keys are paths:
+      // "Activity Type::FORMATION >> Formation::[CPR] ...". Paths finished in
+      // an earlier, partial run are skipped.
+      async function explore(field, baseline, depth, prefix = '') {
+        const options = (field.options ?? []).filter((option) => option.value && !/^-+|^select\b|^choose\b/i.test(option.text));
         for (const option of options) {
           if (Date.now() > deadline) { isPartial = true; return; }
+          const key = `${prefix}${field.label}::${option.text}`;
+          if (finished.has(key)) continue;
           try {
             await chooseOption(formPage, frame, field, option);
           } catch (error) {
@@ -1350,30 +1435,51 @@ export function createActivityFormReader({ deadline }) {
           const settled = await settledFields(formPage, frame);
           if (!settled.frame) { notes.push(`the form closed after choosing ${field.label} "${option.text}"`); isPartial = true; return; }
           frame = settled.frame;
-          const added = settled.fields.filter((candidate) => !knownIds.has(candidate.id));
-          const key = `${prefix}${field.label}::${option.text}`;
-          if (added.length) dependents[key] = added;
-          if (depth < 2) {
-            const addedIds = new Set([...knownIds, ...added.map((candidate) => candidate.id)]);
-            for (const child of added.filter((candidate) => candidate.kind === 'select' && !isTimeSelect(candidate) && (candidate.options?.length ?? 0) <= 40)) {
-              await explore(child, addedIds, depth + 1, `${key} >> `);
+          const changed = settled.fields.filter((candidate) => candidate.id !== field.id
+            && (!baseline.has(candidate.id) || baseline.get(candidate.id) !== optionsKey(candidate)));
+          if (changed.length) dependents[key] = changed;
+          if (depth === 1) typePresent[key] = settled.fields;
+          let complete = true;
+          if (depth < 3) {
+            const here = new Map(settled.fields.map((candidate) => [candidate.id, optionsKey(candidate)]));
+            const children = changed.filter((candidate) => candidate.kind === 'select' && !isTimeSelect(candidate)
+              && (candidate.options?.length ?? 0) > 1 && (candidate.options?.length ?? 0) <= 80);
+            for (const child of children) {
+              await explore(child, here, depth + 1, `${key} >> `);
+              if (Date.now() > deadline) { complete = false; break; }
               // Back to this option, so the next child list is read in the right state.
-              if (Date.now() < deadline) {
-                await chooseOption(formPage, frame, field, option).catch(() => null);
-                frame = (await settledFields(formPage, frame)).frame ?? frame;
-              }
+              await chooseOption(formPage, frame, field, option).catch(() => null);
+              frame = (await settledFields(formPage, frame)).frame ?? frame;
             }
           }
+          if (complete) finished.add(key);
         }
       }
 
-      if (typeField) await explore(typeField, baseIds, 1);
-      else notes.push('no Type list found on the form');
+      let fields = base;
+      if (typeField) {
+        await explore(typeField, new Map(base.map((field) => [field.id, optionsKey(field)])), 1);
+        // A field on the form when it opened but missing for some Types (Topic,
+        // shown for the Type selected at first) belongs to the Types that show it.
+        const lists = Object.values(typePresent);
+        if (lists.length > 1) {
+          const common = new Set(lists[0].map((field) => field.id).filter((id) => lists.every((list) => list.some((field) => field.id === id))));
+          for (const [key, list] of Object.entries(typePresent)) {
+            const own = list.filter((field) => !common.has(field.id) && field.id !== typeField.id);
+            const known = new Set((dependents[key] ?? []).map((field) => field.id));
+            const extra = own.filter((field) => !known.has(field.id));
+            if (extra.length) dependents[key] = [...extra, ...(dependents[key] ?? [])];
+          }
+          fields = base.filter((field) => common.has(field.id) || field.id === typeField.id);
+        }
+      } else notes.push('no Type list found on the form');
       return {
         capturedAt: new Date().toISOString(),
         typeFieldLabel: typeField?.label ?? null,
-        fields: base,
+        fields,
         dependents,
+        typePresent: isPartial ? typePresent : undefined,
+        finished: [...finished],
         buttons,
         isPartial,
         notes: notes.join('; ').slice(0, DETAIL_LIMIT),
@@ -1388,6 +1494,26 @@ export function createActivityFormReader({ deadline }) {
 
 // Sets one extra field. Returns true, or a problem to report.
 async function setExtraField(page, frame, field, value) {
+  if (field.kind === 'multiselect') {
+    // A pick-several list (Talk(s)): select the chosen options on the real
+    // list, then let its "None selected" button catch up.
+    const wanted = (Array.isArray(value) ? value : [value]).map(normalizeText);
+    const css = field.name ? `select[name="${field.name}"]` : `select[id="${field.id}"]`;
+    const missing = await frame.evaluate(({ selector, wantedList }) => {
+      const clean = (text) => String(text ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+      const select = document.querySelector(selector);
+      if (!select) return wantedList;
+      const found = new Set();
+      for (const option of select.options) {
+        option.selected = wantedList.includes(clean(option.text));
+        if (option.selected) found.add(clean(option.text));
+      }
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      try { window.jQuery?.(select).multiselect?.('refresh'); } catch { /* not a multiselect plugin */ }
+      return wantedList.filter((text) => !found.has(text));
+    }, { selector: css, wantedList: wanted });
+    return missing.length ? `"${field.label}" has no ${missing.map((text) => `"${text}"`).join(', ')}` : true;
+  }
   if (field.kind === 'select') {
     const option = pickOption({ options: field.options ?? [] }, String(value));
     if (!option) return `"${field.label}" has no "${value}" (choices: ${(field.options ?? []).map((choice) => choice.text).filter(Boolean).slice(0, 20).join(', ')})`;

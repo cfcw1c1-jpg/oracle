@@ -105,17 +105,33 @@ function choicesOf(field) {
 const extraFields = computed(() => {
   const form = ogdForm.value;
   if (!form?.typeFieldLabel || !editor.open || !editor.form.activityType) return [];
-  const shown = [];
+  // A list found again deeper down (Talk(s) for the chosen Formation) keeps
+  // its place but takes the deeper, narrower choices.
+  const shown = new Map();
   const visit = (key, depth) => {
     for (const field of form.dependents?.[key] ?? []) {
-      shown.push({ ...field, depth, uid: `${key}|${field.id}` });
+      shown.set(field.label, { ...field, depth, uid: field.label });
+    }
+    for (const field of form.dependents?.[key] ?? []) {
       const value = editor.form.ogdFields?.[field.label];
       if ((field.kind === 'select' || field.kind === 'radio') && value && depth < 3) visit(`${key} >> ${field.label}::${value}`, depth + 1);
     }
   };
   visit(`${form.typeFieldLabel}::${editor.form.activityType}`, 0);
-  return shown;
+  return [...shown.values()];
 });
+
+// A value is kept only while the field shows it as a choice.
+function keptValue(field, value) {
+  if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) return undefined;
+  if (!['select', 'radio', 'checkboxes', 'multiselect'].includes(field.kind)) return value;
+  const texts = new Set(choicesOf(field).map((option) => option.text));
+  if (Array.isArray(value)) {
+    const list = value.filter((entry) => texts.has(entry));
+    return list.length ? list : undefined;
+  }
+  return texts.has(value) ? value : undefined;
+}
 function toggleExtraChoice(label, text) {
   const list = Array.isArray(editor.form.ogdFields[label]) ? editor.form.ogdFields[label] : [];
   editor.form.ogdFields[label] = list.includes(text) ? list.filter((entry) => entry !== text) : [...list, text];
@@ -491,8 +507,8 @@ async function submitEditor() {
       startsAt: fromLocalInput(editor.form.start), endsAt: fromLocalInput(editor.form.end), teamLeader: editor.form.teamLeader,
       teamLeaderMemberId: editor.form.teamLeaderMemberId, venue: editor.form.venue, description: editor.form.description, attendeeIds: editor.form.attendeeIds,
       // Only the extra fields the chosen Type shows; values left from another Type are dropped.
-      ogdFields: Object.fromEntries(extraFields.value.map((field) => [field.label, editor.form.ogdFields?.[field.label]])
-        .filter(([, value]) => value !== undefined && value !== '' && !(Array.isArray(value) && !value.length))),
+      ogdFields: Object.fromEntries(extraFields.value.map((field) => [field.label, keptValue(field, editor.form.ogdFields?.[field.label])])
+        .filter(([, value]) => value !== undefined)),
     });
     if (!isActive) return;
     const inRange = saved.startsAt >= fromLocalInput(`${range.from}T00:00`) && saved.startsAt <= fromLocalInput(`${range.to}T23:59`);
@@ -810,14 +826,14 @@ onBeforeUnmount(() => {
           <div v-if="extraFields.length" class="extra span2">
             <p class="field-label">{{ editor.form.activityType }} details (OGD asks for these)</p>
             <div class="grid2">
-              <div v-for="field in extraFields" :key="field.uid" class="field" :class="{ span2: ['checkboxes', 'radio', 'textarea'].includes(field.kind) }">
+              <div v-for="field in extraFields" :key="field.uid" class="field" :class="{ span2: ['checkboxes', 'multiselect', 'radio', 'textarea'].includes(field.kind) }">
                 <span class="field-label">{{ field.label }}<template v-if="field.required"> *</template></span>
                 <select v-if="field.kind === 'select'" v-model="editor.form.ogdFields[field.label]" class="select">
                   <option :value="undefined">Choose…</option>
                   <option v-for="option in choicesOf(field)" :key="option.value" :value="option.text">{{ option.text }}</option>
                 </select>
-                <div v-else-if="field.kind === 'checkboxes'" class="choice-list">
-                  <label v-for="option in field.options" :key="option.value + option.text" class="row gap check">
+                <div v-else-if="field.kind === 'checkboxes' || field.kind === 'multiselect'" class="choice-list">
+                  <label v-for="option in choicesOf(field)" :key="option.value + option.text" class="row gap check">
                     <input type="checkbox" :checked="(editor.form.ogdFields[field.label] ?? []).includes(option.text)" @change="toggleExtraChoice(field.label, option.text)" /><span>{{ option.text }}</span>
                   </label>
                 </div>

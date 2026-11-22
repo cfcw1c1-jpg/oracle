@@ -125,16 +125,30 @@ function isPlaceholder(text) {
 // The extra fields for the form's chosen Type, and those its own lists bring.
 function extraFieldsFor(ogdForm, form) {
   if (!ogdForm?.typeFieldLabel || !form.activityType) return [];
-  const shown = [];
+  // A list found again deeper down (Talk(s) for the chosen Formation) keeps
+  // its place but takes the deeper, narrower choices.
+  const shown = new Map();
   const visit = (key, depth) => {
+    for (const field of ogdForm.dependents?.[key] ?? []) shown.set(field.label, { ...field, depth, uid: field.label });
     for (const field of ogdForm.dependents?.[key] ?? []) {
-      shown.push({ ...field, depth, uid: `${key}|${field.id}` });
       const value = form.ogdFields?.[field.label];
       if ((field.kind === 'select' || field.kind === 'radio') && value && depth < 3) visit(`${key} >> ${field.label}::${value}`, depth + 1);
     }
   };
   visit(`${ogdForm.typeFieldLabel}::${form.activityType}`, 0);
-  return shown;
+  return [...shown.values()];
+}
+
+// A value is kept only while the field shows it as a choice.
+function keptValue(field, value) {
+  if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) return undefined;
+  if (!['select', 'radio', 'checkboxes', 'multiselect'].includes(field.kind)) return value;
+  const texts = new Set((field.options ?? []).filter((option) => !isPlaceholder(option.text)).map((option) => option.text));
+  if (Array.isArray(value)) {
+    const list = value.filter((entry) => texts.has(entry));
+    return list.length ? list : undefined;
+  }
+  return texts.has(value) ? value : undefined;
 }
 
 function TonePill({ label, tone = 'plain' }) {
@@ -469,8 +483,8 @@ export default function Activities() {
         id: form.id, areaId: form.areaId, name: form.name, activityType: form.activityType, areaName: form.areaName, startsAt, endsAt,
         teamLeader: form.teamLeader, teamLeaderMemberId: form.teamLeaderMemberId, venue: form.venue, description: form.description, attendeeIds: form.attendeeIds,
         // Only the extra fields the chosen Type shows; values left from another Type are dropped.
-        ogdFields: Object.fromEntries(extraFieldsFor(ogdForm, form).map((field) => [field.label, form.ogdFields?.[field.label]])
-          .filter(([, value]) => value !== undefined && value !== '' && !(Array.isArray(value) && !value.length))),
+        ogdFields: Object.fromEntries(extraFieldsFor(ogdForm, form).map((field) => [field.label, keptValue(field, form.ogdFields?.[field.label])])
+          .filter(([, value]) => value !== undefined)),
       });
       if (!isMountedRef.current) return;
       setActivities((current) => (current.some((activity) => activity.id === saved.id)
@@ -943,7 +957,7 @@ function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady,
                     {choices.map((option) => <Chip key={option.value + option.text} label={option.text} active={value === option.text} onPress={() => setValue(value === option.text ? undefined : option.text)} />)}
                   </View>
                 )}
-                {field.kind === 'checkboxes' && (
+                {(field.kind === 'checkboxes' || field.kind === 'multiselect') && (
                   <View style={styles.chipRow}>
                     {choices.map((option) => {
                       const list = Array.isArray(value) ? value : [];
@@ -955,7 +969,7 @@ function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady,
                 {field.kind === 'checkbox' && (
                   <View style={styles.switchRow}><Switch value={value === true} onValueChange={setValue} /><Text style={styles.bodyText}>Yes</Text></View>
                 )}
-                {!['select', 'radio', 'checkboxes', 'checkbox'].includes(field.kind) && (
+                {!['select', 'radio', 'checkboxes', 'multiselect', 'checkbox'].includes(field.kind) && (
                   <TextInput value={value ?? ''} onChangeText={setValue} multiline={field.kind === 'textarea'} placeholder={field.kind === 'date' ? 'YYYY-MM-DD' : ''} placeholderTextColor="#94a3b8" style={[styles.input, field.kind === 'textarea' && styles.textArea]} />
                 )}
               </Field>
