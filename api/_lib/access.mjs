@@ -8,6 +8,7 @@ export const SCOPES = {
   sector: { pageKey: 'ogdChapters', credential: 'gmail' },
   reports: { pageKey: 'monthlyPastoralReports', credential: null },
   celebrants: { pageKey: 'reports', credential: null },
+  activities: { pageKey: 'activities', credential: null },
 };
 
 export class HttpError extends Error {

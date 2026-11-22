@@ -65,6 +65,35 @@ export function generateCelebrants(values) {
   return request('/api/ogd/browser?task=celebrants', { method: 'POST', body: JSON.stringify(values) });
 }
 
+export function fetchActivities(from, to) {
+  return request(`/api/ogd/activities?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+}
+
+export async function fetchActivityMembers(areaId) {
+  return (await request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'members', areaId }) })).members;
+}
+
+export async function saveActivity(activity) {
+  return (await request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'save', activity }) })).activity;
+}
+
+export function deleteActivity(id) {
+  return request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'delete', id }) });
+}
+
+// add: Member IDs to add; remove: attendee keys ("id:PM-..." or "name:...").
+export async function updateActivityAttendees(id, { add = [], remove = [] }) {
+  return (await request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'attendees', id, add, remove }) })).activity;
+}
+
+export function syncActivities(values) {
+  return request('/api/ogd/browser?task=sync-activities', { method: 'POST', body: JSON.stringify(values) });
+}
+
+export function pushActivity(activityId) {
+  return request('/api/ogd/browser?task=push-activity', { method: 'POST', body: JSON.stringify({ activityId }) });
+}
+
 export const FAILURE_MESSAGES = {
   ogd_bad_credentials: 'OGD did not accept this login.',
   otp_rejected: 'OGD did not accept the emailed code.',
@@ -79,4 +108,7 @@ export const FAILURE_MESSAGES = {
   celebrants_link_missing: 'Signed in, but could not find the Celebrants page in OGD.',
   celebrants_form_unexpected: 'Signed in, but could not fill in the Celebrants form.',
   celebrants_result_unexpected: 'Signed in, but could not read the celebrant list.',
+  activities_page_unexpected: 'Signed in, but could not read the Activities page in OGD.',
+  activity_form_unexpected: 'Signed in, but could not fill in OGD\'s New Activity form. Nothing was saved in OGD.',
+  activity_save_failed: 'OGD did not save the new activity.',
 };

@@ -1,5 +1,5 @@
 import {
-  BarChart3, CheckCheck, FileText, FolderOpen, Home, Hourglass, Inbox, KeyRound,
+  BarChart3, CalendarDays, CheckCheck, FileText, FolderOpen, Home, Hourglass, Inbox, KeyRound,
   LayoutDashboard, LineChart, ListChecks, PartyPopper, Settings, TrendingUp, UserCog, UserRound, Users, Wrench,
 } from 'lucide-vue-next';
 
@@ -19,6 +19,7 @@ export const NAV_ITEMS = [
   { key: 'ogdChapters', label: 'OGD Accounts', icon: KeyRound },
   { key: 'monthlyPastoralReports', label: 'Monthly Pastoral Reports', icon: FileText },
   { key: 'reports', label: 'Reports', icon: PartyPopper },
+  { key: 'activities', label: 'Activities', icon: CalendarDays },
   { key: 'portalUsers', label: 'Portal Users', icon: UserCog },
   { key: 'logs', label: 'Logs', icon: Inbox },
   { key: 'settings', label: 'Settings', icon: Settings },
