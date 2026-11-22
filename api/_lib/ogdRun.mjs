@@ -11,6 +11,7 @@ const COOLDOWN_MS = 60 * 1000;
 // login still waits out the full COOLDOWN_MS (see notBeforeMs).
 const SESSION_COOLDOWN_MS = 10 * 1000;
 const STALE_RUN_MS = 5 * 60 * 1000;
+const RUN_LIMIT_MS = 285 * 1000;
 
 // Saved OGD sessions. One older than SESSION_MAX_AGE_MS is not tried. One
 // rejected while younger than SESSION_TRUSTED_MS should still have been valid,
@@ -72,6 +73,13 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
   const session = { state: null, rejected: false };
 
   let browser;
+  let isOutOfTime = false;
+  // Close the browser before Vercel's 300s limit cuts the request off, so the
+  // run still records how it ended instead of staying "running".
+  const guard = setTimeout(() => {
+    isOutOfTime = true;
+    browser?.close().catch(() => null);
+  }, RUN_LIMIT_MS);
   try {
     browser = await launchBrowser();
     const readOtp = createGmailOtpReader({ address: row.gmail_address, password: gmailPassword });
@@ -92,9 +100,13 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
     if (error instanceof AutomationFailure) {
       return { ...base, status: 'failed', failure_code: error.code, status_detail: scrub(error.message, secrets) };
     }
+    if (isOutOfTime) {
+      return { ...base, status: 'failed', failure_code: 'automation_error', status_detail: 'OGD took too long to answer, so the run was stopped. Please try again.' };
+    }
     console.error('[ogd] automation error:', scrub(error?.message, secrets));
     return { ...base, status: 'failed', failure_code: 'automation_error', status_detail: scrub(error?.message?.split('\n')[0] ?? 'Unknown error', secrets) };
   } finally {
+    clearTimeout(guard);
     await browser?.close().catch(() => null);
   }
 }

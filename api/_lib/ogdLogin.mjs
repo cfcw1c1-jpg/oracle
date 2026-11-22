@@ -152,7 +152,11 @@ async function runSignedIn(page, flags, afterLogin, { keepSession, session }) {
 // Opens OGD's home page with saved cookies. True when OGD still treats them as
 // signed in; otherwise the cookies are dropped so the login starts clean.
 async function resumeSession(page, homeUrl) {
-  await page.goto(homeUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
+  await page.goto(homeUrl, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS }).catch((error) => {
+    // The browser itself failing is not OGD turning the cookies down.
+    if (/net::ERR_(INSUFFICIENT_RESOURCES|OUT_OF_MEMORY)|Target (page|crashed)|has been closed/i.test(error?.message ?? '')) throw error;
+    return null;
+  });
   const { step } = await settledStep(page, homeUrl).catch(() => ({ step: { state: 'unexpected' } }));
   if (step.state === 'connected') return true;
   await page.context().clearCookies().catch(() => null);

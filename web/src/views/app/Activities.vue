@@ -164,6 +164,11 @@ async function readForm() {
   }
 }
 
+function readFormFromEditor() {
+  if (chapterById.value.get(editor.form.areaId)?.isReady) formChapterId.value = editor.form.areaId;
+  readForm();
+}
+
 const visibleActivities = computed(() => {
   const query = search.value.trim().toLowerCase();
   return activities.value.filter((activity) => (!chapterFilter.value || activity.areaId === Number(chapterFilter.value))
@@ -829,6 +834,12 @@ onBeforeUnmount(() => {
               <option v-for="area in editorAreaChoices" :key="area" :value="area">{{ area }}</option>
             </select>
           </label>
+          <div v-if="!ogdForm && editor.form.activityType" class="extra span2 stack">
+            <p class="small">OGD's extra fields for {{ editor.form.activityType }} (like Formation and Talk(s)) haven't been read yet. Oracle reads them once from OGD's New Activity form and then shows them here.</p>
+            <p v-if="isReadingForm" class="muted small">Reading OGD's form… this takes a few minutes. You can keep filling in the rest.</p>
+            <p v-if="formError" class="small text-danger">{{ formError }}</p>
+            <div><button type="button" class="btn btn-sm" :disabled="isReadingForm || !readyCount" @click="readFormFromEditor"><RefreshCw :size="13" />{{ isReadingForm ? 'Reading OGD form…' : 'Read form from OGD' }}</button></div>
+          </div>
           <div v-if="extraFields.length" class="extra span2">
             <p class="field-label">{{ editor.form.activityType }} details (OGD asks for these)</p>
             <div class="grid2">

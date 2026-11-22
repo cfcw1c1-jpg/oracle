@@ -15,10 +15,13 @@ import { chromium } from 'playwright-core';
 // off can leave its Chromium running and its profile folder in /tmp, and the
 // next run's browser then fails with net::ERR_INSUFFICIENT_RESOURCES. So when
 // no other browser of this instance is in use, leftovers are cleared first.
+// A browser launched longer ago than any request may run (maxDuration 300s)
+// belongs to a request that was cut off, so it no longer counts as in use.
 
 const EXTRA_ARGS = ['--disk-cache-size=1', '--media-cache-size=1', '--disable-gpu-shader-disk-cache'];
 const PROFILE_PREFIX = 'playwright_chromiumdev_profile-';
-let openBrowsers = 0;
+const BROWSER_MAX_AGE_MS = 330 * 1000;
+const openBrowsers = new Map();
 
 function killLeftoverChromium(executablePath) {
   let killed = 0;
@@ -52,7 +55,9 @@ function removeLeftoverProfiles() {
 }
 
 function clearLeftovers(executablePath) {
-  if (openBrowsers > 0 || process.platform !== 'linux') return;
+  const now = Date.now();
+  for (const [browser, launchedAt] of openBrowsers) if (now - launchedAt > BROWSER_MAX_AGE_MS) openBrowsers.delete(browser);
+  if (openBrowsers.size > 0 || process.platform !== 'linux') return;
   try {
     const killed = killLeftoverChromium(executablePath);
     const removed = removeLeftoverProfiles();
@@ -70,9 +75,9 @@ export async function launchBrowser() {
   if (!process.env.OGD_CHROMIUM_PATH) clearLeftovers(executablePath);
 
   const browser = await chromium.launch({ args: [...chromiumBinary.args, ...EXTRA_ARGS], executablePath, headless: true });
-  openBrowsers += 1;
+  openBrowsers.set(browser, Date.now());
   browser.on('disconnected', () => {
-    openBrowsers = Math.max(0, openBrowsers - 1);
+    openBrowsers.delete(browser);
   });
 
   // Every context this browser makes skips the heavy resources.
