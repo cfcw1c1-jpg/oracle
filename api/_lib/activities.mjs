@@ -1,5 +1,5 @@
 import { fetchAllRows, HttpError } from './access.mjs';
-import { normalizeText } from './ogdActivities.mjs';
+import { cleanDetails, normalizeText } from './ogdActivities.mjs';
 
 // Shared by the Activities routes: date checks, members lookups, attendee
 // matching and the shape the page receives.
@@ -115,7 +115,7 @@ export function toActivity(row) {
       const pending = new Set(pendingForOgd(row.attendees));
       return (row.attendees ?? []).map((attendee) => ({ ...attendee, isPendingInOgd: pending.has(attendee) }));
     })(),
-    details: row.ogd_details ?? {},
+    details: cleanDetails(row.ogd_details),
     attendeeTable: row.ogd_attendee_table,
     ogdUrl: row.ogd_url,
     publicToken: row.public_token,

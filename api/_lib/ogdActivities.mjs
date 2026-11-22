@@ -77,6 +77,12 @@ export function activityKey(row) {
 // ---------- Attendees ----------
 
 // Turns OGD's attendee table into { memberId, name, cells } entries.
+// Details saved before page furniture was filtered out are cleaned on the way out.
+export function cleanDetails(details) {
+  return Object.fromEntries(Object.entries(details ?? {}).filter(([label, value]) => !/[$]|^ctl\d|^(txt|cbo|ddl|btn|chk|lbl|hdn)[A-Z]/.test(label)
+    && !/^-+\s*(show all|select|all|choose|none)[^-]*-*$/i.test(String(value ?? '').trim())));
+}
+
 export function toAttendees({ headers, records }) {
   const lower = headers.map((header) => String(header).toLowerCase());
   let idColumn = lower.findIndex((header) => /member\s*id|id\s*no|^id$|member\s*no/.test(header));
@@ -219,6 +225,10 @@ async function waitForNextPage(page, previousKey) {
 function readDetailFields(frame, activityName) {
   return frame.evaluate((name) => {
     const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    // OGD's own control names (ctl00$ContentPlaceHolder1$cboType) and
+    // unchosen filter values ("-- show all --") are page furniture, not details.
+    const isJunkLabel = (label) => /[$_]|^ctl\d|^(txt|cbo|ddl|btn|chk|lbl|hdn)[A-Z]/.test(label) || !/\s/.test(label) && /[a-z][A-Z]/.test(label);
+    const isJunkValue = (value) => /^-+\s*(show all|select|all|choose|none)[^-]*-*$/i.test(value);
     const norm = (value) => clean(value).toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
     const body = norm(document.body?.innerText);
     const shows = (value) => body.includes(norm(value)) || [...document.querySelectorAll('input, textarea')].some((el) => norm(el.value) === norm(value));
@@ -239,18 +249,18 @@ function readDetailFields(frame, activityName) {
     for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]), select, textarea')) {
       if (!isShown(el)) continue;
       const label = labelOf(el).replace(/[:*]+$/, '').trim();
-      if (!label || label.length > 60) continue;
+      if (!label || label.length > 60 || isJunkLabel(label)) continue;
       let value = '';
       if (el.tagName === 'SELECT') value = clean(el.options[el.selectedIndex]?.text);
       else if (el.type === 'checkbox' || el.type === 'radio') { if (!el.checked) continue; value = 'Yes'; }
       else value = clean(el.value);
-      if (value) fields[label] = fields[label] ? `${fields[label]} ${value}` : value;
+      if (value && !isJunkValue(value)) fields[label] = fields[label] ? `${fields[label]} ${value}` : value;
     }
     for (const row of document.querySelectorAll('tr')) {
       if (row.querySelector('table, input, select, textarea') || row.cells.length !== 2) continue;
       const label = clean(row.cells[0].innerText).replace(/[:*]+$/, '').trim();
       const value = clean(row.cells[1].innerText);
-      if (label && value && label.length <= 60 && !fields[label]) fields[label] = value;
+      if (label && value && label.length <= 60 && !fields[label] && !isJunkLabel(label) && !isJunkValue(value)) fields[label] = value;
     }
     return Object.keys(fields).length >= 2 ? { fields } : null;
   }, activityName);
@@ -271,9 +281,11 @@ function readAttendeeTable(frame) {
       if (headers.some((header) => /activity\s*name/i.test(header))) continue;
       const records = rows.slice(headerIndex + 1).filter((row) => row.cells.length === headers.length).map((row) => [...row.cells].map(text)).filter((cells) => cells.some(Boolean));
       const score = records.length + (records.some((cells) => cells.some((cell) => idPattern.test(cell))) ? 1000 : 0) + (/attend|participant|member/i.test(headers.join(' ')) ? 100 : 0);
-      if (!best || score > best.score) best = { headers, records, score };
+      if (!best || score > best.score) best = { headers, records, score, table };
     }
     if (!best) return null;
+    document.querySelectorAll('[data-oracle-att]').forEach((el) => el.removeAttribute('data-oracle-att'));
+    best.table.setAttribute('data-oracle-att', '1');
     return { headers: best.headers, records: best.records };
   });
 }
@@ -301,30 +313,91 @@ function widenAttendeeTable(frame) {
   });
 }
 
-// Moves an attendee list to its next page: a DataTables-style Next button,
-// else the ASP.NET GridView pager.
-async function nextAttendeePage(frame) {
-  const clicked = await frame.evaluate(() => {
-    const next = [...document.querySelectorAll('.paginate_button.next, .dt-paging-button.next, li.next > a, a[aria-label="Next"], button[aria-label="Next"]')]
-      .find((el) => el.getClientRects().length > 0);
-    if (!next) return null;
-    if (/disabled/.test(next.className) || next.closest('.disabled') || next.getAttribute('aria-disabled') === 'true' || next.disabled) return false;
-    next.click();
+// Moves an attendee list to its next page. Looks only around the attendee
+// table (never at the Activities list's own pager): a Next button or link, the
+// next page number, a page dropdown, else the ASP.NET GridView pager. Marks
+// the control and clicks it for real, so OGD's postbacks run as usual.
+// current is the page number now showing (1 at the start).
+async function nextAttendeePage(frame, current) {
+  const how = await frame.evaluate((pageNow) => {
+    const text = (el) => (el.value || el.innerText || el.textContent || el.title || el.alt || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const shown = (el) => el.getClientRects().length > 0;
+    document.querySelectorAll('[data-oracle-next]').forEach((el) => el.removeAttribute('data-oracle-next'));
+    const table = document.querySelector('[data-oracle-att]');
+    if (!table) return null;
+    const activities = [...document.querySelectorAll('table')].find((other) => other !== table && !table.contains(other)
+      && [...other.rows].slice(0, 3).some((row) => /activity\s*name/i.test(text(row))));
+    // The widest container around the table that does not hold the Activities list.
+    let scope = table;
+    for (let up = table.parentElement; up && up !== document.documentElement; up = up.parentElement) {
+      if (activities && up.contains(activities)) break;
+      scope = up;
+    }
+    // Links inside the attendee rows themselves (names, edit buttons) are not paging.
+    const inDataRow = (el) => {
+      const row = el.closest('tr');
+      return Boolean(row) && row.closest('table') === table && row.cells.length > 2 && !/pager|pgr|paging|pagination/i.test(row.className);
+    };
+    const disabled = (el) => el.disabled || /disabled|inactive/i.test(el.className) || el.closest('.disabled') || el.getAttribute('aria-disabled') === 'true';
+    const clickables = [...scope.querySelectorAll('a, button, input[type=button], input[type=submit], input[type=image], [onclick], li[role=button], span[role=button]')]
+      .filter((el) => shown(el) && !inDataRow(el));
+    const mark = (el, kind) => { el.setAttribute('data-oracle-next', '1'); return kind; };
+    const next = clickables.find((el) => /^(next|next page|>|›|»|>>|→|next\s*[>›»]+)$/i.test(text(el)) || /\bnext\b/i.test(el.getAttribute('aria-label') || el.className || ''));
+    if (next) return disabled(next) ? 'end' : mark(next, 'next');
+    const numbered = clickables.find((el) => text(el) === String(pageNow + 1) && !disabled(el));
+    if (numbered) return mark(numbered, 'number');
+    const dots = clickables.find((el) => /^(\.\.\.|…)$/.test(text(el)) && (!el.closest('td, li')?.previousElementSibling || /\d/.test(text(el.closest('td, li').previousElementSibling))));
+    if (dots && pageNow % 10 === 0) return mark(dots, 'dots');
+    const pageSelect = [...scope.querySelectorAll('select')].find((select) => shown(select) && select.options.length > 1
+      && [...select.options].every((option, index) => text(option) === String(index + 1) || /^page\s*\d+/i.test(text(option))));
+    if (pageSelect) {
+      if (pageSelect.selectedIndex + 1 >= pageSelect.options.length) return 'end';
+      pageSelect.selectedIndex += 1;
+      pageSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      return 'select';
+    }
+    // The page-wide GridView pager is only safe when the Activities list is not on this page.
+    return activities ? 'end' : null;
+  }, current).catch(() => null);
+  if (how === 'end') return false;
+  if (how === 'select') return true;
+  if (how) {
+    await frame.locator('[data-oracle-next]').first().click({ timeout: 10000 }).catch(() => null);
     return true;
-  }).catch(() => null);
-  if (clicked !== null) return clicked;
+  }
   return (await pagerAction(frame, 'next').catch(() => ({ moved: false }))).moved;
+}
+
+// What sits around the attendee table, for fixing paging when it fails.
+function describeAttendeePager(frame) {
+  return frame.evaluate(() => {
+    const table = document.querySelector('[data-oracle-att]');
+    if (!table) return 'attendee table not found';
+    const text = (el) => (el.value || el.innerText || el.textContent || el.title || el.alt || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+    const activities = [...document.querySelectorAll('table')].find((other) => other !== table && !table.contains(other)
+      && [...other.rows].slice(0, 3).some((row) => /activity\s*name/i.test(row.innerText || '')));
+    let scope = table;
+    for (let up = table.parentElement; up && up !== document.documentElement; up = up.parentElement) {
+      if (activities && up.contains(activities)) break;
+      scope = up;
+    }
+    const items = [...scope.querySelectorAll('a, button, input:not([type=hidden]), select, [onclick]')]
+      .filter((el) => el.getClientRects().length > 0 && !(el.closest('tr')?.closest('table') === table && el.closest('tr').cells.length > 2))
+      .slice(0, 25)
+      .map((el) => `${el.tagName.toLowerCase()}${el.type ? `[${el.type}]` : ''}${el.className ? `.${String(el.className).split(/\s+/)[0]}` : ''} "${text(el)}"${el.getAttribute('href') ? ` href=${el.getAttribute('href').slice(0, 50)}` : ''}${el.getAttribute('onclick') ? ` onclick=${el.getAttribute('onclick').slice(0, 50)}` : ''}`);
+    const lastRow = table.rows[table.rows.length - 1];
+    return `rows ${table.rows.length}; last row: ${(lastRow?.innerText || '').replace(/\s+/g, ' ').slice(0, 80)}; controls near it: ${items.join(' | ') || 'none'}`;
+  }).catch(() => 'could not describe the attendee list');
 }
 
 const MAX_ATTENDEE_LIST_PAGES = 50;
 const recordsKey = (table) => JSON.stringify(table?.records ?? []);
 
-// The whole attendee list across all its pages. A frame that also holds the
-// Activities list is read one page only, so its pager is never touched.
+// The whole attendee list across all its pages. Paging looks only around the
+// attendee table, so the Activities list's own pager is never touched.
 async function readAllAttendees(frame) {
   let table = await readAttendeeTable(frame);
   if (!table) return null;
-  if (await readActivitiesTable(frame).catch(() => null)) return table;
   const page = frame.page();
   const waitForChange = async (before) => {
     for (let wait = 0; wait < 30; wait += 1) {
@@ -338,17 +411,20 @@ async function readAllAttendees(frame) {
   const seen = new Set(table.records.map((cells) => cells.join('|')));
   const records = [...table.records];
   let pages = 1;
+  let stopped = '';
   for (; pages < MAX_ATTENDEE_LIST_PAGES; pages += 1) {
     const before = recordsKey(await readAttendeeTable(frame).catch(() => null));
-    if (!(await nextAttendeePage(frame))) break;
+    if (!(await nextAttendeePage(frame, pages))) { stopped = 'no next page control'; break; }
     const next = await waitForChange(before);
-    if (!next) break;
+    if (!next) { stopped = 'the list did not change after next page'; break; }
     const fresh = next.records.filter((cells) => !seen.has(cells.join('|')));
-    if (!fresh.length) break;
+    if (!fresh.length) { stopped = 'next page showed no new rows'; break; }
     fresh.forEach((cells) => seen.add(cells.join('|')));
     records.push(...fresh);
   }
-  return { headers: table.headers, records, pages };
+  // Kept for when OGD's count is higher than what was read.
+  const pager = stopped && pages === 1 ? `${stopped}; ${await describeAttendeePager(frame)}` : null;
+  return { headers: table.headers, records, pages, pager };
 }
 
 function isRealHref(href) {
@@ -480,7 +556,12 @@ export function createActivitiesSync({ from, to, deadline }) {
           const row = list.table.records.find((candidate) => candidate.cells.join('|') === record.cells.join('|')) ?? record;
           if (row.hasAttendanceLink) {
             const opened = await openAndRead(page, list, row, 'attendance', readAllAttendees).catch((error) => ({ result: null, error }));
-            if (opened.result) activity.attendeeTable = opened.result;
+            if (opened.result) {
+              activity.attendeeTable = opened.result;
+              if (opened.result.pager && activity.attendanceCount > opened.result.records.length) {
+                notes.push(`${record.name}: read ${opened.result.records.length} of ${activity.attendanceCount} attendees (${opened.result.pager})`);
+              }
+            }
             else notes.push(`${record.name}: attendees not found${opened.error ? ` (${String(opened.error.message).split('\n')[0].slice(0, 120)})` : ''}`);
             if (opened.lost) throw new Error('the Activities list did not come back after opening an attendance list');
           }
@@ -850,7 +931,7 @@ async function scanAllPages(page, targets) {
   const best = await scanPage(page, targets);
   if (best.every((entry) => STATE_RANK[entry.state] === 4)) return best;
   for (const frame of page.frames()) {
-    if (!(await readAttendeeTable(frame).catch(() => null)) || await readActivitiesTable(frame).catch(() => null)) continue;
+    if (!(await readAttendeeTable(frame).catch(() => null))) continue;
     const merge = (states) => states?.forEach((state, index) => {
       if (STATE_RANK[state] === 4 && STATE_RANK[best[index].state] < 4) best[index] = { state, frame: null };
     });
@@ -861,7 +942,7 @@ async function scanAllPages(page, targets) {
     }
     for (let pageNumber = 2; pageNumber <= MAX_ATTENDEE_PAGES; pageNumber += 1) {
       const before = JSON.stringify((await readAttendeeTable(frame).catch(() => null))?.records ?? []);
-      if (!(await nextAttendeePage(frame))) break;
+      if (!(await nextAttendeePage(frame, pageNumber - 1))) break;
       let changed = false;
       for (let wait = 0; wait < 20 && !changed; wait += 1) {
         await page.waitForTimeout(POLL_MS);
