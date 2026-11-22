@@ -118,6 +118,25 @@ function without(set, id) {
   return next;
 }
 
+function isPlaceholder(text) {
+  return !text || /^-+|^select\b|^choose\b|^show all/i.test(String(text).trim());
+}
+
+// The extra fields for the form's chosen Type, and those its own lists bring.
+function extraFieldsFor(ogdForm, form) {
+  if (!ogdForm?.typeFieldLabel || !form.activityType) return [];
+  const shown = [];
+  const visit = (key, depth) => {
+    for (const field of ogdForm.dependents?.[key] ?? []) {
+      shown.push({ ...field, depth, uid: `${key}|${field.id}` });
+      const value = form.ogdFields?.[field.label];
+      if ((field.kind === 'select' || field.kind === 'radio') && value && depth < 3) visit(`${key} >> ${field.label}::${value}`, depth + 1);
+    }
+  };
+  visit(`${ogdForm.typeFieldLabel}::${form.activityType}`, 0);
+  return shown;
+}
+
 function TonePill({ label, tone = 'plain' }) {
   const style = TONES[tone] ?? TONES.plain;
   return <Pill label={label} color={style.color} bg={style.bg} />;
@@ -170,6 +189,8 @@ export default function Activities() {
   const [chapters, setChapters] = useState([]);
   const [activities, setActivities] = useState([]);
   const [knownTypes, setKnownTypes] = useState([]);
+  // OGD's New Activity form as read on the web page: its Type choices and the extra fields each brings.
+  const [ogdForm, setOgdForm] = useState(null);
   const [loadState, setLoadState] = useState({ status: 'loading', message: '' });
   const [reloadCount, setReloadCount] = useState(0);
   const [search, setSearch] = useState('');
@@ -207,6 +228,7 @@ export default function Activities() {
         chaptersRef.current = result.chapters;
         setActivities(result.activities);
         setKnownTypes(result.types ?? []);
+        setOgdForm(result.form ?? null);
         setLoadState({ status: 'success', message: '' });
       })
       .catch((error) => {
@@ -218,7 +240,11 @@ export default function Activities() {
   }, [range, reloadCount]);
 
   const chapterById = useMemo(() => new Map(chapters.map((chapter) => [chapter.areaId, chapter])), [chapters]);
-  const typeOptions = useMemo(() => [...new Set([...DEFAULT_TYPES, ...knownTypes])].sort(), [knownTypes]);
+  const typeOptions = useMemo(() => {
+    const typeField = ogdForm?.fields?.find((field) => field.label === ogdForm.typeFieldLabel);
+    if (typeField) return typeField.options.map((option) => option.text).filter((text) => !isPlaceholder(text));
+    return [...new Set([...DEFAULT_TYPES, ...knownTypes])].sort();
+  }, [knownTypes, ogdForm]);
   const isReady = useCallback((areaId) => Boolean(chapterById.get(areaId)?.isReady), [chapterById]);
 
   const visibleActivities = useMemo(() => {
@@ -378,7 +404,7 @@ export default function Activities() {
       saving: false, error: '', saved: null, pushAfter: true, memberSearch: '',
       form: {
         id: null, areaId: first?.areaId ?? null, name: '', activityType: '', areaName: first?.chapter ?? '', start: '', end: '',
-        teamLeader: '', teamLeaderMemberId: '', venue: '', description: '', attendeeIds: [],
+        teamLeader: '', teamLeaderMemberId: '', venue: '', description: '', attendeeIds: [], ogdFields: {},
       },
     });
     if (first) ensureMembers(first.areaId);
@@ -392,6 +418,25 @@ export default function Activities() {
         start: toWhenText(activity.startsAt), end: toWhenText(activity.endsAt), teamLeader: activity.teamLeader ?? '',
         teamLeaderMemberId: activity.teamLeaderMemberId ?? '', venue: activity.venue ?? '', description: activity.description ?? '',
         attendeeIds: activity.attendees.filter((attendee) => attendee.memberId && attendee.source !== 'link').map((attendee) => attendee.memberId),
+        ogdFields: { ...(activity.ogdFields ?? {}) },
+      },
+    });
+    ensureMembers(activity.areaId);
+  }
+
+  // A new activity filled in from another one, with all its attendees, so only
+  // the title, type and dates need changing. Works for activities from OGD too.
+  function openDuplicate(activity) {
+    setEditor({
+      saving: false, error: '', saved: null, pushAfter: true, memberSearch: '',
+      copiedFrom: { name: activity.name, start: toWhenText(activity.startsAt), skipped: activity.attendees.filter((attendee) => !attendee.memberId).length },
+      form: {
+        id: null, areaId: activity.areaId, name: activity.name ?? '', activityType: activity.activityType ?? '',
+        areaName: activity.areaName || (chapterById.get(activity.areaId)?.chapter ?? ''),
+        start: toWhenText(activity.startsAt), end: toWhenText(activity.endsAt), teamLeader: activity.teamLeader ?? '',
+        teamLeaderMemberId: activity.teamLeaderMemberId ?? '', venue: activity.venue ?? '', description: activity.description ?? '',
+        attendeeIds: [...new Set(activity.attendees.filter((attendee) => attendee.memberId).map((attendee) => attendee.memberId))],
+        ogdFields: { ...(activity.ogdFields ?? {}) },
       },
     });
     ensureMembers(activity.areaId);
@@ -410,6 +455,10 @@ export default function Activities() {
     else if (!form.name.trim()) error = 'Please enter the activity name.';
     else if (!startsAt) error = 'Please enter the start as YYYY-MM-DD HH:MM (24-hour, Philippine time).';
     else if (form.end.trim() && !endsAt) error = 'Please enter the end as YYYY-MM-DD HH:MM.';
+    else if (endsAt && endsAt < startsAt) error = 'The end must be after the start.';
+    else if (editor.copiedFrom && form.start.trim() === editor.copiedFrom.start && form.name.trim() === editor.copiedFrom.name) {
+      error = 'This copy has the same title and start as the original. Change the title or the date first.';
+    }
     if (error) {
       setEditor((current) => ({ ...current, error }));
       return;
@@ -419,6 +468,9 @@ export default function Activities() {
       const saved = await saveActivity({
         id: form.id, areaId: form.areaId, name: form.name, activityType: form.activityType, areaName: form.areaName, startsAt, endsAt,
         teamLeader: form.teamLeader, teamLeaderMemberId: form.teamLeaderMemberId, venue: form.venue, description: form.description, attendeeIds: form.attendeeIds,
+        // Only the extra fields the chosen Type shows; values left from another Type are dropped.
+        ogdFields: Object.fromEntries(extraFieldsFor(ogdForm, form).map((field) => [field.label, form.ogdFields?.[field.label]])
+          .filter(([, value]) => value !== undefined && value !== '' && !(Array.isArray(value) && !value.length))),
       });
       if (!isMountedRef.current) return;
       setActivities((current) => (current.some((activity) => activity.id === saved.id)
@@ -476,6 +528,7 @@ export default function Activities() {
           <Detail label="Team Leader" value={activity.teamLeader} />
           <Detail label="Venue" value={activity.venue} />
           <Detail label="Description" value={activity.description} />
+          {Object.entries(activity.ogdFields ?? {}).map(([label, value]) => <Detail key={`f-${label}`} label={label} value={Array.isArray(value) ? value.join(', ') : value === true ? 'Yes' : value} />)}
           {details.map(([label, value]) => <Detail key={label} label={label} value={value} />)}
           {!!activity.syncedAt && <Detail label="Read from OGD" value={formatDateTime(activity.syncedAt)} />}
         </View>
@@ -511,6 +564,10 @@ export default function Activities() {
             {isPushing && <Text style={styles.notice}>Signing in to OGD and filling New Activity. This takes a minute or two.</Text>}
           </View>
         )}
+        <View style={styles.buttonRow}>
+          <Button label="Duplicate" icon="copy-outline" onPress={() => openDuplicate(activity)} />
+          <Text style={[styles.hint, styles.flex]}>Same details and attendees; change the title, type and dates.</Text>
+        </View>
         {!!actionErrors[activity.id] && <Text style={styles.errorText}>{actionErrors[activity.id]}</Text>}
 
         <View style={styles.attendeeHead}>
@@ -714,6 +771,7 @@ export default function Activities() {
           editor={editor}
           chapters={chapters}
           typeOptions={typeOptions}
+          ogdForm={ogdForm}
           members={memberCache[editor.form.areaId]}
           isReady={isReady}
           isPushing={editor.saved ? pushingIds.has(editor.saved.id) : false}
@@ -803,7 +861,7 @@ function Sheet({ title, subtitle, onClose, locked, children, footer }) {
   );
 }
 
-function EditorModal({ editor, chapters, typeOptions, members, isReady, isPushing, pushError, onChange, onForm, onChapter, onSubmit, onClose }) {
+function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady, isPushing, pushError, onChange, onForm, onChapter, onSubmit, onClose }) {
   const { form, saved } = editor;
   const canPush = form.areaId && isReady(form.areaId);
 
@@ -840,7 +898,7 @@ function EditorModal({ editor, chapters, typeOptions, members, isReady, isPushin
 
   return (
     <Sheet
-      title={form.id ? 'Edit Activity' : 'New Activity'}
+      title={form.id ? 'Edit Activity' : editor.copiedFrom ? 'Duplicate Activity' : 'New Activity'}
       onClose={onClose}
       locked={editor.saving}
       footer={(
@@ -850,6 +908,12 @@ function EditorModal({ editor, chapters, typeOptions, members, isReady, isPushin
         </View>
       )}
     >
+      {!!editor.copiedFrom && (
+        <Text style={styles.notice}>
+          Copied from {editor.copiedFrom.name} with {form.attendeeIds.length} attendee{form.attendeeIds.length === 1 ? '' : 's'}. Change the title, type and dates, then save.
+          {editor.copiedFrom.skipped ? ` ${editor.copiedFrom.skipped} without a Member ID ${editor.copiedFrom.skipped === 1 ? 'was' : 'were'} not copied.` : ''}
+        </Text>
+      )}
       {!form.id && (
         <Field label="Chapter">
           <View style={styles.chipRow}>
@@ -865,6 +929,40 @@ function EditorModal({ editor, chapters, typeOptions, members, isReady, isPushin
           {typeOptions.map((type) => <Chip key={type} label={type} active={form.activityType === type} onPress={() => onForm({ activityType: form.activityType === type ? '' : type })} />)}
         </View>
       </Field>
+      {extraFieldsFor(ogdForm, form).length > 0 && (
+        <View style={styles.extraBox}>
+          <Text style={styles.fieldLabel}>{form.activityType} details (OGD asks for these)</Text>
+          {extraFieldsFor(ogdForm, form).map((field) => {
+            const value = form.ogdFields?.[field.label];
+            const setValue = (next) => onForm({ ogdFields: { ...form.ogdFields, [field.label]: next } });
+            const choices = (field.options ?? []).filter((option) => !isPlaceholder(option.text));
+            return (
+              <Field key={field.uid} label={`${field.label}${field.required ? ' *' : ''}`}>
+                {(field.kind === 'select' || field.kind === 'radio') && (
+                  <View style={styles.chipRow}>
+                    {choices.map((option) => <Chip key={option.value + option.text} label={option.text} active={value === option.text} onPress={() => setValue(value === option.text ? undefined : option.text)} />)}
+                  </View>
+                )}
+                {field.kind === 'checkboxes' && (
+                  <View style={styles.chipRow}>
+                    {choices.map((option) => {
+                      const list = Array.isArray(value) ? value : [];
+                      const isOn = list.includes(option.text);
+                      return <Chip key={option.value + option.text} label={option.text} active={isOn} onPress={() => setValue(isOn ? list.filter((entry) => entry !== option.text) : [...list, option.text])} />;
+                    })}
+                  </View>
+                )}
+                {field.kind === 'checkbox' && (
+                  <View style={styles.switchRow}><Switch value={value === true} onValueChange={setValue} /><Text style={styles.bodyText}>Yes</Text></View>
+                )}
+                {!['select', 'radio', 'checkboxes', 'checkbox'].includes(field.kind) && (
+                  <TextInput value={value ?? ''} onChangeText={setValue} multiline={field.kind === 'textarea'} placeholder={field.kind === 'date' ? 'YYYY-MM-DD' : ''} placeholderTextColor="#94a3b8" style={[styles.input, field.kind === 'textarea' && styles.textArea]} />
+                )}
+              </Field>
+            );
+          })}
+        </View>
+      )}
       <Field label="Area">
         <TextInput value={form.areaName} onChangeText={(areaName) => onForm({ areaName })} placeholder="e.g. West 1C1" placeholderTextColor="#94a3b8" style={styles.input} />
       </Field>
@@ -991,6 +1089,7 @@ const styles = StyleSheet.create({
   attendeeName: { fontSize: 13, fontWeight: '700', color: '#0f172a' },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
   suggestion: { paddingVertical: 8, paddingHorizontal: 10, backgroundColor: '#f8fafc', borderRadius: 6, marginTop: 4 },
+  extraBox: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10, padding: 12, marginBottom: 10, gap: 4 },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginVertical: 8 },
   backdrop: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.45)', justifyContent: 'flex-end' },
   sheet: { maxHeight: '92%', backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, width: '100%', maxWidth: 760, alignSelf: 'center' },

@@ -98,6 +98,10 @@ export function pushActivityAttendees(activityId) {
   return request('/api/ogd/browser?task=push-attendees', { method: 'POST', body: JSON.stringify({ activityId }) });
 }
 
+export function readActivityForm(areaId) {
+  return request('/api/ogd/browser?task=read-activity-form', { method: 'POST', body: JSON.stringify({ areaId }) });
+}
+
 export const FAILURE_MESSAGES = {
   ogd_bad_credentials: 'OGD did not accept this login.',
   otp_rejected: 'OGD did not accept the emailed code.',

@@ -1,5 +1,5 @@
 <script setup>
-import { CalendarPlus, Check, Copy, Download, ExternalLink, Pencil, RefreshCw, Send, Trash2, UserPlus, X } from 'lucide-vue-next';
+import { CalendarPlus, Check, Copy, CopyPlus, Download, ExternalLink, Pencil, RefreshCw, Send, Trash2, UserPlus, X } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -8,7 +8,7 @@ import PageHead from '@/components/PageHead.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, exportCsv, formatDateTime } from '@/lib/data';
 import {
-  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, pushActivity, pushActivityAttendees, saveActivity, syncActivities, updateActivityAttendees,
+  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
 } from '@/lib/ogdApi';
 
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
@@ -56,6 +56,12 @@ const range = reactive({ from: addMonths(today, -2), to: today });
 const chapters = ref([]);
 const activities = ref([]);
 const knownTypes = ref([]);
+// OGD's New Activity form as read by Oracle: its fields, and the extra fields each Type brings.
+const ogdForm = ref(null);
+const formChapterId = ref(null);
+const isReadingForm = ref(false);
+const formError = ref('');
+const showFormFields = ref(false);
 const loadState = reactive({ status: 'loading', message: '' });
 const chapterFilter = ref('');
 const typeFilter = ref('');
@@ -75,6 +81,62 @@ const chapterById = computed(() => new Map(chapters.value.map((chapter) => [chap
 const readyCount = computed(() => chapters.value.filter((row) => row.isReady).length);
 const isBusy = computed(() => isSyncingAll.value || runningIds.value.size > 0);
 const typeOptions = computed(() => [...new Set([...DEFAULT_TYPES, ...knownTypes.value])].sort());
+
+function isPlaceholder(text) {
+  return !text || /^-+|^select\b|^choose\b|^show all/i.test(text.trim());
+}
+const formTypeField = computed(() => ogdForm.value?.fields?.find((field) => field.label === ogdForm.value.typeFieldLabel) ?? null);
+// OGD's own Type choices once its form has been read; until then, the usual ones.
+const editorTypes = computed(() => (formTypeField.value
+  ? formTypeField.value.options.map((option) => option.text).filter((text) => !isPlaceholder(text))
+  : typeOptions.value));
+const formAreaField = computed(() => ogdForm.value?.fields?.find((field) => field.kind === 'select' && /^area/i.test(field.label)) ?? null);
+const formSummary = computed(() => {
+  const form = ogdForm.value;
+  if (!form) return null;
+  const withExtras = Object.keys(form.dependents ?? {}).filter((key) => !key.includes(' >> ')).length;
+  return { types: editorTypes.value.length, withExtras, chapter: chapterById.value.get(form.areaId)?.chapter };
+});
+function choicesOf(field) {
+  return (field.options ?? []).filter((option) => !isPlaceholder(option.text));
+}
+
+// The extra fields for the Type chosen in the editor, and those its own lists bring.
+const extraFields = computed(() => {
+  const form = ogdForm.value;
+  if (!form?.typeFieldLabel || !editor.open || !editor.form.activityType) return [];
+  const shown = [];
+  const visit = (key, depth) => {
+    for (const field of form.dependents?.[key] ?? []) {
+      shown.push({ ...field, depth, uid: `${key}|${field.id}` });
+      const value = editor.form.ogdFields?.[field.label];
+      if ((field.kind === 'select' || field.kind === 'radio') && value && depth < 3) visit(`${key} >> ${field.label}::${value}`, depth + 1);
+    }
+  };
+  visit(`${form.typeFieldLabel}::${editor.form.activityType}`, 0);
+  return shown;
+});
+function toggleExtraChoice(label, text) {
+  const list = Array.isArray(editor.form.ogdFields[label]) ? editor.form.ogdFields[label] : [];
+  editor.form.ogdFields[label] = list.includes(text) ? list.filter((entry) => entry !== text) : [...list, text];
+}
+
+async function readForm() {
+  const areaId = formChapterId.value || chapters.value.find((row) => row.isReady)?.areaId;
+  if (!areaId) return;
+  isReadingForm.value = true;
+  formError.value = '';
+  try {
+    await readActivityForm(areaId);
+  } catch (error) {
+    if (isActive) formError.value = error.message;
+  } finally {
+    if (isActive) {
+      isReadingForm.value = false;
+      load();
+    }
+  }
+}
 
 const visibleActivities = computed(() => {
   const query = search.value.trim().toLowerCase();
@@ -146,6 +208,8 @@ async function load() {
     chapters.value = result.chapters;
     activities.value = result.activities;
     knownTypes.value = result.types;
+    ogdForm.value = result.form;
+    if (!formChapterId.value) formChapterId.value = result.form?.areaId ?? result.chapters.find((row) => row.isReady)?.areaId ?? null;
     Object.assign(loadState, { status: 'success', message: '' });
   } catch (error) {
     if (token !== loadToken || !isActive) return;
@@ -317,7 +381,7 @@ const SOURCE_LABELS = { ogd: 'OGD', oracle: 'Oracle', link: 'Attendance link' };
 
 // ---------- New / edit ----------
 
-const editor = reactive({ open: false, saving: false, pushAfter: true, error: '', saved: null, form: {} });
+const editor = reactive({ open: false, saving: false, pushAfter: true, error: '', saved: null, copiedFrom: null, form: {} });
 const memberCache = ref({});
 const membersState = reactive({ status: 'idle', message: '' });
 const memberSearch = ref('');
@@ -332,7 +396,7 @@ function blankForm() {
   const areaId = Number(chapterFilter.value) || chapters.value.find((row) => row.isReady)?.areaId || chapters.value[0]?.areaId || null;
   return {
     id: null, areaId, name: '', activityType: '', areaName: chapterById.value.get(areaId)?.chapter ?? '',
-    start: '', end: '', teamLeader: '', teamLeaderMemberId: '', venue: '', description: '', attendeeIds: [],
+    start: '', end: '', teamLeader: '', teamLeaderMemberId: '', venue: '', description: '', attendeeIds: [], ogdFields: {},
   };
 }
 
@@ -349,19 +413,39 @@ async function ensureMembers(areaId) {
 }
 
 function openNew() {
-  Object.assign(editor, { open: true, saving: false, error: '', saved: null, pushAfter: true, form: blankForm() });
+  Object.assign(editor, { open: true, saving: false, error: '', saved: null, pushAfter: true, copiedFrom: null, form: blankForm() });
   memberSearch.value = '';
   ensureMembers(editor.form.areaId);
 }
 
 function openEdit(activity) {
   Object.assign(editor, {
-    open: true, saving: false, error: '', saved: null, pushAfter: true,
+    open: true, saving: false, error: '', saved: null, pushAfter: true, copiedFrom: null,
     form: {
       id: activity.id, areaId: activity.areaId, name: activity.name, activityType: activity.activityType ?? '', areaName: activity.areaName ?? '',
       start: toLocalInput(activity.startsAt), end: toLocalInput(activity.endsAt), teamLeader: activity.teamLeader ?? '',
       teamLeaderMemberId: activity.teamLeaderMemberId ?? '', venue: activity.venue ?? '', description: activity.description ?? '',
       attendeeIds: activity.attendees.filter((attendee) => attendee.memberId && attendee.source !== 'link').map((attendee) => attendee.memberId),
+      ogdFields: { ...(activity.ogdFields ?? {}) },
+    },
+  });
+  memberSearch.value = '';
+  ensureMembers(activity.areaId);
+}
+
+// A new activity filled in from another one, with all its attendees, so only
+// the title, type and dates need changing. Works for activities from OGD too.
+function openDuplicate(activity) {
+  const attendeeIds = [...new Set(activity.attendees.filter((attendee) => attendee.memberId).map((attendee) => attendee.memberId))];
+  Object.assign(editor, {
+    open: true, saving: false, error: '', saved: null, pushAfter: true,
+    copiedFrom: { name: activity.name, start: toLocalInput(activity.startsAt), skipped: activity.attendees.filter((attendee) => !attendee.memberId).length },
+    form: {
+      id: null, areaId: activity.areaId, name: activity.name, activityType: activity.activityType ?? '', areaName: activity.areaName || (chapterById.value.get(activity.areaId)?.chapter ?? ''),
+      start: toLocalInput(activity.startsAt), end: toLocalInput(activity.endsAt), teamLeader: activity.teamLeader ?? '',
+      teamLeaderMemberId: activity.teamLeaderMemberId ?? '', venue: activity.venue ?? '', description: activity.description ?? '',
+      attendeeIds,
+      ogdFields: { ...(activity.ogdFields ?? {}) },
     },
   });
   memberSearch.value = '';
@@ -396,12 +480,19 @@ async function submitEditor() {
   if (!editor.form.name.trim()) { editor.error = 'Please enter the activity name.'; return; }
   if (!editor.form.start) { editor.error = 'Please enter the start date and time.'; return; }
   if (editor.form.end && editor.form.end < editor.form.start) { editor.error = 'The end must be after the start.'; return; }
+  if (editor.copiedFrom && editor.form.start === editor.copiedFrom.start && editor.form.name.trim() === editor.copiedFrom.name) {
+    editor.error = 'This copy has the same title and start as the original. Change the title or the date first.';
+    return;
+  }
   editor.saving = true;
   try {
     const saved = await saveActivity({
       id: editor.form.id, areaId: editor.form.areaId, name: editor.form.name, activityType: editor.form.activityType, areaName: editor.form.areaName,
       startsAt: fromLocalInput(editor.form.start), endsAt: fromLocalInput(editor.form.end), teamLeader: editor.form.teamLeader,
       teamLeaderMemberId: editor.form.teamLeaderMemberId, venue: editor.form.venue, description: editor.form.description, attendeeIds: editor.form.attendeeIds,
+      // Only the extra fields the chosen Type shows; values left from another Type are dropped.
+      ogdFields: Object.fromEntries(extraFields.value.map((field) => [field.label, editor.form.ogdFields?.[field.label]])
+        .filter(([, value]) => value !== undefined && value !== '' && !(Array.isArray(value) && !value.length))),
     });
     if (!isActive) return;
     const inRange = saved.startsAt >= fromLocalInput(`${range.from}T00:00`) && saved.startsAt <= fromLocalInput(`${range.to}T23:59`);
@@ -513,6 +604,44 @@ onBeforeUnmount(() => {
       </DataTable>
     </section>
 
+    <section v-if="loadState.status === 'success' && chapters.length" class="card card-pad stack">
+      <div class="section-head sub">
+        <div>
+          <h2 class="section-title">OGD New Activity form</h2>
+          <p class="muted small">Oracle opens OGD's New Activity form, tries every Type to see which extra fields each one asks for (like Formation), and saves them here. Nothing is saved in OGD.</p>
+        </div>
+        <div class="row gap">
+          <select v-if="chapters.filter((row) => row.isReady).length > 1" v-model.number="formChapterId" class="select select-sm" :disabled="isReadingForm">
+            <option v-for="row in chapters.filter((entry) => entry.isReady)" :key="row.areaId" :value="row.areaId">{{ row.chapter }}</option>
+          </select>
+          <button class="btn btn-sm" :disabled="isReadingForm || !readyCount" @click="readForm"><RefreshCw :size="13" />{{ isReadingForm ? 'Reading OGD form…' : (ogdForm ? 'Read again' : 'Read form from OGD') }}</button>
+        </div>
+      </div>
+      <p v-if="isReadingForm" class="notice">Signing in to OGD and trying each Type on the New Activity form. This takes a minute or two; keep this page open.</p>
+      <p v-if="formError" class="small text-danger">{{ formError }}</p>
+      <template v-if="formChapterId && chapterById.get(formChapterId)?.formRead?.status === 'failed' && !isReadingForm">
+        <p class="small text-danger">{{ FAILURE_MESSAGES[chapterById.get(formChapterId).formRead.failureCode] || 'Reading the form failed.' }}</p>
+        <p v-if="chapterById.get(formChapterId).formRead.statusDetail" class="muted tiny detail wide">{{ chapterById.get(formChapterId).formRead.statusDetail }}</p>
+      </template>
+      <template v-if="ogdForm">
+        <p class="small">Read {{ formatDateTime(ogdForm.capturedAt) }}<template v-if="formSummary.chapter"> from {{ formSummary.chapter }}</template>: {{ formSummary.types }} types, {{ formSummary.withExtras }} with extra fields.<template v-if="ogdForm.isPartial"> Not every choice fit in one run; read it again for the rest.</template></p>
+        <p v-if="formChapterId && chapterById.get(formChapterId)?.formRead?.statusDetail && chapterById.get(formChapterId)?.formRead?.status === 'read'" class="muted tiny detail wide">{{ chapterById.get(formChapterId).formRead.statusDetail }}</p>
+        <div><button class="link-btn" @click="showFormFields = !showFormFields">{{ showFormFields ? 'Hide fields' : 'Show fields' }}</button></div>
+        <div v-if="showFormFields" class="form-fields stack">
+          <div>
+            <p class="field-label">Always on the form</p>
+            <p class="small">{{ ogdForm.fields.map((field) => field.label + (field.required ? ' *' : '')).join(' · ') }}</p>
+          </div>
+          <div v-for="(fields, key) in ogdForm.dependents" :key="key">
+            <p class="field-label">{{ key.replaceAll('::', ' = ').replaceAll(' >> ', ', then ') }}</p>
+            <p class="small">{{ fields.map((field) => `${field.label}${field.options?.length ? ` (${choicesOf(field).map((option) => option.text).slice(0, 12).join(', ')}${choicesOf(field).length > 12 ? ', …' : ''})` : ''}`).join(' · ') }}</p>
+          </div>
+          <p v-if="!Object.keys(ogdForm.dependents ?? {}).length" class="muted small">No Type brought extra fields.</p>
+        </div>
+      </template>
+      <p v-else-if="!isReadingForm" class="muted small">Not read yet. Until it is, New Activity offers the usual types and no extra fields.</p>
+    </section>
+
     <section v-if="loadState.status === 'success'" class="card">
       <div class="card-pad section-head">
         <h2 class="section-title">Activities ({{ totals.activities }}) · {{ totals.attendance }} attendance · {{ totals.members }} members</h2>
@@ -552,6 +681,7 @@ onBeforeUnmount(() => {
             <div class="detail-grid">
               <div><span class="muted tiny">Chapter</span><p>{{ chapterById.get(row.areaId)?.chapter ?? '—' }}</p></div>
               <div><span class="muted tiny">Description</span><p>{{ row.description || '—' }}</p></div>
+              <div v-for="[label, value] in Object.entries(row.ogdFields ?? {})" :key="`f-${label}`"><span class="muted tiny">{{ label }}</span><p>{{ Array.isArray(value) ? value.join(', ') : (value === true ? 'Yes' : value) }}</p></div>
               <div v-for="[label, value] in detailEntries(row)" :key="label"><span class="muted tiny">{{ label }}</span><p>{{ value }}</p></div>
               <div v-if="row.syncedAt"><span class="muted tiny">Read from OGD</span><p>{{ formatDateTime(row.syncedAt) }}</p></div>
             </div>
@@ -583,6 +713,7 @@ onBeforeUnmount(() => {
               </div>
               <p v-if="pushingIds.has(row.id)" class="muted tiny">Signing in to OGD and filling New Activity. This takes a minute or two.</p>
             </div>
+            <div class="row gap"><button class="btn btn-sm" @click="openDuplicate(row)"><CopyPlus :size="13" />Duplicate</button><span class="muted tiny">A new activity with the same details and attendees; change the title, type and dates.</span></div>
             <p v-if="actionErrors[row.id]" class="small text-danger">{{ actionErrors[row.id] }}</p>
 
             <div class="section-head sub">
@@ -625,7 +756,7 @@ onBeforeUnmount(() => {
       </DataTable>
     </section>
 
-    <AppModal v-if="editor.open" :title="editor.saved ? 'Activity saved' : (editor.form.id ? 'Edit Activity' : 'New Activity')" :width="720" :locked="editor.saving" @close="editor.open = false">
+    <AppModal v-if="editor.open" :title="editor.saved ? 'Activity saved' : (editor.form.id ? 'Edit Activity' : (editor.copiedFrom ? 'Duplicate Activity' : 'New Activity'))" :width="720" :locked="editor.saving" @close="editor.open = false">
       <div v-if="savedActivity" class="stack">
         <p><span class="strong">{{ savedActivity.name }}</span> · {{ formatWhen(savedActivity.startsAt) }}</p>
         <div class="link-row">
@@ -648,6 +779,7 @@ onBeforeUnmount(() => {
         <p v-else class="muted small">Saved in Oracle only. Use Push to OGD in the list when you're ready.</p>
       </div>
       <form v-else class="stack" @submit.prevent="submitEditor">
+        <p v-if="editor.copiedFrom" class="notice">Copied from <span class="strong">{{ editor.copiedFrom.name }}</span> with {{ editor.form.attendeeIds.length }} attendee{{ editor.form.attendeeIds.length === 1 ? '' : 's' }}. Change the title, type and dates, then save.<template v-if="editor.copiedFrom.skipped"> {{ editor.copiedFrom.skipped }} attendee{{ editor.copiedFrom.skipped === 1 ? ' has' : 's have' }} no Member ID and {{ editor.copiedFrom.skipped === 1 ? 'was' : 'were' }} not copied.</template></p>
         <div class="grid2">
           <label v-if="chapters.length > 1 && !editor.form.id" class="field"><span class="field-label">Chapter</span>
             <select v-model.number="editor.form.areaId" class="select" @change="changeEditorChapter">
@@ -656,13 +788,50 @@ onBeforeUnmount(() => {
           </label>
           <label class="field span2"><span class="field-label">Activity Name *</span><input v-model="editor.form.name" class="input" maxlength="200" required placeholder="e.g. Chapter Assembly" /></label>
           <label class="field"><span class="field-label">Type</span>
-            <input v-model="editor.form.activityType" class="input" list="activity-types" placeholder="e.g. FORMATION" />
-            <datalist id="activity-types"><option v-for="type in typeOptions" :key="type" :value="type" /></datalist>
+            <select v-if="formTypeField" v-model="editor.form.activityType" class="select">
+              <option value="">Choose a type…</option>
+              <option v-for="type in editorTypes" :key="type" :value="type">{{ type }}</option>
+            </select>
+            <template v-else>
+              <input v-model="editor.form.activityType" class="input" list="activity-types" placeholder="e.g. FORMATION" />
+              <datalist id="activity-types"><option v-for="type in typeOptions" :key="type" :value="type" /></datalist>
+            </template>
           </label>
           <label class="field"><span class="field-label">Area</span>
-            <input v-model="editor.form.areaName" class="input" list="activity-areas" />
-            <datalist id="activity-areas"><option v-for="area in editorAreas" :key="area" :value="area" /></datalist>
+            <select v-if="formAreaField" v-model="editor.form.areaName" class="select">
+              <option value="">Choose an area…</option>
+              <option v-for="option in choicesOf(formAreaField)" :key="option.value" :value="option.text">{{ option.text }}</option>
+            </select>
+            <template v-else>
+              <input v-model="editor.form.areaName" class="input" list="activity-areas" />
+              <datalist id="activity-areas"><option v-for="area in editorAreas" :key="area" :value="area" /></datalist>
+            </template>
           </label>
+          <div v-if="extraFields.length" class="extra span2">
+            <p class="field-label">{{ editor.form.activityType }} details (OGD asks for these)</p>
+            <div class="grid2">
+              <div v-for="field in extraFields" :key="field.uid" class="field" :class="{ span2: ['checkboxes', 'radio', 'textarea'].includes(field.kind) }">
+                <span class="field-label">{{ field.label }}<template v-if="field.required"> *</template></span>
+                <select v-if="field.kind === 'select'" v-model="editor.form.ogdFields[field.label]" class="select">
+                  <option :value="undefined">Choose…</option>
+                  <option v-for="option in choicesOf(field)" :key="option.value" :value="option.text">{{ option.text }}</option>
+                </select>
+                <div v-else-if="field.kind === 'checkboxes'" class="choice-list">
+                  <label v-for="option in field.options" :key="option.value + option.text" class="row gap check">
+                    <input type="checkbox" :checked="(editor.form.ogdFields[field.label] ?? []).includes(option.text)" @change="toggleExtraChoice(field.label, option.text)" /><span>{{ option.text }}</span>
+                  </label>
+                </div>
+                <div v-else-if="field.kind === 'radio'" class="choice-list">
+                  <label v-for="option in field.options" :key="option.value + option.text" class="row gap check">
+                    <input v-model="editor.form.ogdFields[field.label]" type="radio" :value="option.text" /><span>{{ option.text }}</span>
+                  </label>
+                </div>
+                <label v-else-if="field.kind === 'checkbox'" class="row gap check"><input v-model="editor.form.ogdFields[field.label]" type="checkbox" /><span>Yes</span></label>
+                <textarea v-else-if="field.kind === 'textarea'" v-model="editor.form.ogdFields[field.label]" class="input" rows="2" />
+                <input v-else v-model="editor.form.ogdFields[field.label]" class="input" :type="['date', 'number', 'time'].includes(field.kind) ? field.kind : 'text'" />
+              </div>
+            </div>
+          </div>
           <label class="field"><span class="field-label">Start *</span><input v-model="editor.form.start" type="datetime-local" class="input" required /></label>
           <label class="field"><span class="field-label">End</span><input v-model="editor.form.end" type="datetime-local" class="input" :min="editor.form.start" /></label>
           <label class="field"><span class="field-label">Team Leader</span>
@@ -756,6 +925,10 @@ onBeforeUnmount(() => {
 .mini th { font-size: 12px; color: var(--muted); font-weight: 600; }
 .tiny-pill { margin-left: 6px; font-size: 10px; padding: 1px 6px; }
 .danger { color: var(--danger); }
+.select-sm { width: auto; min-width: 140px; padding: 5px 8px; font-size: 13px; }
+.extra { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; }
+.choice-list { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.form-fields > div { border-top: 1px solid var(--line); padding-top: 8px; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .span2 { grid-column: 1 / -1; }
 @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }

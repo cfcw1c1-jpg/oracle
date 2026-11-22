@@ -756,7 +756,8 @@ export function createActivityPush(activity) {
       if (!(await clickFirstVisible(page, newButton))) {
         throw new AutomationFailure(ACTIVITY_FAILURES.form, `No New Activity button on the Activities page. Buttons seen: ${await visibleLinkTexts(page)}`);
       }
-      const { page: formPage, frame } = await waitForNewActivityForm(page, opened);
+      const { page: formPage, frame: firstFrame } = await waitForNewActivityForm(page, opened);
+      let frame = firstFrame;
       let form = await snapshotForm(frame);
       const filled = [];
       const problems = [];
@@ -772,7 +773,13 @@ export function createActivityPush(activity) {
         else {
           const option = pickOption(typeControl, activity.activity_type);
           if (!option) problems.push(`Type has no "${activity.activity_type}" (choices: ${typeControl.options.map((choice) => choice.text).filter(Boolean).join(', ')})`);
-          else { await setControl(formPage, frame, typeControl, option.value); filled.push(typeControl.label); form = await snapshotForm(frame); }
+          else {
+            await setControl(formPage, frame, typeControl, option.value);
+            filled.push(typeControl.label);
+            // Choosing a Type can post back and bring extra fields.
+            frame = (await settledFields(formPage, frame)).frame ?? frame;
+            form = await snapshotForm(frame);
+          }
         }
       }
 
@@ -781,6 +788,15 @@ export function createActivityPush(activity) {
         const option = pickOption(areaControl, activity.area_name);
         if (option) { await setControl(formPage, frame, areaControl, option.value); filled.push(areaControl.label); form = await snapshotForm(frame); }
         else problems.push(`Area has no "${activity.area_name}" (choices: ${areaControl.options.map((choice) => choice.text).filter(Boolean).slice(0, 30).join(', ')})`);
+      }
+
+      // The extra fields the chosen Type brings (read from OGD's form in Oracle).
+      if (activity.ogd_fields && Object.keys(activity.ogd_fields).length) {
+        const extra = await fillExtraFields(formPage, frame, activity.ogd_fields);
+        frame = extra.frame;
+        filled.push(...extra.filled);
+        problems.push(...extra.problems);
+        form = await snapshotForm(frame);
       }
 
       if (!(await fillWhen(formPage, frame, form, /start|date\s*from|^from|^date$/i, activity.starts_at, filled))) problems.push('no Start Date box');
@@ -1176,4 +1192,268 @@ export function createAttendeePush(activity, members, { deadline }) {
     if (!added.length && result.problem) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, result.problem);
     return { added, already: alreadyIds, failed, detail };
   };
+}
+
+// ---------- Reading the New Activity form (never saves) ----------
+
+// Every field on the form, including checkbox and radio groups, as plain
+// descriptions. A field's id is its name (else id, else label), which stays
+// the same across OGD's postbacks.
+function readFormFields(frame) {
+  return frame.evaluate(() => {
+    const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const isShown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const strip = (text) => clean(text).replace(/[:*]+$/, '').trim();
+    const before = (el) => {
+      const cell = el.closest('td, th');
+      let previous = cell?.previousElementSibling;
+      while (previous && !clean(previous.innerText)) previous = previous.previousElementSibling;
+      if (previous) return clean(previous.innerText);
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      walker.currentNode = el;
+      for (let steps = 0; steps < 15 && walker.previousNode(); steps += 1) {
+        const text = clean(walker.currentNode.textContent);
+        if (text && !(el.contains?.(walker.currentNode.parentElement))) return text.slice(0, 60);
+      }
+      return '';
+    };
+    const labelOf = (el) => {
+      if (el.id) {
+        const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (label) return clean(label.innerText);
+      }
+      const wrapping = el.closest('label');
+      if (wrapping) return clean(wrapping.innerText);
+      return before(el) || clean(el.getAttribute('placeholder') || el.name || el.id);
+    };
+    const tidyName = (name) => String(name || '').replace(/^.*\$/, '').replace(/^(txt|cbo|ddl|chk|rbl|cbl|rdo|opt|lst)/i, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+    const fields = [];
+    for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=checkbox]):not([type=radio]), select, textarea')) {
+      if (!isShown(el)) continue;
+      fields.push({
+        id: el.name || el.id || strip(labelOf(el)), label: strip(labelOf(el)) || tidyName(el.name || el.id), name: el.name || null,
+        kind: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : (el.getAttribute('type') || 'text').toLowerCase(),
+        required: el.required || /\*/.test(labelOf(el)), readOnly: el.readOnly || false,
+        options: el.tagName === 'SELECT' ? [...el.options].map((option) => ({ value: option.value, text: clean(option.text) })) : undefined,
+      });
+    }
+    // Checkbox and radio groups: ASP.NET lists share a name stem (…$chkTalks$0) or a radio name.
+    const groups = new Map();
+    for (const el of document.querySelectorAll('input[type=checkbox], input[type=radio]')) {
+      if (!isShown(el)) continue;
+      const stem = el.type === 'radio' ? el.name : String(el.name || el.id).replace(/[$_]\d+$/, '');
+      const optionLabel = (el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.innerText) || el.closest('label')?.innerText || el.nextSibling?.textContent || el.value;
+      if (!groups.has(stem)) {
+        const box = el.closest('table, span[id], div[id]');
+        const grouped = box && box.querySelectorAll('input[type=checkbox], input[type=radio]').length > 1;
+        groups.set(stem, {
+          id: stem, name: stem, kind: el.type === 'radio' ? 'radio' : 'checkboxes',
+          label: strip((grouped ? before(box) : '') || before(el) || tidyName(stem)) || tidyName(stem), options: [],
+        });
+      }
+      groups.get(stem).options.push({ value: el.value, text: clean(optionLabel) });
+    }
+    for (const group of groups.values()) {
+      if (group.kind === 'checkboxes' && group.options.length === 1) fields.push({ ...group, kind: 'checkbox', label: group.label || group.options[0].text });
+      else fields.push(group);
+    }
+    return fields.filter((field) => field.label && field.label.length <= 80);
+  });
+}
+
+const isTimeSelect = (field) => {
+  const texts = (field.options ?? []).map((option) => option.text.toUpperCase());
+  return (texts.includes('AM') && texts.includes('PM')) || texts.filter((text) => /^\d{1,2}$/.test(text)).length > texts.length * 0.8;
+};
+
+async function locateForm(page, previous) {
+  const end = Date.now() + 8000;
+  do {
+    if (previous && !previous.isDetached()) {
+      const form = await snapshotForm(previous).catch(() => null);
+      if (form && looksLikeForm(form)) return previous;
+    }
+    for (const frame of page.frames()) {
+      const form = await snapshotForm(frame).catch(() => null);
+      if (form && looksLikeForm(form) && form.controls.length >= 3) return frame;
+    }
+    await page.waitForTimeout(POLL_MS);
+  } while (Date.now() < end);
+  return null;
+}
+
+// Waits for the form to settle after a choice (OGD may post back) and reads it.
+async function settledFields(page, frame) {
+  let last = '';
+  let fields = null;
+  let current = frame;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.waitForTimeout(attempt === 0 ? 1200 : POLL_MS);
+    current = await locateForm(page, current);
+    if (!current) return { frame: null, fields: null };
+    fields = await readFormFields(current).catch(() => null);
+    const signature = JSON.stringify(fields);
+    if (fields && signature === last) break;
+    last = signature;
+  }
+  return { frame: current, fields };
+}
+
+async function chooseOption(page, frame, field, option) {
+  const locator = field.name ? frame.locator(`select[name="${field.name}"]`) : frame.locator(`select[id="${field.id}"]`);
+  const loaded = page.waitForEvent('load', { timeout: 4000 }).catch(() => null);
+  await locator.first().selectOption(option.value, { timeout: 8000 });
+  await loaded;
+}
+
+// Run on OGD's signed-in page. Opens Activities > New Activity and reads every
+// field; then picks each Type option (and each option of any list that
+// appears because of it) to see which extra fields each one brings. Never
+// presses Save. Returns the form description stored in Oracle.
+export function createActivityFormReader({ deadline }) {
+  return async function readActivityForm(page) {
+    await openActivities(page);
+    const context = page.context();
+    const opened = [];
+    const onPage = (newPage) => opened.push(newPage);
+    context.on('page', onPage);
+    try {
+      const newButton = (frame) => frame.locator('input[type=submit], input[type=button], button, a').filter({ hasText: /^\s*new activity\s*$/i })
+        .or(frame.locator('input[type=submit][value="New Activity" i], input[type=button][value="New Activity" i]'));
+      if (!(await clickFirstVisible(page, newButton))) {
+        throw new AutomationFailure(ACTIVITY_FAILURES.form, `No New Activity button on the Activities page. Buttons seen: ${await visibleLinkTexts(page)}`);
+      }
+      const { page: formPage, frame: firstFrame } = await waitForNewActivityForm(page, opened);
+      let frame = firstFrame;
+      const base = await readFormFields(frame);
+      const baseIds = new Set(base.map((field) => field.id));
+      const typeField = base.find((field) => field.kind === 'select' && /type/i.test(field.label) && !isTimeSelect(field))
+        ?? base.find((field) => field.kind === 'select' && /type|category|kind/i.test(`${field.label} ${field.name}`));
+      const buttons = (await snapshotForm(frame)).buttons.map((button) => button.text);
+      const dependents = {};
+      const notes = [];
+      let isPartial = false;
+
+      // Picks each option of a list and records the fields it adds, then goes one
+      // level deeper. Keys are paths: "Type::FORMATION", then
+      // "Type::FORMATION >> Track::CLP" for a list that FORMATION brought.
+      async function explore(field, knownIds, depth, prefix = '') {
+        const options = (field.options ?? []).filter((option) => option.value && !/^-+|^select|^choose/i.test(option.text));
+        for (const option of options) {
+          if (Date.now() > deadline) { isPartial = true; return; }
+          try {
+            await chooseOption(formPage, frame, field, option);
+          } catch (error) {
+            notes.push(`${field.label} "${option.text}": ${String(error.message).split('\n')[0].slice(0, 100)}`);
+            continue;
+          }
+          const settled = await settledFields(formPage, frame);
+          if (!settled.frame) { notes.push(`the form closed after choosing ${field.label} "${option.text}"`); isPartial = true; return; }
+          frame = settled.frame;
+          const added = settled.fields.filter((candidate) => !knownIds.has(candidate.id));
+          const key = `${prefix}${field.label}::${option.text}`;
+          if (added.length) dependents[key] = added;
+          if (depth < 2) {
+            const addedIds = new Set([...knownIds, ...added.map((candidate) => candidate.id)]);
+            for (const child of added.filter((candidate) => candidate.kind === 'select' && !isTimeSelect(candidate) && (candidate.options?.length ?? 0) <= 40)) {
+              await explore(child, addedIds, depth + 1, `${key} >> `);
+              // Back to this option, so the next child list is read in the right state.
+              if (Date.now() < deadline) {
+                await chooseOption(formPage, frame, field, option).catch(() => null);
+                frame = (await settledFields(formPage, frame)).frame ?? frame;
+              }
+            }
+          }
+        }
+      }
+
+      if (typeField) await explore(typeField, baseIds, 1);
+      else notes.push('no Type list found on the form');
+      return {
+        capturedAt: new Date().toISOString(),
+        typeFieldLabel: typeField?.label ?? null,
+        fields: base,
+        dependents,
+        buttons,
+        isPartial,
+        notes: notes.join('; ').slice(0, DETAIL_LIMIT),
+      };
+    } finally {
+      context.off('page', onPage);
+      for (const shown of opened) await shown.close().catch(() => null);
+      await closeOverlays(page).catch(() => null);
+    }
+  };
+}
+
+// Sets one extra field. Returns true, or a problem to report.
+async function setExtraField(page, frame, field, value) {
+  if (field.kind === 'select') {
+    const option = pickOption({ options: field.options ?? [] }, String(value));
+    if (!option) return `"${field.label}" has no "${value}" (choices: ${(field.options ?? []).map((choice) => choice.text).filter(Boolean).slice(0, 20).join(', ')})`;
+    await chooseOption(page, frame, field, option);
+    return true;
+  }
+  if (['checkboxes', 'radio', 'checkbox'].includes(field.kind)) {
+    const selector = field.kind === 'radio' ? `input[type=radio][name="${field.name}"]` : `input[type=checkbox][name^="${field.name}"], input[type=checkbox][id^="${field.name}"]`;
+    const wanted = field.kind === 'checkbox' ? null : new Set((Array.isArray(value) ? value : [value]).map(normalizeText));
+    const missing = await frame.evaluate(({ selector: css, wantedList, single, on }) => {
+      const clean = (text) => String(text ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+      const boxes = [...document.querySelectorAll(css)];
+      if (single) {
+        const box = boxes[0];
+        if (!box) return ['the checkbox'];
+        if (box.checked !== on) box.click();
+        return [];
+      }
+      const found = new Set();
+      for (const box of boxes) {
+        const label = clean((box.id && document.querySelector(`label[for="${CSS.escape(box.id)}"]`)?.innerText) || box.closest('label')?.innerText || box.nextSibling?.textContent || box.value);
+        const isWanted = wantedList.includes(label);
+        if (isWanted) found.add(label);
+        if (box.type === 'radio' ? isWanted && !box.checked : box.checked !== isWanted) box.click();
+      }
+      return wantedList.filter((label) => !found.has(label));
+    }, { selector, wantedList: wanted ? [...wanted] : [], single: field.kind === 'checkbox', on: value === true || value === 'true' || value === 'Yes' });
+    return missing.length ? `"${field.label}" has no ${missing.map((label) => `"${label}"`).join(', ')}` : true;
+  }
+  const locator = field.name ? frame.locator(`[name="${field.name}"]`) : frame.locator(`[id="${field.id}"]`);
+  await locator.first().evaluate((el, next) => {
+    el.removeAttribute('readonly');
+    el.focus();
+    el.value = next;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.blur();
+  }, String(value));
+  return true;
+}
+
+// Fills the extra fields an activity has values for, in as many rounds as it
+// takes: a list choice can post back and bring the next field.
+async function fillExtraFields(page, frame, values) {
+  const filled = [];
+  const problems = [];
+  const pending = new Map(Object.entries(values));
+  let current = frame;
+  for (let round = 0; round < pending.size + 4 && pending.size; round += 1) {
+    const fields = await readFormFields(current).catch(() => []);
+    let changed = false;
+    for (const [label, value] of [...pending]) {
+      const field = fields.find((candidate) => normalizeText(candidate.label) === normalizeText(label));
+      if (!field) continue;
+      pending.delete(label);
+      changed = true;
+      const result = await setExtraField(page, current, field, value).catch((error) => String(error.message).split('\n')[0].slice(0, 160));
+      if (result === true) filled.push(field.label);
+      else problems.push(result);
+      if (field.kind === 'select' || field.kind === 'radio') {
+        current = (await settledFields(page, current)).frame ?? current;
+        break;
+      }
+    }
+    if (!changed) break;
+  }
+  for (const label of pending.keys()) problems.push(`no "${label}" field on OGD's form`);
+  return { frame: current, filled, problems };
 }

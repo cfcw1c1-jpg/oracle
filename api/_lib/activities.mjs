@@ -4,7 +4,7 @@ import { cleanDetails, normalizeText } from './ogdActivities.mjs';
 // Shared by the Activities routes: date checks, members lookups, attendee
 // matching and the shape the page receives.
 
-export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, push_status, push_failure_code, push_detail, pushed_at, attendee_push_status, attendee_push_failure_code, attendee_push_detail, attendees_pushed_at, synced_at, created_at, updated_at';
+export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, ogd_fields, push_status, push_failure_code, push_detail, pushed_at, attendee_push_status, attendee_push_failure_code, attendee_push_detail, attendees_pushed_at, synced_at, created_at, updated_at';
 const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, AreaName, PastoralService, Status';
 const MAX_RANGE_DAYS = 400;
 
@@ -119,6 +119,7 @@ export function toActivity(row) {
     attendeeTable: row.ogd_attendee_table,
     ogdUrl: row.ogd_url,
     publicToken: row.public_token,
+    ogdFields: row.ogd_fields ?? {},
     pushStatus: row.push_status,
     pushFailureCode: row.push_failure_code,
     pushDetail: row.push_detail,

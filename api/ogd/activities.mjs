@@ -11,6 +11,25 @@ function text(value, max = MAX_TEXT) {
   return cleaned ? cleaned.slice(0, max) : null;
 }
 
+// The extra OGD fields chosen for an activity: { label: text } or, for a
+// checkbox list, { label: [texts] }; checkboxes are true/false.
+const MAX_OGD_FIELDS = 40;
+function cleanOgdFields(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const entries = Object.entries(value).slice(0, MAX_OGD_FIELDS).flatMap(([label, entry]) => {
+    const key = text(label, 80);
+    if (!key) return [];
+    if (typeof entry === 'boolean') return [[key, entry]];
+    if (Array.isArray(entry)) {
+      const list = entry.map((item) => text(item, 200)).filter(Boolean).slice(0, 100);
+      return list.length ? [[key, list]] : [];
+    }
+    const cleaned = text(entry, 1000);
+    return cleaned ? [[key, cleaned]] : [];
+  });
+  return Object.fromEntries(entries);
+}
+
 function isoOrNull(value, label) {
   if (!value) return null;
   const date = new Date(value);
@@ -25,15 +44,19 @@ export const GET = route(async (request) => {
   const range = parseRange(params.get('from'), params.get('to'));
   const { db, chapters } = await authorize(request, 'activities');
   const areaIds = chapters.map((chapter) => chapter.areaId);
-  if (!areaIds.length) return { range, chapters: [], activities: [], types: [] };
+  if (!areaIds.length) return { range, chapters: [], activities: [], types: [], form: null };
   const { startIso, endIso } = rangeBounds(range);
 
-  const [connections, syncs, rows, typeRows] = await Promise.all([
+  const [connections, syncs, rows, typeRows, forms] = await Promise.all([
     fetchAllRows(() => db.from('ogd_chapter_connections').select('area_id, gmail_updated_at, ogd_updated_at').in('area_id', areaIds).order('area_id')),
     fetchAllRows(() => db.from('activity_syncs').select('*').in('area_id', areaIds).order('area_id')),
     fetchAllRows(() => db.from('activities').select(ACTIVITY_COLUMNS).in('area_id', areaIds).gte('starts_at', startIso).lte('starts_at', endIso).order('starts_at', { ascending: false }).order('id')),
     fetchAllRows(() => db.from('activities').select('activity_type').in('area_id', areaIds).not('activity_type', 'is', null).order('id')),
+    fetchAllRows(() => db.from('ogd_activity_forms').select('*').in('area_id', areaIds).order('area_id')),
   ]);
+  const formByArea = new Map(forms.map((row) => [row.area_id, row]));
+  // The newest form read from any of the caller's chapters.
+  const newestForm = forms.filter((row) => row.schema).sort((a, b) => String(b.captured_at).localeCompare(String(a.captured_at)))[0];
   const connectionByArea = new Map(connections.map((row) => [row.area_id, row]));
   const syncByArea = new Map(syncs.map((row) => [row.area_id, row]));
 
@@ -46,6 +69,10 @@ export const GET = route(async (request) => {
       return {
         ...chapter,
         isReady: Boolean(connection?.gmail_updated_at && connection?.ogd_updated_at),
+        formRead: formByArea.has(chapter.areaId) ? {
+          status: formByArea.get(chapter.areaId).status, capturedAt: formByArea.get(chapter.areaId).captured_at, isPartial: formByArea.get(chapter.areaId).is_partial,
+          failureCode: formByArea.get(chapter.areaId).failure_code, statusDetail: formByArea.get(chapter.areaId).status_detail,
+        } : null,
         sync: sync ? {
           status: sync.status, from: sync.date_from, to: sync.date_to, found: sync.found, isPartial: sync.is_partial,
           failureCode: sync.failure_code, statusDetail: sync.status_detail, syncedAt: sync.synced_at,
@@ -53,6 +80,7 @@ export const GET = route(async (request) => {
       };
     }),
     activities: rows.map(toActivity),
+    form: newestForm ? { areaId: newestForm.area_id, capturedAt: newestForm.captured_at, isPartial: newestForm.is_partial, ...newestForm.schema } : null,
   };
 });
 
@@ -107,6 +135,7 @@ export const POST = route(async (request) => {
       venue: text(values.venue, 300), description: text(values.description, 2000), updated_at: new Date().toISOString(),
     };
     const memberIds = Array.isArray(values.attendeeIds) ? values.attendeeIds.map(String) : null;
+    fields.ogd_fields = cleanOgdFields(values.ogdFields);
 
     if (values.id) {
       const row = await loadOwned(db, chapters, values.id);

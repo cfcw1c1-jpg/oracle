@@ -1,6 +1,6 @@
 import { authorize, HttpError, route } from '../access.mjs';
 import { chapterMembers, matchAttendees, membersById, mergeAttendees, parseRange } from '../activities.mjs';
-import { activityKey, createActivitiesSync, toAttendees } from '../ogdActivities.mjs';
+import { activityKey, createActivitiesSync, normalizeText, toAttendees } from '../ogdActivities.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 
 // Reading stops at this point so the results are saved inside the function's
@@ -34,6 +34,31 @@ export const POST = route(async (request) => {
   }
 
   const fromOgd = result.activities.map((activity) => ({ ...activity, key: activityKey({ name: activity.name, start: activity.start, startsAt: activity.startsAt, nameHref: activity.nameHref, attendanceHref: activity.attendanceHref }) }));
+
+  // An activity is saved under OGD's id when its link has one, else under its
+  // name and start. Match a saved row either way, so the same activity never
+  // gets a second row when one sync sees its id and another does not.
+  const sameActivity = (name, startsAt) => `${normalizeText(name)}|${startsAt ? new Date(startsAt).toISOString() : ''}`;
+  const starts = [...new Set(fromOgd.map((activity) => activity.startsAt).filter(Boolean))];
+  const savedBySame = new Map();
+  for (let index = 0; index < starts.length; index += 200) {
+    const { data, error } = await db.from('activities').select('id, ogd_key, name, starts_at').eq('area_id', areaId).not('ogd_key', 'is', null).in('starts_at', starts.slice(index, index + 200));
+    if (error) throw error;
+    data.forEach((row) => savedBySame.set(sameActivity(row.name, row.starts_at), row));
+  }
+  for (const activity of fromOgd) {
+    const saved = savedBySame.get(sameActivity(activity.name, activity.startsAt));
+    if (!saved || saved.ogd_key === activity.key) continue;
+    if (activity.key.startsWith('id:') && !saved.ogd_key.startsWith('id:')) {
+      // The saved row now gets OGD's id.
+      const { error } = await db.from('activities').update({ ogd_key: activity.key }).eq('id', saved.id);
+      if (error && error.code !== '23505') throw error;
+      if (!error) saved.ogd_key = activity.key;
+    } else if (!activity.key.startsWith('id:')) {
+      // This sync saw no id: keep the row's id. Two different OGD ids stay two activities.
+      activity.key = saved.ogd_key;
+    }
+  }
   const keys = [...new Set(fromOgd.map((activity) => activity.key))];
   const existing = new Map();
   for (let index = 0; index < keys.length; index += 200) {
