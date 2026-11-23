@@ -1,10 +1,11 @@
+import { liveProgress } from './activityProgress.mjs';
 import { fetchAllRows, HttpError } from './access.mjs';
 import { cleanDetails, normalizeText } from './ogdActivities.mjs';
 
 // Shared by the Activities routes: date checks, members lookups, attendee
 // matching and the shape the page receives.
 
-export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, ogd_fields, push_status, push_failure_code, push_detail, pushed_at, attendee_push_status, attendee_push_failure_code, attendee_push_detail, attendees_pushed_at, synced_at, created_at, updated_at';
+export const ACTIVITY_COLUMNS = 'id, area_id, source, ogd_key, name, activity_type, area_name, starts_at, ends_at, team_leader, team_leader_member_id, venue, description, attendance_count, attendees, ogd_details, ogd_attendee_table, ogd_url, public_token, ogd_fields, push_status, push_failure_code, push_detail, pushed_at, attendee_push_status, attendee_push_failure_code, attendee_push_detail, attendees_pushed_at, ogd_progress, synced_at, created_at, updated_at';
 const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, AreaName, PastoralService, Status';
 const MAX_RANGE_DAYS = 400;
 
@@ -92,7 +93,7 @@ export function pendingForOgd(attendees) {
   const list = attendees ?? [];
   const inOgd = new Set(list.filter((attendee) => attendee.source === 'ogd')
     .flatMap((attendee) => [attendee.memberId ? `id:${attendee.memberId.toUpperCase()}` : null, `name:${normalizeText(attendee.name)}`]).filter(Boolean));
-  return list.filter((attendee) => attendee.source !== 'ogd' && attendee.memberId && attendee.ogd !== 'added'
+  return list.filter((attendee) => attendee.source !== 'ogd' && attendee.memberId && attendee.ogd !== 'added' && attendee.ogd !== 'skipped'
     && !inOgd.has(`id:${attendee.memberId.toUpperCase()}`) && !inOgd.has(`name:${normalizeText(attendee.name)}`));
 }
 
@@ -128,6 +129,7 @@ export function toActivity(row) {
     attendeePushStatus: row.attendee_push_status,
     attendeePushFailureCode: row.attendee_push_failure_code,
     attendeePushDetail: row.attendee_push_detail,
+    progress: liveProgress(row),
     attendeesPushedAt: row.attendees_pushed_at,
     pendingInOgd: isInOgd(row) ? pendingForOgd(row.attendees).length : 0,
     syncedAt: row.synced_at,

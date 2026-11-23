@@ -18,10 +18,11 @@ import {
 } from 'react-native';
 import { ActionLink, EmptyRow, Pill, TableCard, TablePagination, TableRow, usePagination } from '../components/admin-table';
 import {
-  deleteActivity, fetchActivities, fetchActivityMembers, pushActivity, pushActivityAttendees, saveActivity, siteUrl, syncActivities,
+  deleteActivity, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, saveActivity, siteUrl, syncActivities,
   updateActivityAttendees,
 } from '../lib/ogdApi';
 import { FAILURE_MESSAGES, formatDateTime } from './OgdConnections';
+import { describeProgress, formatSeconds } from '../lib/pushProgress';
 
 // The phone version of the web app's Activities page: OGD activities for a
 // date range with their attendees, syncing from OGD, creating activities and
@@ -32,6 +33,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const WIDE_LAYOUT_MIN_WIDTH = 860;
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
 const CONCURRENT_RUNS = 2;
+const MAX_ATTENDEE_ROUNDS = 6;
 const DEFAULT_TYPES = ['CHAPTER PRAYER ASSEMBLY', 'FORMATION', 'TRAINING', 'TEACHING', 'FELLOWSHIP', 'OTHER MEETING', 'WORK WITH THE POOR', 'MISSION', 'CONFERENCE', 'OTHER ASSEMBLY', 'FIG ACTIVITY'];
 const SOURCE_LABELS = { ogd: 'OGD', oracle: 'Oracle', link: 'Attendance link' };
 const TONES = {
@@ -222,12 +224,18 @@ export default function Activities() {
   const [editor, setEditor] = useState(null);
   const [adding, setAdding] = useState(null);
   const isMountedRef = useRef(true);
+  // Live push progress: { 'kind:id': { startedAt, progress, memo, count } }.
+  const [progressRuns, setProgressRuns] = useState({});
+  const [progressNow, setProgressNow] = useState(() => Date.now());
+  const progressKeysRef = useRef(new Set());
+  const progressTimerRef = useRef(null);
   const chaptersRef = useRef([]);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     };
   }, []);
 
@@ -321,25 +329,75 @@ export default function Activities() {
 
   // ---------- Push and attendees ----------
 
+  function startProgress(kind, activity, count = 0) {
+    const key = `${kind}:${activity.id}`;
+    progressKeysRef.current.add(key);
+    setProgressRuns((current) => ({ ...current, [key]: { startedAt: Date.now(), progress: null, memo: {}, count } }));
+    if (progressTimerRef.current) return;
+    let ticks = 0;
+    progressTimerRef.current = setInterval(async () => {
+      ticks += 1;
+      setProgressNow(Date.now());
+      if (ticks % 2) return;
+      for (const runKey of [...progressKeysRef.current]) {
+        const [kindOf, id] = runKey.split(':');
+        const progress = await fetchActivityProgress(Number(id)).catch(() => undefined);
+        if (progress?.kind !== kindOf || !isMountedRef.current) continue;
+        setProgressRuns((current) => (current[runKey] ? { ...current, [runKey]: { ...current[runKey], progress } } : current));
+      }
+    }, 1000);
+  }
+
+  function stopProgress(kind, activityId) {
+    const key = `${kind}:${activityId}`;
+    progressKeysRef.current.delete(key);
+    setProgressRuns((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    if (!progressKeysRef.current.size && progressTimerRef.current) {
+      clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  }
+
+  function progressOf(kind, activity) {
+    const run = activity && progressRuns[`${kind}:${activity.id}`];
+    if (!run) return null;
+    return describeProgress(kind, run.progress, { startedAt: run.startedAt, now: progressNow, memo: run.memo, count: run.count });
+  }
+
   async function sendAttendees(activity) {
     if (sendingIds.has(activity.id) || !isReady(activity.areaId)) return;
     setSendingIds((current) => new Set(current).add(activity.id));
+    startProgress('attendees', activity, Math.min(activity.pendingInOgd || 0, 40));
     setActionError(activity.id, null);
     try {
-      const result = await pushActivityAttendees(activity.id);
-      if (isMountedRef.current) replaceActivity(result.activity);
+      // OGD allows about 40 attendees per run; more rounds follow while each one adds someone.
+      let current = activity;
+      for (let round = 1; round <= MAX_ATTENDEE_ROUNDS && isMountedRef.current; round += 1) {
+        if (round > 1) startProgress('attendees', current, Math.min(current.pendingInOgd || 0, 40));
+        const result = await pushActivityAttendees(current.id);
+        if (!isMountedRef.current) break;
+        replaceActivity(result.activity);
+        current = result.activity;
+        if (!result.added || !result.activity.pendingInOgd) break;
+      }
     } catch (error) {
       if (isMountedRef.current) {
         setActionError(activity.id, error.message);
         reload();
       }
     } finally {
+      stopProgress('attendees', activity.id);
       if (isMountedRef.current) setSendingIds((current) => without(current, activity.id));
     }
   }
 
   async function push(activity) {
     setPushingIds((current) => new Set(current).add(activity.id));
+    startProgress('activity', activity);
     setActionError(activity.id, null);
     try {
       const result = await pushActivity(activity.id);
@@ -355,6 +413,7 @@ export default function Activities() {
       }
       return null;
     } finally {
+      stopProgress('activity', activity.id);
       if (isMountedRef.current) setPushingIds((current) => without(current, activity.id));
     }
   }
@@ -516,6 +575,7 @@ export default function Activities() {
     if (attendee.ogd === 'added') return { label: attendee.ogdNote ? 'Already in OGD' : 'Added to OGD', tone: 'success' };
     if (!activity.isInOgd) return { label: 'Goes with push', tone: 'plain' };
     if (!attendee.memberId) return { label: 'No Member ID', tone: 'warning' };
+    if (attendee.ogd === 'skipped') return { label: 'Not in OGD (skipped)', tone: 'plain' };
     if (!attendee.isPendingInOgd) return { label: 'Already in OGD', tone: 'success' };
     if (sendingIds.has(activity.id)) return { label: 'Adding…', tone: 'info' };
     if (attendee.ogd === 'failed') return { label: 'Not added', tone: 'danger' };
@@ -575,7 +635,7 @@ export default function Activities() {
                 <Button label="Delete" icon="trash-outline" kind="danger" disabled={isPushing} onPress={() => remove(activity)} />
               </View>
             )}
-            {isPushing && <Text style={styles.notice}>Signing in to OGD and filling New Activity. This takes a minute or two.</Text>}
+            {isPushing && !!progressOf('activity', activity) && <ProgressBar view={progressOf('activity', activity)} note="Creating the activity in OGD. Its attendees follow right after." />}
           </View>
         )}
         <View style={styles.buttonRow}>
@@ -602,7 +662,7 @@ export default function Activities() {
             <Button label="Add attendees" icon="person-add-outline" onPress={() => openAddAttendees(activity)} />
           </View>
         </View>
-        {isSending && <Text style={styles.notice}>Signing in to OGD and adding the attendees to this activity there. This takes a minute or two; keep this screen open.</Text>}
+        {isSending && !!progressOf('attendees', activity) && <ProgressBar view={progressOf('attendees', activity)} note="Adding the attendees to this activity in OGD. Keep this screen open." />}
         {!isSending && !!activity.attendeePushStatus && activity.attendeePushStatus !== 'pushing' && (
           <View style={styles.block}>
             {activity.attendeePushStatus === 'pushed'
@@ -789,6 +849,8 @@ export default function Activities() {
           members={memberCache[editor.form.areaId]}
           isReady={isReady}
           isPushing={editor.saved ? pushingIds.has(editor.saved.id) : false}
+          pushProgress={editor.saved ? progressOf('activity', editor.saved) : null}
+          attendeeProgress={editor.saved && sendingIds.has(editor.saved.id) ? progressOf('attendees', editor.saved) : null}
           pushError={editor.saved ? actionErrors[editor.saved.id] : null}
           onChange={setEditor}
           onForm={setForm}
@@ -875,7 +937,21 @@ function Sheet({ title, subtitle, onClose, locked, children, footer }) {
   );
 }
 
-function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady, isPushing, pushError, onChange, onForm, onChapter, onSubmit, onClose }) {
+// A push's progress: the current step, a bar, and the time left.
+function ProgressBar({ view, note }) {
+  return (
+    <View style={styles.progressBox} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: view.percent }}>
+      <View style={styles.progressLine}>
+        <Text style={styles.progressLabel}>{view.label}…</Text>
+        <Text style={styles.mutedText}>{view.percent}% · {formatSeconds(view.secondsLeft)} left</Text>
+      </View>
+      <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${view.percent}%` }]} /></View>
+      {!!note && <Text style={styles.hint}>{note}</Text>}
+    </View>
+  );
+}
+
+function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady, isPushing, pushProgress, attendeeProgress, pushError, onChange, onForm, onChapter, onSubmit, onClose }) {
   const { form, saved } = editor;
   const canPush = form.areaId && isReady(form.areaId);
 
@@ -891,7 +967,8 @@ function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady,
             <Text style={styles.url} selectable>{saved.ogdUrl}</Text>
           </>
         )}
-        {isPushing && <Text style={styles.notice}>Pushing to OGD: signing in and filling New Activity. This takes a minute or two; keep this open.</Text>}
+        {isPushing && !!pushProgress && <ProgressBar view={pushProgress} note="Creating the activity in OGD. Keep this open." />}
+        {!!attendeeProgress && <ProgressBar view={attendeeProgress} note="Created in OGD. Now adding its attendees there." />}
         {!isPushing && saved.pushStatus === 'pushed' && <Text style={styles.successText}>Created in OGD. {saved.pushDetail}</Text>}
         {!isPushing && saved.pushStatus === 'failed' && (
           <>
@@ -1077,6 +1154,11 @@ const styles = StyleSheet.create({
   buttonTextDanger: { color: '#b91c1c' },
   hint: { fontSize: 11, color: '#64748b' },
   notice: { fontSize: 12, color: '#1d4ed8', marginVertical: 6 },
+  progressBox: { gap: 6, padding: 10, borderRadius: 8, backgroundColor: '#eff6ff', marginVertical: 6 },
+  progressLine: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  progressLabel: { fontSize: 13, fontWeight: '600', color: '#1e3a8a' },
+  progressTrack: { height: 8, borderRadius: 999, backgroundColor: '#dbeafe', overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 999, backgroundColor: '#2563eb' },
   loader: { paddingVertical: 24 },
   collapseHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 },
   chapterRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },

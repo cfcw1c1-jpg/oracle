@@ -1,15 +1,17 @@
 <script setup>
 import { CalendarPlus, Check, Copy, CopyPlus, Download, ExternalLink, Pencil, RefreshCw, Send, Trash2, UserPlus, X } from 'lucide-vue-next';
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, markRaw, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import PageHead from '@/components/PageHead.vue';
+import PushProgress from '@/components/PushProgress.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, exportCsv, formatDateTime } from '@/lib/data';
 import {
-  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
+  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
 } from '@/lib/ogdApi';
+import { describeProgress } from '@/lib/pushProgress';
 
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
 const CONCURRENT_RUNS = 2;
@@ -308,8 +310,45 @@ async function copy(text, key) {
   }
 }
 
+// ---------- Push progress (bar and time left while OGD works) ----------
+
+const progressRuns = ref({});
+const nowTick = ref(Date.now());
+let progressTimer = null;
+let progressTicks = 0;
+
+function startProgress(kind, activity, count = 0) {
+  progressRuns.value = { ...progressRuns.value, [`${kind}:${activity.id}`]: { startedAt: Date.now(), progress: null, memo: markRaw({}), count } };
+  if (progressTimer) return;
+  progressTimer = setInterval(async () => {
+    nowTick.value = Date.now();
+    progressTicks += 1;
+    if (progressTicks % 2) return;
+    for (const key of Object.keys(progressRuns.value)) {
+      const [kindOf, id] = key.split(':');
+      const progress = await fetchActivityProgress(Number(id)).catch(() => undefined);
+      const run = progressRuns.value[key];
+      if (run && progress?.kind === kindOf) run.progress = progress;
+    }
+  }, 1000);
+}
+
+function stopProgress(kind, activityId) {
+  const next = { ...progressRuns.value };
+  delete next[`${kind}:${activityId}`];
+  progressRuns.value = next;
+  if (!Object.keys(next).length && progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+}
+
+function progressOf(kind, activity) {
+  const run = activity && progressRuns.value[`${kind}:${activity.id}`];
+  if (!run) return null;
+  return describeProgress(kind, run.progress, { startedAt: run.startedAt, now: nowTick.value, memo: run.memo, count: run.count });
+}
+
 async function push(activity) {
   setIn(pushingIds, activity.id, true);
+  startProgress('activity', activity);
   actionErrors.value = { ...actionErrors.value, [activity.id]: null };
   try {
     const result = await pushActivity(activity.id);
@@ -322,22 +361,33 @@ async function push(activity) {
     load();
     return null;
   } finally {
+    stopProgress('activity', activity.id);
     if (isActive) setIn(pushingIds, activity.id, false);
   }
 }
 
 // Adds the attendees OGD does not have yet to the activity's attendees in OGD.
+const MAX_ATTENDEE_ROUNDS = 6;
 async function sendAttendees(activity) {
   if (sendingIds.value.has(activity.id) || !chapterById.value.get(activity.areaId)?.isReady) return;
   setIn(sendingIds, activity.id, true);
+  startProgress('attendees', activity, Math.min(activity.pendingInOgd || 0, 40));
   actionErrors.value = { ...actionErrors.value, [activity.id]: null };
   try {
-    const result = await pushActivityAttendees(activity.id);
-    if (isActive) replaceActivity(result.activity);
+    // OGD allows about 40 attendees per run; more rounds follow while each one adds someone.
+    for (let round = 1; round <= MAX_ATTENDEE_ROUNDS && isActive; round += 1) {
+      if (round > 1) startProgress('attendees', activity, Math.min(activity.pendingInOgd || 0, 40));
+      const result = await pushActivityAttendees(activity.id);
+      if (!isActive) break;
+      replaceActivity(result.activity);
+      activity = result.activity;
+      if (!result.added || !result.activity.pendingInOgd) break;
+    }
   } catch (error) {
     if (isActive) actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
     load();
   } finally {
+    stopProgress('attendees', activity.id);
     if (isActive) setIn(sendingIds, activity.id, false);
   }
 }
@@ -347,6 +397,7 @@ function ogdStateOf(activity, attendee) {
   if (attendee.ogd === 'added') return { label: attendee.ogdNote ? 'Already in OGD' : 'Added to OGD', tone: 'success' };
   if (!activity.isInOgd) return { label: 'Goes with push', tone: '' };
   if (!attendee.memberId) return { label: 'No Member ID', tone: 'warning' };
+  if (attendee.ogd === 'skipped') return { label: 'Not in OGD (skipped)', tone: '' };
   if (!attendee.isPendingInOgd) return { label: 'Already in OGD', tone: 'success' };
   if (sendingIds.value.has(activity.id)) return { label: 'Adding…', tone: 'info' };
   if (attendee.ogd === 'failed') return { label: 'Not added', tone: 'danger' };
@@ -585,6 +636,7 @@ function detailEntries(activity) {
 onMounted(load);
 onBeforeUnmount(() => {
   isActive = false;
+  if (progressTimer) clearInterval(progressTimer);
 });
 </script>
 
@@ -742,7 +794,7 @@ onBeforeUnmount(() => {
                 <button v-if="row.pushStatus !== 'pushed'" class="btn btn-sm" :disabled="pushingIds.has(row.id)" @click="openEdit(row)"><Pencil :size="13" />Edit</button>
                 <button v-if="row.pushStatus !== 'pushed'" class="btn btn-sm danger" :disabled="pushingIds.has(row.id)" @click="remove(row)"><Trash2 :size="13" />Delete</button>
               </div>
-              <p v-if="pushingIds.has(row.id)" class="muted tiny">Signing in to OGD and filling New Activity. This takes a minute or two.</p>
+              <PushProgress v-if="progressOf('activity', row)" :view="progressOf('activity', row)" note="Creating the activity in OGD. Its attendees follow right after." />
             </div>
             <div class="row gap"><button class="btn btn-sm" @click="openDuplicate(row)"><CopyPlus :size="13" />Duplicate</button><span class="muted tiny">A new activity with the same details and attendees; change the title, type and dates.</span></div>
             <p v-if="actionErrors[row.id]" class="small text-danger">{{ actionErrors[row.id] }}</p>
@@ -757,7 +809,7 @@ onBeforeUnmount(() => {
                 <button class="btn btn-sm" :disabled="!row.attendees.length" @click="exportAttendees([row])"><Download :size="13" />CSV</button>
               </div>
             </div>
-            <p v-if="sendingIds.has(row.id)" class="notice">Signing in to OGD and adding the attendees to this activity there. This takes a minute or two; keep this page open.</p>
+            <PushProgress v-if="sendingIds.has(row.id) && progressOf('attendees', row)" :view="progressOf('attendees', row)" note="Adding the attendees to this activity in OGD. Keep this page open." />
             <template v-else-if="row.attendeePushStatus && row.attendeePushStatus !== 'pushing'">
               <p v-if="row.attendeePushStatus === 'pushed'" class="small text-success">Attendees added in OGD {{ formatDateTime(row.attendeesPushedAt) }}.</p>
               <p v-else class="small text-danger">{{ FAILURE_MESSAGES[row.attendeePushFailureCode] || 'Some attendees could not be added in OGD.' }}<template v-if="row.pendingInOgd"> Use "Add {{ row.pendingInOgd }} to OGD" to try again.</template></p>
@@ -800,7 +852,8 @@ onBeforeUnmount(() => {
           <code class="url">{{ savedActivity.ogdUrl }}</code>
           <button class="btn btn-sm" @click="copy(savedActivity.ogdUrl, 'saved-o')"><component :is="copied === 'saved-o' ? Check : Copy" :size="13" />{{ copied === 'saved-o' ? 'Copied' : 'Copy' }}</button>
         </div>
-        <p v-if="pushingIds.has(savedActivity.id)" class="notice">Pushing to OGD: signing in and filling New Activity. This takes a minute or two; keep this open.</p>
+        <PushProgress v-if="pushingIds.has(savedActivity.id) && progressOf('activity', savedActivity)" :view="progressOf('activity', savedActivity)" note="Creating the activity in OGD. Keep this open." />
+        <PushProgress v-if="sendingIds.has(savedActivity.id) && progressOf('attendees', savedActivity)" :view="progressOf('attendees', savedActivity)" note="Created in OGD. Now adding its attendees there; you can close this, it keeps going while this page is open." />
         <p v-else-if="savedActivity.pushStatus === 'pushed'" class="small text-success">Created in OGD. {{ savedActivity.pushDetail }}</p>
         <template v-else-if="savedActivity.pushStatus === 'failed'">
           <p class="small text-danger">{{ FAILURE_MESSAGES[savedActivity.pushFailureCode] || 'The push to OGD failed.' }} The activity is saved in Oracle; you can push it again from the list.</p>

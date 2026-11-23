@@ -2,6 +2,7 @@ import { authorize, fetchAllRows, HttpError, route } from '../_lib/access.mjs';
 import {
   ACTIVITY_COLUMNS, attendeeKey, chapterMembers, memberName, membersById, parseRange, rangeBounds, toActivity,
 } from '../_lib/activities.mjs';
+import { liveProgress } from '../_lib/activityProgress.mjs';
 
 const MAX_TEXT = 500;
 const MAX_ATTENDEES = 2000;
@@ -41,6 +42,15 @@ function isoOrNull(value, label) {
 // see, plus each chapter's OGD readiness and last sync.
 export const GET = route(async (request) => {
   const params = new URL(request.url).searchParams;
+  // ?progress=<id>: just the live progress of a push, polled while it runs.
+  const progressId = Number(params.get('progress'));
+  if (progressId) {
+    const { db, chapters } = await authorize(request, 'activities');
+    const { data, error } = await db.from('activities').select('id, area_id, ogd_progress, push_status, attendee_push_status').eq('id', progressId).maybeSingle();
+    if (error) throw error;
+    if (!data || !chapters.some((chapter) => chapter.areaId === data.area_id)) throw new HttpError(404, 'This activity no longer exists.');
+    return { progress: liveProgress(data) };
+  }
   const range = parseRange(params.get('from'), params.get('to'));
   const { db, chapters } = await authorize(request, 'activities');
   const areaIds = chapters.map((chapter) => chapter.areaId);

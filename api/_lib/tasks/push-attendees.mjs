@@ -1,5 +1,6 @@
 import { authorize, HttpError, route } from '../access.mjs';
 import { ACTIVITY_COLUMNS, isInOgd, membersById, pendingForOgd, toActivity } from '../activities.mjs';
+import { progressWriter } from '../activityProgress.mjs';
 import { createAttendeePush } from '../ogdActivities.mjs';
 import { runChapterLogin } from '../ogdRun.mjs';
 
@@ -33,12 +34,14 @@ export const POST = route(async (request) => {
 
   const { error: markError } = await db.from('activities').update({ attendee_push_status: 'pushing', attendee_push_failure_code: null, attendee_push_detail: null, updated_at: new Date().toISOString() }).eq('id', row.id);
   if (markError) throw markError;
+  const onProgress = progressWriter(db, row.id, 'attendees');
+  await onProgress({ stage: 'signing_in', label: 'Signing in to OGD', done: 0, total: members.length, force: true });
 
   let run;
   try {
-    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createAttendeePush(row, members, { deadline: startedAt + WORK_BUDGET_MS }) });
+    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createAttendeePush(row, members, { deadline: startedAt + WORK_BUDGET_MS, onProgress }) });
   } catch (failure) {
-    await db.from('activities').update({ attendee_push_status: null }).eq('id', row.id);
+    await db.from('activities').update({ attendee_push_status: null, ogd_progress: null }).eq('id', row.id);
     throw failure;
   }
   const result = run.afterLoginResult;
@@ -49,6 +52,7 @@ export const POST = route(async (request) => {
   if (latestError) throw latestError;
   const added = new Set(result?.added ?? []);
   const already = new Set(result?.already ?? []);
+  const skipped = new Set(result?.skipped ?? []);
   const failed = new Map((result?.failed ?? []).map((entry) => [entry.memberId, entry.reason]));
   const tried = new Set(members.map((member) => String(member.MemberIDNo).toUpperCase()));
   const attendees = (latest.attendees ?? []).map((attendee) => {
@@ -56,6 +60,7 @@ export const POST = route(async (request) => {
     if (!id || attendee.source === 'ogd' || !tried.has(id)) return attendee;
     if (already.has(id)) return { ...attendee, ogd: 'added', ogdAt: now, ogdNote: 'Already in OGD; not added again.' };
     if (added.has(id)) return { ...attendee, ogd: 'added', ogdAt: now, ogdNote: null };
+    if (skipped.has(id)) return { ...attendee, ogd: 'skipped', ogdAt: now, ogdNote: 'Not found in OGD; skipped.' };
     if (failed.get(id) === 'not reached') return attendee;
     return { ...attendee, ogd: 'failed', ogdNote: result ? failed.get(id) ?? null : run.failure_code };
   });
@@ -65,6 +70,7 @@ export const POST = route(async (request) => {
 
   const { data: saved, error: saveError } = await db.from('activities').update({
     attendees,
+    ogd_progress: null,
     attendee_push_status: status,
     attendee_push_failure_code: result ? (status === 'pushed' ? null : 'activity_attendees_unexpected') : run.failure_code,
     attendee_push_detail: (result ? result.detail : run.status_detail)?.slice(0, 3000) ?? null,

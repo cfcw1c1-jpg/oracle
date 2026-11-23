@@ -94,6 +94,11 @@ export function pushActivity(activityId) {
   return request('/api/ogd/browser?task=push-activity', { method: 'POST', body: JSON.stringify({ activityId }) });
 }
 
+// The live progress of a push while it runs, or null.
+export async function fetchActivityProgress(activityId) {
+  return (await request(`/api/ogd/activities?progress=${encodeURIComponent(activityId)}`)).progress ?? null;
+}
+
 export function pushActivityAttendees(activityId) {
   return request('/api/ogd/browser?task=push-attendees', { method: 'POST', body: JSON.stringify({ activityId }) });
 }

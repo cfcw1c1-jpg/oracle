@@ -858,8 +858,9 @@ async function fillWhen(page, frame, form, pattern, iso, filled) {
 
 // Run on OGD's signed-in page: opens Activities > New Activity, fills it from
 // the Oracle activity, saves, and finds the new activity's link.
-export function createActivityPush(activity) {
+export function createActivityPush(activity, { onProgress = () => null } = {}) {
   return async function pushActivity(page) {
+    await onProgress({ stage: 'opening', label: 'Opening New Activity in OGD', force: true });
     await openActivities(page);
     const context = page.context();
     const opened = [];
@@ -872,6 +873,7 @@ export function createActivityPush(activity) {
         throw new AutomationFailure(ACTIVITY_FAILURES.form, `No New Activity button on the Activities page. Buttons seen: ${await visibleLinkTexts(page)}`);
       }
       const { page: formPage, frame: firstFrame } = await waitForNewActivityForm(page, opened);
+      await onProgress({ stage: 'filling', label: "Filling in OGD's New Activity form", force: true });
       let frame = firstFrame;
       let form = await snapshotForm(frame);
       const filled = [];
@@ -963,6 +965,7 @@ export function createActivityPush(activity) {
       if (problems.length) throw new AutomationFailure(ACTIVITY_FAILURES.form, `Did not save: ${problems.join('; ')}. ${describeForm(await snapshotForm(frame))}`);
 
       form = await snapshotForm(frame);
+      await onProgress({ stage: 'saving', label: 'Saving the activity in OGD', force: true });
       const save = form.buttons.find((button) => /^(save|submit|create|save activity|add activity|add)$/i.test(button.text))
         ?? form.buttons.find((button) => /save|submit|create/i.test(button.text));
       if (!save) throw new AutomationFailure(ACTIVITY_FAILURES.form, `No Save button on the New Activity form. ${describeForm(form)}`);
@@ -1169,7 +1172,9 @@ async function addBySearch(page, search, target) {
   await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
   const suggestion = frame.locator('.ui-autocomplete li, .ui-menu-item, [role=option], .autocomplete-suggestion, .tt-suggestion, .select2-results li')
     .filter({ hasText: new RegExp(target.memberId.replace(/[-]/g, '.?'), 'i') }).first();
+  let seen = false;
   if (await suggestion.isVisible().catch(() => false)) {
+    seen = true;
     await suggestion.click({ timeout: 5000 }).catch(() => null);
     await page.waitForTimeout(500);
   }
@@ -1183,6 +1188,7 @@ async function addBySearch(page, search, target) {
   }
   // A result row to tick or click, then Add or Save to confirm it.
   const [found] = await scanPage(page, [target]);
+  if (found.state !== 'missing') seen = true;
   if (found.state === 'checkable' || found.state === 'addable') {
     const pick = found.frame.locator('[data-oracle-pick="0"]').first();
     if (found.state === 'checkable') await pick.check({ timeout: 5000, force: true }).catch(() => null);
@@ -1190,16 +1196,19 @@ async function addBySearch(page, search, target) {
     const confirm = await visibleButton(page, ADD_BUTTON, found.frame) ?? await visibleButton(page, SAVE_BUTTON, found.frame);
     if (confirm) await clickAndSettle(page, confirm);
   }
+  return seen;
 }
 
 // Does the adding on an opened activity or attendance page.
-async function addOnPage(page, targets, deadline) {
+async function addOnPage(page, targets, deadline, onProgress = () => null) {
   const actions = [];
+  const notFound = new Set();
+  await onProgress({ stage: 'checking', label: 'Checking who is already in OGD', force: true });
   // Members already on OGD's attendee list (any page of it) are left alone.
   const already = new Set((await scanAllPages(page, targets))
     .map((entry, index) => (STATE_RANK[entry.state] === 4 ? index : -1)).filter((index) => index !== -1));
   if (already.size) actions.push(`${already.size} already in OGD, not added again`);
-  if (already.size === targets.length) return { states: targets.map(() => ({ state: 'listed' })), actions, already };
+  if (already.size === targets.length) return { states: targets.map(() => ({ state: 'listed' })), actions, already, notFound };
   // Paging may have moved the list off its first page, so scan afresh.
   let states = (await scanPage(page, targets)).map((entry, index) => (already.has(index) ? { state: 'listed', frame: null } : entry));
   const refresh = async () => (await scanPage(page, targets)).map((entry, index) => (already.has(index) ? { state: 'listed', frame: null } : entry));
@@ -1236,21 +1245,28 @@ async function addOnPage(page, targets, deadline) {
         search = await findSearchBox(page);
       }
     }
-    if (!search) return { states: await refresh(), actions, already, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
+    if (!search) return { states: await refresh(), actions, already, notFound, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
+    let done = 0;
+    await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length, force: true });
     for (const index of missing) {
       if (Date.now() > deadline) break;
       // Check again just before adding: an earlier add may have brought them in.
       const [now] = await scanPage(page, [targets[index]]);
-      if (STATE_RANK[now.state] === 4) continue;
-      await addBySearch(page, search, targets[index]);
-      search = await findSearchBox(page) ?? search;
+      if (STATE_RANK[now.state] !== 4) {
+        // OGD showing no such member at all: skipped, not a failure.
+        if (!(await addBySearch(page, search, targets[index]))) notFound.add(index);
+        search = await findSearchBox(page) ?? search;
+      }
+      done += 1;
+      await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length });
     }
-    actions.push(`searched ${missing.length}`);
+    actions.push(`searched ${done}`);
+    await onProgress({ stage: 'saving', label: 'Saving in OGD', done, total: missing.length, force: true });
     const save = await visibleButton(page, SAVE_BUTTON);
     if (save) { await clickAndSettle(page, save); actions.push('saved'); }
     states = await refresh();
   }
-  return { states, actions, already };
+  return { states, actions, already, notFound };
 }
 
 async function findActivityRow(page, list, activity, deadline) {
@@ -1307,33 +1323,37 @@ async function onActivityPage(page, activity, deadline, work) {
 // Run on OGD's signed-in page: adds members to an activity's attendees, then
 // opens the activity again to check which ones OGD kept. members are rows
 // from the members table. Returns { added, failed: [{ memberId, reason }], detail }.
-export function createAttendeePush(activity, members, { deadline }) {
+export function createAttendeePush(activity, members, { deadline, onProgress = () => null }) {
   const targets = attendeeTargets(members);
   return async function pushAttendees(page) {
     const workDeadline = deadline - 45 * 1000;
-    const result = await onActivityPage(page, activity, workDeadline, (shown) => addOnPage(shown, targets, workDeadline));
+    await onProgress({ stage: 'opening', label: 'Opening the activity in OGD', force: true });
+    const result = await onActivityPage(page, activity, workDeadline, (shown) => addOnPage(shown, targets, workDeadline, onProgress));
     // Read the attendee list fresh, so only what OGD saved counts.
     let finalStates = result.states.map((entry) => entry.state);
     let checked = false;
     if (Date.now() < deadline) {
+      await onProgress({ stage: 'verifying', label: 'Checking what OGD kept', force: true });
       const fresh = await onActivityPage(page, activity, deadline, (shown) => scanAllPages(shown, targets)).catch(() => null);
       if (fresh) { finalStates = fresh.map((entry) => entry.state); checked = true; }
     }
     const added = [];
     const failed = [];
+    const skipped = [];
     const alreadyIds = [...result.already].map((index) => targets[index].memberId);
     targets.forEach((target, index) => {
       if (result.already.has(index)) added.push(target.memberId);
       else if (finalStates[index] === 'listed' || finalStates[index] === 'checked') added.push(target.memberId);
+      else if (result.notFound.has(index)) skipped.push(target.memberId);
       else failed.push({ memberId: target.memberId, reason: Date.now() > deadline && finalStates[index] === 'missing' ? 'not reached' : `not in OGD's list (${finalStates[index]})` });
     });
     const detail = [
-      `In OGD: ${added.length} of ${targets.length}${alreadyIds.length ? ` (${alreadyIds.length} already there, not added again)` : ''}${checked ? ', checked against OGD\'s attendee list' : ' (could not reopen the activity to check)'}.`,
+      `In OGD: ${added.length} of ${targets.length}${alreadyIds.length ? ` (${alreadyIds.length} already there, not added again)` : ''}${skipped.length ? `; ${skipped.length} not found in OGD, skipped` : ''}${checked ? ', checked against OGD\'s attendee list' : ' (could not reopen the activity to check)'}.`,
       result.actions.length ? `Steps: ${result.actions.join(', ')}.` : '',
       result.problem ?? '',
     ].filter(Boolean).join(' ').slice(0, DETAIL_LIMIT);
     if (!added.length && result.problem) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, result.problem);
-    return { added, already: alreadyIds, failed, detail };
+    return { added, already: alreadyIds, failed, skipped, detail };
   };
 }
 
