@@ -749,16 +749,41 @@ const SELECT2_SEARCH = '.select2-container--open .select2-search__field, .select
 const SELECT2_RESULTS = '.select2-results__option, .select2-results li.select2-result-selectable, .select2-result-selectable';
 const nameParts = (text) => normalizeText(text).split(' ').filter((part) => part.length > 1);
 
-async function chooseSearchOption(page, frame, control, wanted) {
+// Marks the Select2 box (and the field holding its value) on the row whose
+// label matches, inside the open popup. Returns { found, html }, where html is
+// a trimmed copy of the row for the error message when it cannot be used.
+function markSearchBox(frame, labelPattern, key) {
+  return frame.evaluate(({ modalCss, source, flags, key }) => {
+    const pattern = new RegExp(source, flags);
+    const isShown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const root = [...document.querySelectorAll(modalCss)].find((el) => isShown(el) && el.querySelector('input, select, textarea')) ?? document.body;
+    const label = [...root.querySelectorAll('label, td, th, span, div, b, strong, p')]
+      .find((el) => isShown(el) && pattern.test(el.innerText || '') && !el.querySelector('input, select, textarea'));
+    if (!label) return { found: false, html: '' };
+    let row = label.closest('tr, .form-group, .row, li') ?? label.parentElement;
+    while (row && row !== root && !row.querySelector('.select2-container, .select2, input, select')) row = row.parentElement;
+    if (!row) return { found: false, html: '' };
+    const box = [...row.querySelectorAll('.select2-container, span.select2')].find((el) => isShown(el) && !el.closest('.select2-drop, .select2-dropdown'));
+    const value = row.querySelector('select, input[type=hidden]:not([name^="__"])');
+    const html = row.outerHTML.replace(/\s(value|style|onclick|onchange)="[^"]*"/g, '').replace(/\s+/g, ' ').slice(0, 900);
+    if (!box) return { found: false, html };
+    box.setAttribute('data-oracle-box', key);
+    if (value) value.setAttribute('data-oracle-value', key);
+    return { found: true, html };
+  }, { modalCss: MODAL_CONTAINERS, source: labelPattern.source, flags: labelPattern.flags, key });
+}
+
+async function chooseSearchOption(page, frame, key, wanted) {
   const parts = nameParts(wanted);
   if (!parts.length) return { ok: false, reason: 'no name to search for' };
-  const container = frame.locator(`[data-oracle-select2="${control.index}"]`).first();
+  const container = frame.locator(`[data-oracle-box="${key}"]`).first();
   const lastName = String(wanted).split(',')[0].trim();
   const terms = [...new Set([lastName, String(wanted).trim()].filter((term) => term && term.length > 1))];
   let seen = [];
   for (const term of terms) {
     await page.keyboard.press('Escape').catch(() => null);
-    await container.locator('.select2-selection, .select2-choice, .select2-choices, a, span').first().click({ timeout: 8000 }).catch(() => container.click({ timeout: 8000 }));
+    const opener = container.locator('.select2-selection, .select2-choice, .select2-choices, .select2-search__field, input.select2-input').first();
+    if (await opener.count()) await opener.click({ timeout: 8000 }); else await container.click({ timeout: 8000 });
     const search = frame.locator(SELECT2_SEARCH).locator('visible=true').first();
     if (!(await search.isVisible({ timeout: 4000 }).catch(() => false))) return { ok: false, reason: 'its search box did not open' };
     await search.fill('');
@@ -770,23 +795,25 @@ async function chooseSearchOption(page, frame, control, wanted) {
     while (Date.now() < end) {
       await page.waitForTimeout(500);
       const texts = await frame.locator(SELECT2_RESULTS).locator('visible=true').allInnerTexts().catch(() => []);
-      const real = texts.map((text) => text.replace(/\s+/g, ' ').trim()).filter((text) => text && !/searching|loading|please enter|no results|not found|more characters/i.test(text));
-      const key = real.join('|');
-      stable = key && key === last ? stable + 1 : 0;
-      last = key;
+      const real = texts.map((text) => text.replace(/\s+/g, ' ').trim()).filter((text) => text && !/searching|loading|please enter|no (results|matches)|not found|more characters/i.test(text));
+      const key2 = real.join('|');
+      stable = key2 && key2 === last ? stable + 1 : 0;
+      last = key2;
       seen = real;
       if (stable >= 2) break;
     }
-    const matches = seen.map((text, index) => ({ text, index })).filter(({ text }) => parts.every((part) => normalizeText(text).includes(part)));
+    const matches = seen.filter((text) => parts.every((part) => normalizeText(text).split(' ').includes(part) || normalizeText(text).includes(part)));
     if (matches.length) {
-      const pick = matches.find(({ text }) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
-      const option = frame.locator(SELECT2_RESULTS).locator('visible=true').filter({ hasNotText: /searching|loading/i }).filter({ hasText: pick.text }).first();
+      const pick = matches.find((text) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
+      const option = frame.locator(SELECT2_RESULTS).locator('visible=true').filter({ hasText: pick }).first();
       const loaded = page.waitForEvent('load', { timeout: 3000 }).catch(() => null);
       await option.click({ timeout: 8000 });
       await loaded;
-      const value = await frame.locator(`[data-oracle-field="${control.index}"]`).first().inputValue().catch(() => '');
-      if (value && value !== '0') return { ok: true, text: pick.text };
-      return { ok: false, reason: `clicked "${pick.text}" but OGD did not keep it` };
+      await page.waitForTimeout(300);
+      const value = await frame.locator(`[data-oracle-value="${key}"]`).first().inputValue({ timeout: 2000 }).catch(() => '');
+      const shown = await container.innerText({ timeout: 2000 }).catch(() => '');
+      if ((value && value !== '0') || parts.every((part) => normalizeText(shown).includes(part))) return { ok: true, text: pick };
+      return { ok: false, reason: `clicked "${pick}" but OGD did not keep it` };
     }
   }
   await page.keyboard.press('Escape').catch(() => null);
@@ -903,19 +930,23 @@ export function createActivityPush(activity) {
       }
 
       // Team Leader: a search box that looks the name up as it is typed.
+      // Found by its label, since OGD's box may sit on a hidden field.
       const leaderControl = findControl(form, /team\s*leader|leader/i, { tag: 'select' });
-      if (leaderControl?.dressed) {
+      const leaderBox = leaderControl && !leaderControl.dressed ? null : await markSearchBox(frame, /^\s*team\s*leader\s*[:*]*\s*$/i, 'leader');
+      if (leaderBox?.found) {
         if (!activity.team_leader) problems.push('OGD needs a Team Leader; add one in Oracle and push again');
         else {
-          const chosen = await chooseSearchOption(formPage, frame, leaderControl, activity.team_leader);
+          const chosen = await chooseSearchOption(formPage, frame, 'leader', activity.team_leader);
           if (chosen.ok) filled.push(`Team Leader (${chosen.text})`);
-          else problems.push(`Team Leader "${activity.team_leader}": ${chosen.reason}`);
+          else problems.push(`Team Leader "${activity.team_leader}": ${chosen.reason}. Its box: ${leaderBox.html}`);
         }
         form = await snapshotForm(frame);
+      } else if (leaderBox && activity.team_leader) {
+        problems.push(`could not find how to fill Team Leader. Its row: ${leaderBox.html || 'no "Team Leader" label found'}`);
       }
 
       const optional = [
-        [/team\s*leader|leader/i, leaderControl?.dressed ? null : activity.team_leader],
+        [/team\s*leader|leader/i, leaderBox ? null : activity.team_leader],
         [/venue|location|place/i, activity.venue],
         [/desc|remark|note|detail|purpose|agenda|objective/i, activity.description],
       ];
