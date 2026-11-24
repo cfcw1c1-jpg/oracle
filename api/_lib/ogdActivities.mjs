@@ -773,7 +773,7 @@ function markSearchBox(frame, labelPattern, key) {
   }, { modalCss: MODAL_CONTAINERS, source: labelPattern.source, flags: labelPattern.flags, key });
 }
 
-async function chooseSearchOption(page, frame, key, wanted) {
+async function chooseSearchOption(page, frame, key, wanted, prefer = '') {
   const parts = nameParts(wanted);
   if (!parts.length) return { ok: false, reason: 'no name to search for' };
   const container = frame.locator(`[data-oracle-box="${key}"]`).first();
@@ -804,7 +804,14 @@ async function chooseSearchOption(page, frame, key, wanted) {
     }
     const matches = seen.filter((text) => parts.every((part) => normalizeText(text).split(' ').includes(part) || normalizeText(text).includes(part)));
     if (matches.length) {
-      const pick = matches.find((text) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
+      const byPrefer = prefer ? matches.find((text) => normalizeText(text).includes(normalizeText(prefer))) : null;
+      // With a Member ID to go by, a same-name match showing another ID is someone else.
+      const showsIds = matches.some((text) => /[A-Z]{2}-\d{4}-\d+/i.test(text));
+      if (prefer && showsIds && !byPrefer) {
+        await page.keyboard.press('Escape').catch(() => null);
+        return { ok: false, reason: `not among OGD's matches (${matches.slice(0, 8).join(' / ')})` };
+      }
+      const pick = byPrefer ?? matches.find((text) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
       const option = frame.locator(SELECT2_RESULTS).locator('visible=true').filter({ hasText: pick }).first();
       const loaded = page.waitForEvent('load', { timeout: 3000 }).catch(() => null);
       await option.click({ timeout: 8000 });
@@ -1013,7 +1020,7 @@ export function createActivityPush(activity, { onProgress = () => null } = {}) {
 
 const SEARCH_BOX = /member|id\s*no|search|find|keyword|name|attendee|participant/i;
 const NOT_SEARCH_BOX = /activity|venue|leader|date|start|end|desc|remark|time/i;
-const ADD_BUTTON = /^\s*(add|add attendees?|add members?|add participants?|add to (list|attendance)|include|tag|enroll)\s*$/i;
+const ADD_BUTTON = /^\s*\+?\s*(add|add attendees?|add members?|add participants?|add to (list|attendance)|include|tag|enroll)\s*$/i;
 const SEARCH_BUTTON = /^\s*(search|find|go|look\s*up|search member)\s*$/i;
 const SAVE_BUTTON = /^\s*(save|update|submit|save attendance|save attendees|save changes|done|ok|confirm)\s*$/i;
 const OPEN_ADD_BUTTON = /add\s*(attendees?|members?|participants?|attendance)|encode|tag\s*attendees?|^\s*add\s*$/i;
@@ -1024,7 +1031,8 @@ export function attendeeTargets(members) {
   return members.map((member) => {
     const last = normalizeText(member.Lastname ?? member.last);
     const first = normalizeText(member.Firstname ?? member.first);
-    return { memberId: String(member.MemberIDNo ?? member.memberId ?? '').toUpperCase(), keys: [`${last} ${first}`, `${first} ${last}`].filter((key) => key.trim().includes(' ')) };
+    const name = [member.Lastname ?? member.last, member.Firstname ?? member.first].map((part) => String(part ?? '').trim()).filter(Boolean).join(', ');
+    return { memberId: String(member.MemberIDNo ?? member.memberId ?? '').toUpperCase(), name, keys: [`${last} ${first}`, `${first} ${last}`].filter((key) => key.trim().includes(' ')) };
   });
 }
 
@@ -1145,10 +1153,120 @@ async function findSearchBox(page) {
     if (!form) continue;
     const boxes = form.controls.filter((control) => control.tag === 'input' && ['', 'text', 'search'].includes(control.type) && !control.readOnly
       && SEARCH_BOX.test(`${control.label} ${control.hint}`) && !NOT_SEARCH_BOX.test(control.label || ''));
-    const box = boxes.find((control) => /member|id/i.test(`${control.label} ${control.hint}`)) ?? boxes[0];
-    if (box) return { frame, locator: frame.locator(`[data-oracle-field="${box.index}"]`) };
+    const usable = [];
+    for (const control of boxes) {
+      // A data grid's own filter box (DataTables "Search:") only filters the
+      // rows already listed; it never adds anyone.
+      const isFilter = await frame.locator(`[data-oracle-field="${control.index}"]`).evaluate((el) => Boolean(
+        el.closest('.dataTables_filter, .dt-search, .dataTables_wrapper .top, .gridFilter') || el.getAttribute('aria-controls'),
+      )).catch(() => false);
+      if (!isFilter) usable.push(control);
+    }
+    const box = usable.find((control) => /member|id/i.test(`${control.label} ${control.hint}`)) ?? usable[0];
+    if (box) return { frame, locator: frame.locator(`[data-oracle-field="${box.index}"]`), label: box.label || box.hint };
   }
   return null;
+}
+
+// OGD's attendance popup: a "Member Name:" Select2 box with its own "+ Add"
+// button (the "Non-CFC Member:" box below it is for guests and is left alone).
+const MEMBER_NAME_LABEL = /^\s*(cfc\s*)?member\s*(name)?\s*[:*]*\s*$/i;
+async function findMemberNameBox(page) {
+  for (const frame of page.frames()) {
+    const marked = await markSearchBox(frame, MEMBER_NAME_LABEL, 'attendee').catch(() => null);
+    if (!marked?.found) continue;
+    // Its "+ Add" is the nearest Add button after the box in the same row.
+    await frame.evaluate(() => {
+      document.querySelectorAll('[data-oracle-add]').forEach((el) => el.removeAttribute('data-oracle-add'));
+      const box = document.querySelector('[data-oracle-box="attendee"]');
+      for (let row = box?.parentElement; row && row !== document.body; row = row.parentElement) {
+        const add = [...row.querySelectorAll('input[type=button], input[type=submit], button, a')]
+          .find((el) => /^\s*\+?\s*add\s*$/i.test(el.value || el.innerText || '') && (box.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+        if (add) { add.setAttribute('data-oracle-add', 'attendee'); return; }
+      }
+    }).catch(() => null);
+    return { frame, picker: true, ownAdd: true, label: 'Member Name' };
+  }
+  return null;
+}
+
+// A Select2 member picker (like OGD's Team Leader box) in any frame.
+const MEMBER_PICKER_LABEL = /member|attendee|participant|name|search|add/i;
+async function findMemberPicker(page) {
+  for (const frame of page.frames()) {
+    const form = await snapshotForm(frame).catch(() => null);
+    if (!form) continue;
+    const picker = form.controls.find((control) => control.dressed && MEMBER_PICKER_LABEL.test(`${control.label} ${control.hint}`) && !/leader|area|chapter|type|formation|talk|topic/i.test(control.label || ''))
+      ?? form.controls.find((control) => control.dressed && !/leader|area|chapter|type|formation|talk|topic|status|service/i.test(`${control.label} ${control.hint}`));
+    if (!picker) continue;
+    const marked = await frame.evaluate((index) => {
+      document.querySelectorAll('[data-oracle-box="attendee"], [data-oracle-value="attendee"]').forEach((el) => { el.removeAttribute('data-oracle-box'); el.removeAttribute('data-oracle-value'); });
+      const box = document.querySelector(`[data-oracle-select2="${index}"]`);
+      const value = document.querySelector(`[data-oracle-field="${index}"]`);
+      if (!box) return false;
+      box.setAttribute('data-oracle-box', 'attendee');
+      value?.setAttribute('data-oracle-value', 'attendee');
+      return true;
+    }, picker.index).catch(() => false);
+    if (marked) return { frame, picker: true, label: picker.label || picker.hint };
+  }
+  return null;
+}
+
+// What the attendee page offers, for working out OGD's add flow when it does
+// not match: every frame's fields, buttons and links (also those inside hidden
+// popups), Select2 boxes and grid headers. Field values and row contents are
+// left out.
+export async function attendeePageMap(page, note = '') {
+  const parts = [`[${note}] ${page.url().replace(/[?#].*$/, '')}`];
+  for (const frame of page.frames()) {
+    const map = await frame.evaluate(() => {
+      const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+      const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+      const tagOf = (el) => {
+        const cls = clean(el.className && typeof el.className === 'string' ? el.className : '').split(' ').filter((c) => c && !/^ng-|^col-/.test(c)).slice(0, 4).join('.');
+        return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${el.name ? `[name=${el.name}]` : ''}${el.type && el.tagName === 'INPUT' ? `[type=${el.type}]` : ''}${cls ? `.${cls}` : ''}${shown(el) ? '' : '(hidden)'}`;
+      };
+      const labelNear = (el) => {
+        if (el.id) { const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (l) return clean(l.innerText).slice(0, 40); }
+        const cell = el.closest('td, .form-group, label, div');
+        const prev = cell?.previousElementSibling;
+        return clean(el.getAttribute('placeholder') || (prev ? prev.innerText : '') || '').slice(0, 40);
+      };
+      const fields = [...document.querySelectorAll('input:not([type=hidden]), select, textarea')]
+        .filter((el) => !el.closest('.select2-drop, .select2-dropdown'))
+        .slice(0, 60).map((el) => `${tagOf(el)}${labelNear(el) ? ` "${labelNear(el)}"` : ''}${el.tagName === 'SELECT' ? ` (${el.options.length} options)` : ''}`);
+      const buttons = [...document.querySelectorAll('input[type=submit], input[type=button], input[type=image], button, a')]
+        .map((el) => ({ el, text: clean(el.value || el.innerText || el.title || el.getAttribute('aria-label') || el.alt || '') }))
+        .filter(({ el, text }) => (text || el.querySelector('i, img, span.glyphicon, span.fa')) && text.length <= 40 && !/^\d+$/.test(text))
+        .filter(({ el }) => !el.closest('tbody tr td:not(:first-child)') || /add|tag|select/i.test(el.innerText || el.title || ''))
+        .slice(0, 80).map(({ el, text }) => {
+          const href = el.getAttribute('href') || '';
+          const action = /^javascript:/i.test(href) ? href.slice(0, 90) : href.replace(/[?#].*$/, '').slice(0, 60);
+          const click = clean(el.getAttribute('onclick') || '').slice(0, 90);
+          const target = el.getAttribute('data-target') || el.getAttribute('data-toggle') || '';
+          return `${tagOf(el)} "${text}"${action ? ` href=${action}` : ''}${click ? ` onclick=${click}` : ''}${target ? ` data=${target}` : ''}`;
+        });
+      const select2 = [...document.querySelectorAll('.select2-container, span.select2')].filter((el) => !el.closest('.select2-drop, .select2-dropdown')).map(tagOf);
+      const modals = [...document.querySelectorAll('.modal, [role=dialog], .ui-dialog, #simplemodal-container, .popup, [id*="popup" i], [id*="modal" i]')].slice(0, 10)
+        .map((el) => `${tagOf(el)} "${clean(el.querySelector('h1, h2, h3, h4, .modal-title, .ui-dialog-title')?.innerText || '').slice(0, 50)}"`);
+      const grids = [...document.querySelectorAll('table')].filter((t) => t.rows.length > 1 && !t.querySelector('table')).slice(0, 6)
+        .map((t) => `${tagOf(t)} rows=${t.rows.length} head=${[...t.rows[0].cells].map((c) => clean(c.innerText).slice(0, 20)).join('|')}`);
+      const headings = [...document.querySelectorAll('h1, h2, h3, h4, legend, .panel-title, .card-title')].map((el) => clean(el.innerText).slice(0, 50)).filter(Boolean).slice(0, 12);
+      if (!fields.length && !buttons.length && !grids.length) return null;
+      return [
+        `frame ${location.pathname}`,
+        headings.length ? `headings: ${headings.join(' / ')}` : '',
+        `fields: ${fields.join('; ') || 'none'}`,
+        `buttons/links: ${buttons.join('; ') || 'none'}`,
+        select2.length ? `select2: ${select2.join('; ')}` : '',
+        modals.length ? `popups: ${modals.join('; ')}` : '',
+        grids.length ? `grids: ${grids.join('; ')}` : '',
+      ].filter(Boolean).join('\n');
+    }).catch(() => null);
+    if (map) parts.push(map);
+  }
+  return parts.join('\n').slice(0, 12000);
 }
 
 async function describeAttendeePage(page) {
@@ -1165,6 +1283,7 @@ async function describeAttendeePage(page) {
 // Adds one member through a search box: types the Member ID, picks it from a
 // suggestion list if one shows, then Add (or Search, then the member's row).
 async function addBySearch(page, search, target) {
+  if (search.picker) return addByPicker(page, search, target);
   const { frame, locator } = search;
   await locator.click({ timeout: 5000 }).catch(() => null);
   await locator.fill('').catch(() => null);
@@ -1199,9 +1318,26 @@ async function addBySearch(page, search, target) {
   return seen;
 }
 
+// Adds one member through a Select2 member picker: searches the name, picks
+// the match (by Member ID when OGD shows it), then presses Add if there is one.
+async function addByPicker(page, search, target) {
+  const wanted = target.name || target.keys[0];
+  const chosen = await chooseSearchOption(page, search.frame, 'attendee', wanted, target.memberId).catch((error) => ({ ok: false, reason: error.message }));
+  if (!chosen.ok) {
+    search.lastReason = chosen.reason;
+    // Only "OGD found nobody by that name" counts as not in OGD.
+    return !/found nobody/.test(chosen.reason ?? '');
+  }
+  const own = search.frame.locator('[data-oracle-add="attendee"]').first();
+  const add = (await own.isVisible().catch(() => false)) ? own : await visibleButton(page, ADD_BUTTON, search.frame);
+  if (add) await clickAndSettle(page, add);
+  return true;
+}
+
 // Does the adding on an opened activity or attendance page.
 async function addOnPage(page, targets, deadline, onProgress = () => null) {
   const actions = [];
+  const maps = [];
   const notFound = new Set();
   await onProgress({ stage: 'checking', label: 'Checking who is already in OGD', force: true });
   // Members already on OGD's attendee list (any page of it) are left alone.
@@ -1233,19 +1369,23 @@ async function addOnPage(page, targets, deadline, onProgress = () => null) {
     states = await refresh();
   }
 
-  // The rest through a member search box, opening the Add form first if needed.
+  // The rest through a member search box (or Select2 member picker), opening the Add form first if needed.
   const missing = targets.map((_, index) => index).filter((index) => states[index].state === 'missing');
   if (missing.length && Date.now() < deadline) {
-    let search = await findSearchBox(page);
+    maps.push(await attendeePageMap(page, 'attendee page').catch(() => ''));
+    const findAdder = async () => await findMemberNameBox(page) ?? await findSearchBox(page) ?? await findMemberPicker(page);
+    let search = await findAdder();
     if (!search) {
       const opener = await visibleButton(page, OPEN_ADD_BUTTON);
       if (opener) {
         await clickAndSettle(page, opener);
         actions.push('opened the add form');
-        search = await findSearchBox(page);
+        maps.push(await attendeePageMap(page, 'after opening the add form').catch(() => ''));
+        search = await findAdder();
       }
     }
-    if (!search) return { states: await refresh(), actions, already, notFound, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
+    if (!search) return { states: await refresh(), actions, already, notFound, maps, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
+    actions.push(`used ${search.picker ? 'the member picker' : 'the box'} "${search.label || 'unlabelled'}"`);
     let done = 0;
     await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length, force: true });
     for (const index of missing) {
@@ -1255,18 +1395,27 @@ async function addOnPage(page, targets, deadline, onProgress = () => null) {
       if (STATE_RANK[now.state] !== 4) {
         // OGD showing no such member at all: skipped, not a failure.
         if (!(await addBySearch(page, search, targets[index]))) notFound.add(index);
-        search = await findSearchBox(page) ?? search;
+        if (done === 0) maps.push(await attendeePageMap(page, `after the first search${search.lastReason ? ` (${search.lastReason})` : ''}`).catch(() => ''));
+        search = await findAdder() ?? search;
       }
       done += 1;
       await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length });
     }
     actions.push(`searched ${done}`);
     await onProgress({ stage: 'saving', label: 'Saving in OGD', done, total: missing.length, force: true });
-    const save = await visibleButton(page, SAVE_BUTTON);
+    // Each "+ Add" saves on its own; the popup's Save is for the capture schedule.
+    const save = search.ownAdd ? null : await visibleButton(page, SAVE_BUTTON);
     if (save) { await clickAndSettle(page, save); actions.push('saved'); }
     states = await refresh();
+    // Nobody at all turning up means the search itself did not work, not
+    // that every member is missing from OGD: report it, skip no one.
+    const searchedIds = missing.filter((index) => !already.has(index));
+    if (searchedIds.length >= 3 && searchedIds.every((index) => notFound.has(index))) {
+      notFound.clear();
+      return { states, actions, already, notFound, maps, problem: `OGD's search found none of the ${searchedIds.length} members, so the add step does not match OGD's page; nobody was marked skipped.` };
+    }
   }
-  return { states, actions, already, notFound };
+  return { states, actions, already, notFound, maps };
 }
 
 async function findActivityRow(page, list, activity, deadline) {
@@ -1352,8 +1501,7 @@ export function createAttendeePush(activity, members, { deadline, onProgress = (
       result.actions.length ? `Steps: ${result.actions.join(', ')}.` : '',
       result.problem ?? '',
     ].filter(Boolean).join(' ').slice(0, DETAIL_LIMIT);
-    if (!added.length && result.problem) throw new AutomationFailure(ACTIVITY_FAILURES.attendees, result.problem);
-    return { added, already: alreadyIds, failed, skipped, detail };
+    return { added, already: alreadyIds, failed, skipped, detail, pageMap: (result.maps ?? []).filter(Boolean).join('\n\n').slice(0, 30000) || null };
   };
 }
 

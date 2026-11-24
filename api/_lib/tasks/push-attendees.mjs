@@ -75,6 +75,7 @@ export const POST = route(async (request) => {
     attendee_push_failure_code: result ? (status === 'pushed' ? null : 'activity_attendees_unexpected') : run.failure_code,
     attendee_push_detail: (result ? result.detail : run.status_detail)?.slice(0, 3000) ?? null,
     attendees_pushed_at: added.size ? now : row.attendees_pushed_at,
+    ...(result?.pageMap ? { ogd_page_map: result.pageMap } : {}),
     updated_at: now,
   }).eq('id', row.id).select(ACTIVITY_COLUMNS).single();
   if (saveError) throw saveError;
