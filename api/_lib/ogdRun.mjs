@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HttpError } from './access.mjs';
 import { launchBrowser } from './browser.mjs';
 import { createGmailOtpReader } from './gmailOtp.mjs';
@@ -12,6 +16,19 @@ const COOLDOWN_MS = 60 * 1000;
 const SESSION_COOLDOWN_MS = 10 * 1000;
 const STALE_RUN_MS = 5 * 60 * 1000;
 const RUN_LIMIT_MS = 285 * 1000;
+// A recorded run stops earlier, leaving time to save and upload the trace.
+const RECORDED_RUN_LIMIT_MS = 262 * 1000;
+const TRACE_STOP_MS = 15 * 1000;
+
+// Recordings of OGD runs (Playwright traces: a screenshot strip, every click
+// and fill, and page snapshots), kept in a private bucket for troubleshooting.
+export const RECORDING_BUCKET = 'ogd-recordings';
+const RECORDINGS_KEPT = 5;
+
+// Where a push's recording goes, e.g. activity-37/attendees-2026-11-24T14-30-00Z.zip.
+export function recordingPathFor(activityId, kind) {
+  return `activity-${activityId}/${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+}
 
 // Saved OGD sessions. One older than SESSION_MAX_AGE_MS is not tried. One
 // rejected while younger than SESSION_TRUSTED_MS should still have been valid,
@@ -68,26 +85,64 @@ function successDetail({ otpRequired, sessionReused }) {
     : 'Signed in to OGD through the Members Portal. No OTP was requested.';
 }
 
-async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession }) {
+// Stops the trace into tracePath, giving up after TRACE_STOP_MS.
+async function stopTrace(context, tracePath) {
+  if (!context || !tracePath) return;
+  let timer;
+  await Promise.race([
+    context.tracing.stop({ path: tracePath }),
+    new Promise((resolve) => { timer = setTimeout(resolve, TRACE_STOP_MS); }),
+  ]).catch((error) => console.error('[ogd] could not save the recording:', error?.message?.split('\n')[0]));
+  clearTimeout(timer);
+}
+
+// Uploads the trace and keeps only the newest few in its folder.
+async function uploadRecording(db, tracePath, path) {
+  let data;
+  try {
+    data = await readFile(tracePath);
+  } catch {
+    return null;
+  }
+  await rm(tracePath, { force: true }).catch(() => null);
+  const storage = db.storage.from(RECORDING_BUCKET);
+  const { error } = await storage.upload(path, data, { contentType: 'application/zip', upsert: true });
+  if (error) {
+    console.error('[ogd] could not upload the recording:', error.message);
+    return null;
+  }
+  const folder = path.split('/').slice(0, -1).join('/');
+  const { data: listed } = await storage.list(folder, { limit: 100, sortBy: { column: 'name', order: 'desc' } });
+  const old = (listed ?? []).slice(RECORDINGS_KEPT).map((file) => `${folder}/${file.name}`);
+  if (old.length) await storage.remove(old).catch(() => null);
+  console.log(`[ogd] recording saved: ${RECORDING_BUCKET}/${path} (${Math.round(data.length / 1024)} KB)`);
+  return path;
+}
+
+async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession, tracePath }) {
   // ogd_username and ogd_password_enc hold the Members Portal login.
   const ogdPassword = decryptSecret(row.ogd_password_enc, areaId, 'ogd');
   const gmailPassword = decryptSecret(row.gmail_password_enc, areaId, 'gmail');
   const secrets = [ogdPassword, gmailPassword];
-  const session = { state: null, rejected: false };
+  const session = { state: null, rejected: false, context: null };
 
   let browser;
   let isOutOfTime = false;
   // Close the browser before Vercel's 300s limit cuts the request off, so the
   // run still records how it ended instead of staying "running".
-  const guard = setTimeout(() => {
+  const guard = setTimeout(async () => {
     isOutOfTime = true;
+    await stopTrace(session.context, tracePath);
     browser?.close().catch(() => null);
-  }, RUN_LIMIT_MS);
+  }, tracePath ? RECORDED_RUN_LIMIT_MS : RUN_LIMIT_MS);
+  const onContext = tracePath
+    ? (context) => context.tracing.start({ screenshots: true, snapshots: true }).catch((error) => console.error('[ogd] could not start recording:', error?.message))
+    : undefined;
   try {
     browser = await launchBrowser();
     const readOtp = createGmailOtpReader({ address: row.gmail_address, password: gmailPassword });
     const login = await loginToOgd({
-      browser, username: row.ogd_username, password: ogdPassword, readOtp, afterLogin, storageState, notBeforeMs, keepSession, session,
+      browser, username: row.ogd_username, password: ogdPassword, readOtp, afterLogin, storageState, notBeforeMs, keepSession, session, onContext,
     });
     return {
       status: 'connected',
@@ -110,6 +165,7 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
     return { ...base, status: 'failed', failure_code: 'automation_error', status_detail: scrub(error?.message?.split('\n')[0] ?? 'Unknown error', secrets) };
   } finally {
     clearTimeout(guard);
+    if (!isOutOfTime) await stopTrace(session.context, tracePath);
     await browser?.close().catch(() => null);
   }
 }
@@ -140,8 +196,9 @@ function sessionColumns(result, row, areaId, now) {
 }
 
 // Signs a chapter in to OGD, optionally runs afterLogin on the signed-in page,
-// and records the outcome as the chapter's connection status.
-export async function runChapterLogin({ db, areaId, userId, afterLogin }) {
+// and records the outcome as the chapter's connection status. With
+// recordingPath, the run is traced and saved to that path in RECORDING_BUCKET.
+export async function runChapterLogin({ db, areaId, userId, afterLogin, recordingPath = null }) {
   const { data: row, error } = await db
     .from('ogd_chapter_connections')
     .select('gmail_address, gmail_password_enc, ogd_username, ogd_password_enc, last_attempt_at, ogd_session_enc, ogd_session_saved_at, ogd_session_reuse_off_until')
@@ -163,7 +220,8 @@ export async function runChapterLogin({ db, areaId, userId, afterLogin }) {
 
   // A login after a rejected session still keeps a minute from the last attempt.
   const notBeforeMs = row.last_attempt_at ? new Date(row.last_attempt_at).getTime() + COOLDOWN_MS : 0;
-  const result = await attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession }).catch((failure) => {
+  const tracePath = recordingPath ? join(tmpdir(), `ogd-trace-${randomUUID()}.zip`) : null;
+  const result = await attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession, tracePath }).catch((failure) => {
     console.error('[ogd] could not start attempt:', failure?.message);
     return { status: 'failed', failure_code: 'automation_error', status_detail: 'The saved credentials could not be read. Please save them again.' };
   });
@@ -181,5 +239,6 @@ export async function runChapterLogin({ db, areaId, userId, afterLogin }) {
     .eq('area_id', areaId);
   if (updateError) throw updateError;
 
-  return { ...statusColumns, afterLoginResult };
+  const recording = tracePath ? await uploadRecording(db, tracePath, recordingPath).catch(() => null) : null;
+  return { ...statusColumns, afterLoginResult, recording };
 }

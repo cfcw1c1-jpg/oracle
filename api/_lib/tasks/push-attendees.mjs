@@ -2,7 +2,7 @@ import { authorize, HttpError, route } from '../access.mjs';
 import { ACTIVITY_COLUMNS, isInOgd, membersById, pendingForOgd, toActivity } from '../activities.mjs';
 import { progressWriter } from '../activityProgress.mjs';
 import { createAttendeePush } from '../ogdActivities.mjs';
-import { runChapterLogin } from '../ogdRun.mjs';
+import { recordingPathFor, runChapterLogin } from '../ogdRun.mjs';
 
 // Adds an activity's Oracle attendees (added by hand or by the attendance
 // link) to its attendees in OGD, then marks each one added or failed.
@@ -39,7 +39,7 @@ export const POST = route(async (request) => {
 
   let run;
   try {
-    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createAttendeePush(row, members, { deadline: startedAt + WORK_BUDGET_MS, onProgress }) });
+    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createAttendeePush(row, members, { deadline: startedAt + WORK_BUDGET_MS, onProgress }), recordingPath: recordingPathFor(row.id, 'attendees') });
   } catch (failure) {
     await db.from('activities').update({ attendee_push_status: null, ogd_progress: null }).eq('id', row.id);
     throw failure;
@@ -79,5 +79,5 @@ export const POST = route(async (request) => {
     updated_at: now,
   }).eq('id', row.id).select(ACTIVITY_COLUMNS).single();
   if (saveError) throw saveError;
-  return { ok: Boolean(result) && status === 'pushed', added: added.size, activity: toActivity(saved) };
+  return { ok: Boolean(result) && status === 'pushed', added: added.size, activity: toActivity(saved), recording: run.recording ?? null };
 });

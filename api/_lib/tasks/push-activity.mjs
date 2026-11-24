@@ -2,7 +2,7 @@ import { authorize, HttpError, route } from '../access.mjs';
 import { ACTIVITY_COLUMNS, toActivity } from '../activities.mjs';
 import { progressWriter } from '../activityProgress.mjs';
 import { createActivityPush } from '../ogdActivities.mjs';
-import { runChapterLogin } from '../ogdRun.mjs';
+import { recordingPathFor, runChapterLogin } from '../ogdRun.mjs';
 
 // Creates an Oracle activity in OGD (Activities > New Activity) and saves the
 // link OGD gives it.
@@ -26,7 +26,7 @@ export const POST = route(async (request) => {
 
   let run;
   try {
-    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createActivityPush(row, { onProgress }) });
+    run = await runChapterLogin({ db, areaId: row.area_id, userId, afterLogin: createActivityPush(row, { onProgress }), recordingPath: recordingPathFor(row.id, 'activity') });
   } catch (failure) {
     // A cooldown or setup problem: the activity goes back to not pushed.
     await db.from('activities').update({ push_status: null, ogd_progress: null }).eq('id', row.id);

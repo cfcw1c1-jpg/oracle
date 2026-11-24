@@ -328,12 +328,16 @@ async function continueToOgd(page) {
 // runs on OGD's signed-in page. storageState (saved cookies) is tried first; a
 // full login after it is rejected waits until notBeforeMs, keeping logins
 // spaced. Pass a session object to receive the cookies to save; its
-// rejected flag is set when OGD turned the saved cookies down.
+// rejected flag is set when OGD turned the saved cookies down. onContext(context)
+// runs on the new browser context before anything opens, e.g. to start a trace.
 export async function loginToOgd({
   browser, username, password, readOtp, afterLogin,
-  storageState = null, notBeforeMs = 0, keepSession = false, session = {},
+  storageState = null, notBeforeMs = 0, keepSession = false, session = {}, onContext,
 }) {
   const context = await browser.newContext(storageState ? { storageState: { cookies: storageState.cookies ?? [], origins: storageState.origins ?? [] } } : undefined);
+  // The caller may record the run (tracing) and stop it once the run ends.
+  session.context = context;
+  await onContext?.(context);
   const dialogs = { last: null };
   // Accepts every prompt, including the portal's "Login to this OGD?", on
   // this tab and any tab the portal opens.
