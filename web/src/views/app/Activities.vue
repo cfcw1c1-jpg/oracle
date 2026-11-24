@@ -682,7 +682,7 @@ onBeforeUnmount(() => {
         <template #cell-range="{ row }"><span class="nowrap">{{ row.sync ? `${row.sync.from} to ${row.sync.to}` : '—' }}</span></template>
         <template #cell-actions="{ row }">
           <button v-if="row.isReady && !runningIds.has(row.areaId) && !isSyncingAll" class="link-btn" @click="syncChapter(row.areaId)"><RefreshCw :size="13" />Sync</button>
-          <span v-else-if="!row.isReady" class="muted tiny">Save its Gmail and OGD login under OGD Accounts first.</span>
+          <span v-else-if="!row.isReady" class="muted tiny">Save its Members Portal login and Gmail under OGD Accounts first.</span>
         </template>
       </DataTable>
     </section>
@@ -781,7 +781,7 @@ onBeforeUnmount(() => {
                 <button class="btn btn-sm" @click="copy(row.ogdUrl, `o${row.id}`)"><component :is="copied === `o${row.id}` ? Check : Copy" :size="13" />{{ copied === `o${row.id}` ? 'Copied' : 'Copy' }}</button>
                 <a class="btn btn-sm" :href="row.ogdUrl" target="_blank" rel="noopener"><ExternalLink :size="13" />Open</a>
               </div>
-              <p class="muted tiny">Members open the attendance link, enter their Member ID and last name, and are added below. OGD links need an OGD login.</p>
+              <p class="muted tiny">Members open the attendance link, enter their Member ID and last name, and are added below. OGD links need the chapter's Members Portal login.</p>
             </div>
 
             <div v-if="row.source === 'oracle'" class="stack">
@@ -815,7 +815,7 @@ onBeforeUnmount(() => {
               <p v-else class="small text-danger">{{ FAILURE_MESSAGES[row.attendeePushFailureCode] || 'Some attendees could not be added in OGD.' }}<template v-if="row.pendingInOgd"> Use "Add {{ row.pendingInOgd }} to OGD" to try again.</template></p>
               <p v-if="row.attendeePushDetail" class="muted tiny detail wide">{{ row.attendeePushDetail }}</p>
             </template>
-            <p v-if="row.isInOgd && row.pendingInOgd && !chapterById.get(row.areaId)?.isReady" class="muted tiny">This chapter needs its OGD login before attendees can be added in OGD.</p>
+            <p v-if="row.isInOgd && row.pendingInOgd && !chapterById.get(row.areaId)?.isReady" class="muted tiny">This chapter needs its Members Portal login before attendees can be added in OGD.</p>
             <div v-if="row.attendees.length" class="table-scroll">
               <table class="mini">
                 <thead><tr><th>#</th><th>Name</th><th>Member ID</th><th>Area</th><th>Service</th><th>Added by</th><th>In OGD</th><th></th></tr></thead>
@@ -945,7 +945,7 @@ onBeforeUnmount(() => {
         </div>
 
         <label class="row gap check"><input v-model="editor.pushAfter" type="checkbox" :disabled="!chapterById.get(editor.form.areaId)?.isReady" />
-          <span>Push to OGD after saving<span v-if="!chapterById.get(editor.form.areaId)?.isReady" class="muted tiny"> (this chapter needs its OGD login first)</span></span>
+          <span>Push to OGD after saving<span v-if="!chapterById.get(editor.form.areaId)?.isReady" class="muted tiny"> (this chapter needs its Members Portal login first)</span></span>
         </label>
         <p v-if="editor.error" class="small text-danger">{{ editor.error }}</p>
       </form>

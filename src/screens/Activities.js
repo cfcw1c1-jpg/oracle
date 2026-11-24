@@ -672,7 +672,7 @@ export default function Activities() {
           </View>
         )}
         {activity.isInOgd && activity.pendingInOgd > 0 && !isReady(activity.areaId) && (
-          <Text style={styles.hint}>This chapter needs its OGD login before attendees can be added in OGD.</Text>
+          <Text style={styles.hint}>This chapter needs its Members Portal login before attendees can be added in OGD.</Text>
         )}
         {activity.attendees.length === 0 && (
           <Text style={styles.mutedText}>{activity.source === 'ogd' ? 'No attendees were read from OGD for this activity yet. Sync again to fetch them.' : 'No attendees yet. Share the attendance link or add them here.'}</Text>
@@ -1089,7 +1089,7 @@ function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady,
       </Field>
       <View style={styles.switchRow}>
         <Switch value={editor.pushAfter && Boolean(canPush)} disabled={!canPush} onValueChange={(pushAfter) => onChange((current) => ({ ...current, pushAfter }))} />
-        <Text style={styles.bodyText}>Push to OGD after saving{canPush ? '' : ' (this chapter needs its OGD login first)'}</Text>
+        <Text style={styles.bodyText}>Push to OGD after saving{canPush ? '' : ' (this chapter needs its Members Portal login first)'}</Text>
       </View>
       {!!editor.error && <Text style={styles.errorText}>{editor.error}</Text>}
     </Sheet>

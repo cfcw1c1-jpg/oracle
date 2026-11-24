@@ -13,14 +13,21 @@ import { FAILURE_MESSAGES, fetchOgdChanges, fetchOgdChapters, pushOgdChanges, ru
 
 const props = defineProps({ scopes: { type: Array, required: true } });
 
+// OGD is reached by signing in to the CFC Members Portal and continuing to
+// One Global Data. MSG and Chapter Heads use their own portal account, so the
+// Gmail that receives its OTP is set on the same tab. Sector only sees status.
 const COPY = {
-  accounts: {
-    tab: 'OGD Login', subtitle: 'Set the One Global Data username and password for each chapter.', column: 'OGD Username',
-    identifierLabel: 'OGD username', passwordLabel: 'OGD password', hint: 'Username used at cfcglobaldata.com', waiting: 'Waiting for Gmail', type: 'text', maxIdentifier: 50, maxPassword: 50, passwordHint: '',
+  accounts: { tab: 'Logins', subtitle: 'Set the Members Portal login, and the Gmail that receives its OTP, for each chapter.' },
+  sector: { tab: 'Status', subtitle: 'See whether each chapter can sign in to OGD.' },
+};
+const CREDENTIALS = {
+  ogd: {
+    button: 'Portal login', title: 'Members Portal login', identifierLabel: 'Member ID or username', passwordLabel: 'Members Portal password',
+    hint: 'Used at membersportal.couplesforchristglobal.org', type: 'text', maxIdentifier: 50, maxPassword: 50, passwordHint: '',
   },
-  sector: {
-    tab: 'Gmail', subtitle: "Assign each chapter's Gmail account and check whether it can sign in to OGD.", column: 'Gmail',
-    identifierLabel: 'Gmail address', passwordLabel: 'Gmail App Password', hint: 'chapter@gmail.com', waiting: 'Waiting for MSG', type: 'email', maxIdentifier: 254, maxPassword: 40, passwordHint: '16-character App Password',
+  gmail: {
+    button: 'Gmail', title: 'Gmail for the OTP', identifierLabel: 'Gmail address', passwordLabel: 'Gmail App Password',
+    hint: 'The Gmail the Members Portal sends your OTP to', type: 'email', maxIdentifier: 254, maxPassword: 40, passwordHint: '16-character App Password',
   },
 };
 const STATUS = {
@@ -32,15 +39,16 @@ const SYNC_STATUS = {
   failed: { label: 'Sync failed', tone: 'danger' }, syncing: { label: 'Syncing…', tone: 'info' },
 };
 const GUIDE_STEPS = [
-  { text: "Sign in to the chapter's Gmail account in your browser." },
+  { text: 'Sign in, in your browser, to the Gmail account your Members Portal account sends its OTP to.' },
   { text: 'Turn on 2-Step Verification for that account.', link: 'Open Google Account security', url: 'https://myaccount.google.com/security' },
   { text: 'Go to App Passwords, enter a name such as "OGD Portal", and create it.', link: 'Open App Passwords', url: 'https://myaccount.google.com/apppasswords' },
   { text: 'Copy the 16-character password Google shows. It is displayed only once.' },
-  { text: 'In the table below, choose "Set up" on the chapter, then enter the Gmail address and the App Password. Do not use the normal Gmail password.' },
-  { text: 'Once MSG has set the OGD Account for that chapter, choose "Test Login".' },
+  { text: 'In the table below, choose "Gmail" on the chapter, then enter the Gmail address and the App Password. Do not use the normal Gmail password.' },
+  { text: 'Choose "Portal login" and enter your Members Portal Member ID (or username) and password, then choose "Test Login".' },
 ];
 const GUIDE_NOTES = [
-  'IMAP needs no setup. Gmail keeps it turned on, and this app uses it to read the OTP email.',
+  'IMAP needs no setup. Gmail keeps it turned on, and this app uses it to read the Members Portal OTP email.',
+  'If the Members Portal stops asking for an OTP, the Gmail is simply not used.',
   "Changing the Gmail account's password cancels its App Passwords. Create a new one and save it here.",
   'App Passwords may not be available on work or school accounts, or on accounts using Advanced Protection or security keys only.',
 ];
@@ -52,14 +60,19 @@ const loadState = reactive({ status: 'loading', message: '' });
 const search = ref('');
 const isGuideOpen = ref(true);
 const editing = ref(null);
-const form = reactive({ identifier: '', password: '', error: '', isSaving: false });
+const form = reactive({ credential: 'ogd', identifier: '', password: '', error: '', isSaving: false });
+const formCopy = computed(() => CREDENTIALS[form.credential]);
 const testingIds = ref(new Set());
 const syncingIds = ref(new Set());
 const notice = ref('');
 
 function setupLabel(row) {
-  if (!row.ownConfigured) return 'Not set';
-  return row.otherConfigured ? 'Ready' : copy.value.waiting;
+  if (!row.ownConfigured) return row.otherConfigured ? 'Waiting for portal login' : 'Not set';
+  return row.otherConfigured ? 'Ready' : 'Waiting for Gmail';
+}
+
+function isSaved(row, credential) {
+  return credential === 'ogd' ? row.ownConfigured : row.otherConfigured;
 }
 
 const columns = computed(() => [
@@ -98,9 +111,10 @@ watch(scope, () => {
   load();
 });
 
-function openEdit(row) {
+function openEdit(row, credential) {
   editing.value = row;
-  Object.assign(form, { identifier: row.identifier ?? '', password: '', error: '', isSaving: false });
+  const identifier = credential === 'ogd' ? row.ogdUsername : row.gmailAddress;
+  Object.assign(form, { credential, identifier: identifier ?? '', password: '', error: '', isSaving: false });
 }
 
 async function saveCredential() {
@@ -111,7 +125,7 @@ async function saveCredential() {
   form.isSaving = true;
   form.error = '';
   try {
-    await saveOgdCredential({ scope: scope.value, areaId: editing.value.areaId, identifier: form.identifier, password: form.password });
+    await saveOgdCredential({ scope: scope.value, credential: form.credential, areaId: editing.value.areaId, identifier: form.identifier, password: form.password });
     editing.value = null;
     load();
   } catch (error) {
@@ -530,7 +544,7 @@ function pushStatus(row) {
 // A push run that could not sign in is tried again after OGD's one-minute
 // spacing between logins, a few times in a row. Wrong credentials and Gmail
 // problems still stop it straight away.
-const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found']);
+const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found', 'sso_failed']);
 const MAX_SIGN_IN_RETRIES = 3;
 const RETRY_WAIT_MS = 65 * 1000;
 
@@ -601,9 +615,9 @@ onBeforeUnmount(() => {
       <button v-for="item in scopes" :key="item" class="tab" :class="{ active: item === scope }" role="tab" :aria-selected="item === scope" @click="scope = item">{{ COPY[item].tab }}</button>
     </div>
 
-    <section v-if="scope === 'sector'" class="card guide">
+    <section v-if="scope === 'accounts'" class="card guide">
       <button class="guide-head" :aria-expanded="isGuideOpen" @click="isGuideOpen = !isGuideOpen">
-        <Info :size="18" /><span class="grow">How to connect a chapter's Gmail (App Password + IMAP)</span><component :is="isGuideOpen ? ChevronUp : ChevronDown" :size="16" />
+        <Info :size="18" /><span class="grow">How to connect your Gmail for the Members Portal OTP (App Password + IMAP)</span><component :is="isGuideOpen ? ChevronUp : ChevronDown" :size="16" />
       </button>
       <div v-if="isGuideOpen" class="guide-body">
         <ol>
@@ -632,7 +646,7 @@ onBeforeUnmount(() => {
         </template>
         <template #cell-accounts="{ row }">
           <div class="chapter-cell">
-            <span class="tiny account"><span class="muted">OGD:</span> {{ row.ogdUsername || 'Not set' }}</span>
+            <span class="tiny account"><span class="muted">Portal:</span> {{ row.ogdUsername || 'Not set' }}</span>
             <span class="tiny account"><span class="muted">Gmail:</span> {{ row.gmailAddress || 'Not set' }}</span>
           </div>
         </template>
@@ -669,7 +683,11 @@ onBeforeUnmount(() => {
         </template>
         <template #cell-actions="{ row }">
           <div class="row-actions">
-            <button class="btn btn-sm" @click="openEdit(row)"><KeyRound :size="13" />{{ row.ownConfigured ? 'Change' : 'Set up' }}</button>
+            <template v-if="row.canEdit">
+              <button v-for="(item, credential) in CREDENTIALS" :key="credential" class="btn btn-sm" :title="`${isSaved(row, credential) ? 'Change' : 'Set up'} the ${item.title}`" @click="openEdit(row, credential)">
+                <KeyRound :size="13" />{{ item.button }}{{ isSaved(row, credential) ? '' : ' (set up)' }}
+              </button>
+            </template>
             <template v-if="pushingIds.has(row.areaId)">
               <span class="span-2 push-status muted small" aria-live="polite"><span class="spinner sm" role="status" aria-label="Pushing to OGD" />{{ pushStatus(row) }}</span>
             </template>
@@ -727,10 +745,10 @@ onBeforeUnmount(() => {
       </DataTable>
     </section>
 
-    <AppModal v-if="editing" :title="editing.chapter" :subtitle="editing.sector || ''" :locked="form.isSaving" @close="editing = null">
+    <AppModal v-if="editing" :title="`${editing.chapter} · ${formCopy.title}`" :subtitle="editing.sector || ''" :locked="form.isSaving" @close="editing = null">
       <form class="stack" @submit.prevent="saveCredential">
-        <label class="field"><span class="field-label">{{ copy.identifierLabel }}</span><input v-model="form.identifier" class="input" :type="copy.type" :placeholder="copy.hint" :maxlength="copy.maxIdentifier" autocapitalize="none" autocomplete="off" spellcheck="false" /></label>
-        <PasswordField v-model="form.password" :label="copy.passwordLabel" :placeholder="editing.ownConfigured ? 'Enter the password again to save' : copy.passwordHint" :maxlength="copy.maxPassword" autocomplete="new-password" />
+        <label class="field"><span class="field-label">{{ formCopy.identifierLabel }}</span><input v-model="form.identifier" class="input" :type="formCopy.type" :placeholder="formCopy.hint" :maxlength="formCopy.maxIdentifier" autocapitalize="none" autocomplete="off" spellcheck="false" /></label>
+        <PasswordField v-model="form.password" :label="formCopy.passwordLabel" :placeholder="isSaved(editing, form.credential) ? 'Enter the password again to save' : formCopy.passwordHint" :maxlength="formCopy.maxPassword" autocomplete="new-password" />
         <p class="muted small">Stored encrypted and used only to sign this chapter in to OGD. It can't be viewed again after saving.</p>
         <p v-if="form.error" class="small text-danger">{{ form.error }}</p>
         <div class="row actions">

@@ -108,8 +108,10 @@ export function readActivityForm(areaId) {
 }
 
 export const FAILURE_MESSAGES = {
-  ogd_bad_credentials: 'OGD did not accept this login.',
-  otp_rejected: 'OGD did not accept the emailed code.',
+  ogd_bad_credentials: 'The Members Portal did not accept this login.',
+  otp_rejected: 'The emailed code was not accepted.',
+  portal_ogd_missing: 'Signed in to the Members Portal, but it offers no One Global Data access for this account.',
+  sso_failed: 'The Members Portal could not sign in to OGD.',
   otp_not_found: 'No OTP email reached this Gmail in time.',
   gmail_bad_password: 'Google rejected this Gmail address and App Password. Check them, or create a new App Password.',
   gmail_connection_error: 'Could not connect to Gmail. Please try again.',

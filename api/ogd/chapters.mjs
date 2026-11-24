@@ -11,12 +11,12 @@ function backgroundOf(sync) {
   return { state: sync.bg_state, part: sync.bg_part, run: sync.bg_run, retries: sync.bg_retries, startedAt: sync.bg_started_at, stalled };
 }
 
-// Selects non-secret columns only: both tabs see the OGD username and the
-// Gmail address, never a password.
+// Selects non-secret columns only: both tabs see the Members Portal username
+// and the Gmail address, never a password.
 export const GET = route(async (request) => {
   const scopeName = new URL(request.url).searchParams.get('scope');
   const { db, scope, chapters } = await authorize(request, scopeName);
-  if (!scope.credential) throw new HttpError(400, 'Unknown scope.');
+  if (!scope.credentials) throw new HttpError(400, 'Unknown scope.');
 
   const [rows, syncs] = await Promise.all([
     fetchAllRows(() =>
@@ -35,7 +35,6 @@ export const GET = route(async (request) => {
   ]);
   const byArea = new Map(rows.map((row) => [row.area_id, row]));
   const syncByArea = new Map(syncs.map((row) => [row.area_id, row]));
-  const isOgdScope = scope.credential === 'ogd';
 
   return {
     chapters: chapters.map((chapter) => {
@@ -44,11 +43,13 @@ export const GET = route(async (request) => {
       const isStale = row?.status === 'running' && Date.now() - new Date(row.last_attempt_at).getTime() > STALE_RUN_MS;
       return {
         ...chapter,
-        identifier: (isOgdScope ? row?.ogd_username : row?.gmail_address) ?? null,
+        // ownConfigured: the Members Portal login; otherConfigured: the Gmail.
+        identifier: row?.ogd_username ?? null,
         ogdUsername: row?.ogd_username ?? null,
         gmailAddress: row?.gmail_address ?? null,
-        ownConfigured: Boolean(isOgdScope ? row?.ogd_updated_at : row?.gmail_updated_at),
-        otherConfigured: Boolean(isOgdScope ? row?.gmail_updated_at : row?.ogd_updated_at),
+        canEdit: scope.credentials.length > 0,
+        ownConfigured: Boolean(row?.ogd_updated_at),
+        otherConfigured: Boolean(row?.gmail_updated_at),
         status: isStale ? 'failed' : (row?.status ?? 'idle'),
         failureCode: isStale ? 'run_interrupted' : (row?.failure_code ?? null),
         statusDetail: isStale ? null : (row?.status_detail ?? null),

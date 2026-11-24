@@ -173,7 +173,7 @@ async function syncStretch({ db, areaId, chapter, userId, part, startedAt }) {
 // done, fails for good, or is stopped. The page only reads the progress.
 
 // Failures worth another go, a few times in a row, after OGD's login spacing.
-const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found', 'cooldown', 'run_interrupted']);
+const RETRYABLE_FAILURES = new Set(['unexpected_page', 'automation_error', 'members_page_unexpected', 'otp_not_found', 'sso_failed', 'cooldown', 'run_interrupted']);
 // A stretch still going this long after it started is given up before the
 // function's 300-second limit kills it, so the sync is always tidied up.
 const STRETCH_LIMIT_MS = 265 * 1000;

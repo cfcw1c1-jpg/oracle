@@ -2,13 +2,15 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://efelttlcyjfsvpxwmwjd.supabase.co';
 
-// Each page edits exactly one credential type. Status is visible on both.
+// The credentials each page may edit. MSG and Chapter Heads (ogdAccounts)
+// sign in with their own Members Portal account, so they also set the Gmail
+// that receives its OTP. The Sector page only sees the status.
 export const SCOPES = {
-  accounts: { pageKey: 'ogdAccounts', credential: 'ogd' },
-  sector: { pageKey: 'ogdChapters', credential: 'gmail' },
-  reports: { pageKey: 'monthlyPastoralReports', credential: null },
-  celebrants: { pageKey: 'reports', credential: null },
-  activities: { pageKey: 'activities', credential: null },
+  accounts: { pageKey: 'ogdAccounts', credentials: ['ogd', 'gmail'] },
+  sector: { pageKey: 'ogdChapters', credentials: [] },
+  reports: { pageKey: 'monthlyPastoralReports', credentials: null },
+  celebrants: { pageKey: 'reports', credentials: null },
+  activities: { pageKey: 'activities', credentials: null },
 };
 
 export class HttpError extends Error {

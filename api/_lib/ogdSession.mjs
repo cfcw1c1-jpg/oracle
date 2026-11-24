@@ -1,10 +1,9 @@
-import { OGD_LOGIN_URL } from './ogdLogin.mjs';
+import { OGD_HOME_URL } from './ogdLogin.mjs';
 
 // Keeps a saved OGD session from timing out while Oracle is open, using a
 // plain request with the saved cookies instead of a browser. OGD then still
 // accepts the session at the next sync, so no login or OTP is needed.
 
-const HOME_URL = new URL('/default.aspx', OGD_LOGIN_URL).href;
 const REQUEST_TIMEOUT_MS = 15000;
 const FALLBACK_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
 
@@ -67,12 +66,14 @@ export function applySetCookies(cookies, setCookieHeaders, url, nowSeconds = Dat
 // { alive: true, state } with any refreshed cookies, { alive: false } when OGD
 // sent it to the login page, or { alive: null } when OGD could not be reached.
 export async function touchSession(state, { fetchImpl = fetch } = {}) {
+  // The OGD home the SSO reached (www. or not); older sessions predate it.
+  const homeUrl = /^https:\/\/([a-z0-9-]+\.)?cfcglobaldata\.com\//i.test(state.ogdHomeUrl ?? '') ? state.ogdHomeUrl : OGD_HOME_URL;
   let response;
   try {
-    response = await fetchImpl(HOME_URL, {
+    response = await fetchImpl(homeUrl, {
       redirect: 'manual',
       headers: {
-        Cookie: cookieHeader(state.cookies, HOME_URL),
+        Cookie: cookieHeader(state.cookies, homeUrl),
         'User-Agent': state.userAgent || FALLBACK_USER_AGENT,
         Accept: 'text/html,application/xhtml+xml',
       },
@@ -82,7 +83,7 @@ export async function touchSession(state, { fetchImpl = fetch } = {}) {
     return { alive: null };
   }
   const setCookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
-  const cookies = applySetCookies(state.cookies, setCookies, HOME_URL);
+  const cookies = applySetCookies(state.cookies, setCookies, homeUrl);
 
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location') || '';

@@ -1,6 +1,8 @@
 import { authorize, HttpError, route } from '../_lib/access.mjs';
 import { encryptSecret } from '../_lib/secrets.mjs';
 
+// 'ogd' is the Members Portal login (Member ID or username), which signs in
+// to OGD through the portal's SSO.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // OGD's own login form caps both fields at 50 characters.
 const LIMITS = { ogd: { identifier: 50, password: 50 }, gmail: { identifier: 254, password: 40 } };
@@ -15,8 +17,9 @@ export const POST = route(async (request) => {
   const areaId = Number(body.areaId);
   if (!chapters.some((chapter) => chapter.areaId === areaId)) throw new HttpError(403, 'You cannot manage this chapter.');
 
-  const kind = scope.credential;
-  if (!kind) throw new HttpError(400, 'Unknown scope.');
+  // Builds from before the Gmail moved to this page send no credential.
+  const kind = body.credential ?? 'ogd';
+  if (!scope.credentials?.includes(kind)) throw new HttpError(403, 'This page cannot change that login.');
   const identifier = typeof body.identifier === 'string' ? body.identifier.trim() : '';
   const rawPassword = typeof body.password === 'string' ? body.password : '';
   const password = kind === 'gmail' ? rawPassword.replace(/\s/g, '') : rawPassword;

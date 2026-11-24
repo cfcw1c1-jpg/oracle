@@ -5,16 +5,16 @@ import { FAILURE_MESSAGES, fetchOgdChapters, runOgdTestLogin } from '@/lib/ogdAp
 import { sessionState } from '@/stores/session';
 
 // Shown right after an MSG or Chapter Head signs in. Every chapter with both
-// its OGD login and its Gmail saved is signed in to OGD; a user with none of
+// its Members Portal login and its Gmail saved is signed in to OGD; a user with none of
 // them configured goes straight into the app.
 //
 // The server answers each sign-in in one response, so the bar follows the
 // usual timing of each step and only reaches 100% when OGD has answered.
 const STAGES = [
-  { at: 0, label: 'Opening OGD' },
-  { at: 5000, label: 'Entering the OGD login' },
+  { at: 0, label: 'Opening the Members Portal' },
+  { at: 5000, label: 'Entering the Members Portal login' },
   { at: 12000, label: 'Waiting for the OTP email' },
-  { at: 35000, label: 'Verifying the code' },
+  { at: 35000, label: 'Opening One Global Data' },
 ];
 // Elapsed time at which the estimate is about two-thirds of the way.
 const EXPECTED_MS = 30000;
@@ -115,7 +115,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <h1 class="ogd-title">{{ phase === 'done' ? (hasFailure ? 'OGD sign-in finished' : 'Signed in to OGD') : 'Signing in to OGD' }}</h1>
         <p class="ogd-sub">
-          {{ phase === 'done' ? (hasFailure ? 'Some chapters could not sign in. You can try again from OGD Accounts.' : 'Opening Oracle…') : 'This usually takes under a minute while OGD emails its code.' }}
+          {{ phase === 'done' ? (hasFailure ? 'Some chapters could not sign in. You can try again from OGD Accounts.' : 'Opening Oracle…') : 'This usually takes under a minute while the Members Portal emails its code.' }}
         </p>
 
         <div class="ogd-overall">

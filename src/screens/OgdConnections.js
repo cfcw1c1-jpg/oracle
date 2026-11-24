@@ -18,34 +18,41 @@ import { fetchOgdChapters, runOgdTestLogin, saveOgdCredential } from '../lib/ogd
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100, 200];
 const WIDE_LAYOUT_MIN_WIDTH = 860;
 
-// Each mode edits one credential; the two pages share everything else.
+// OGD is reached by signing in to the CFC Members Portal and continuing to
+// One Global Data. MSG and Chapter Heads use their own portal account, so the
+// Gmail that receives its OTP is set on the same tab. Sector only sees status.
 const MODE_COPY = {
-  accounts: {
-    title: 'OGD Accounts',
-    subtitle: "Set the One Global Data username and password for each chapter.",
-    identifierColumn: 'OGD Username',
-    identifierLabel: 'OGD username',
-    passwordLabel: 'OGD password',
-    identifierHint: 'Username used at cfcglobaldata.com',
-    missingOther: 'Waiting for Gmail',
+  accounts: { title: 'OGD Accounts', subtitle: 'Set the Members Portal login, and the Gmail that receives its OTP, for each chapter.' },
+  sector: { title: 'OGD Accounts', subtitle: 'See whether each chapter can sign in to OGD.' },
+};
+
+const CREDENTIAL_COPY = {
+  ogd: {
+    button: 'Portal login',
+    title: 'Members Portal login',
+    identifierLabel: 'Member ID or username',
+    passwordLabel: 'Members Portal password',
+    identifierHint: 'Used at membersportal.couplesforchristglobal.org',
     keyboardType: 'default',
     maxIdentifier: 50,
     maxPassword: 50,
   },
-  sector: {
-    title: 'OGD Accounts',
-    subtitle: "Assign each chapter's Gmail account and check whether it can sign in to OGD.",
-    identifierColumn: 'Gmail',
+  gmail: {
+    button: 'Gmail',
+    title: 'Gmail for the OTP',
     identifierLabel: 'Gmail address',
     passwordLabel: 'Gmail App Password',
-    identifierHint: 'chapter@gmail.com',
-    missingOther: 'Waiting for MSG',
+    identifierHint: 'The Gmail the Members Portal sends your OTP to',
     keyboardType: 'email-address',
     maxIdentifier: 254,
     maxPassword: 40,
     passwordHint: '16-character App Password',
   },
 };
+
+function isSaved(row, credential) {
+  return credential === 'ogd' ? row.ownConfigured : row.otherConfigured;
+}
 
 const STATUS_STYLES = {
   connected: { label: 'Logged in', color: '#15803d', bg: '#dcfce7' },
@@ -55,8 +62,10 @@ const STATUS_STYLES = {
 };
 
 export const FAILURE_MESSAGES = {
-  ogd_bad_credentials: 'OGD did not accept this login.',
-  otp_rejected: 'OGD did not accept the emailed code.',
+  ogd_bad_credentials: 'The Members Portal did not accept this login.',
+  otp_rejected: 'The emailed code was not accepted.',
+  portal_ogd_missing: 'Signed in to the Members Portal, but it offers no One Global Data access for this account.',
+  sso_failed: 'The Members Portal could not sign in to OGD.',
   otp_not_found: 'No OTP email reached this Gmail in time.',
   gmail_bad_password: 'Google rejected this Gmail address and App Password. Check them, or create a new App Password.',
   gmail_connection_error: 'Could not connect to Gmail. Please try again.',
@@ -74,37 +83,38 @@ export function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : 'Never';
 }
 
-function setupLabel(row, copy) {
-  if (!row.ownConfigured) return 'Not set';
-  return row.otherConfigured ? 'Ready' : copy.missingOther;
+function setupLabel(row) {
+  if (!row.ownConfigured) return row.otherConfigured ? 'Waiting for portal login' : 'Not set';
+  return row.otherConfigured ? 'Ready' : 'Waiting for Gmail';
 }
 
 export function compareValues(a, b) {
   return String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function buildColumns(copy) {
+function buildColumns() {
   return [
     { key: 'sector', label: 'Sector', flex: 1.1, value: (row) => row.sector },
     { key: 'chapter', label: 'Chapter', flex: 1.2, value: (row) => row.chapter },
-    { key: 'identifier', label: copy.identifierColumn, flex: 1.5, value: (row) => row.identifier },
-    { key: 'setup', label: 'Setup', flex: 1, value: (row) => setupLabel(row, copy) },
+    { key: 'identifier', label: 'Portal / Gmail', flex: 1.5, value: (row) => row.identifier },
+    { key: 'setup', label: 'Setup', flex: 1, value: (row) => setupLabel(row) },
     { key: 'status', label: 'OGD Status', flex: 1.6, value: (row) => STATUS_STYLES[row.status].label },
     { key: 'lastAttemptAt', label: 'Last Attempt', flex: 1.2, value: (row) => row.lastAttemptAt },
   ];
 }
 
 const APP_PASSWORD_STEPS = [
-  { text: "Sign in to the chapter's Gmail account in your browser." },
+  { text: 'Sign in, in your browser, to the Gmail account your Members Portal account sends its OTP to.' },
   { text: 'Turn on 2-Step Verification for that account.', link: { label: 'Open Google Account security', url: 'https://myaccount.google.com/security' } },
   { text: 'Go to App Passwords, enter a name such as "OGD Portal", and create it.', link: { label: 'Open App Passwords', url: 'https://myaccount.google.com/apppasswords' } },
   { text: 'Copy the 16-character password Google shows. It is displayed only once.' },
-  { text: 'In the table below, choose "Set up" on the chapter, then enter the Gmail address and the App Password. Do not use the normal Gmail password.' },
-  { text: 'Once MSG has set the OGD Account for that chapter, choose "Test Login".' },
+  { text: 'In the table below, choose "Gmail" on the chapter, then enter the Gmail address and the App Password. Do not use the normal Gmail password.' },
+  { text: 'Choose "Portal login" and enter your Members Portal Member ID (or username) and password, then choose "Test Login".' },
 ];
 
 const APP_PASSWORD_NOTES = [
-  'IMAP needs no setup. Gmail keeps it turned on, and this app uses it to read the OTP email.',
+  'IMAP needs no setup. Gmail keeps it turned on, and this app uses it to read the Members Portal OTP email.',
+  'If the Members Portal stops asking for an OTP, the Gmail is simply not used.',
   "Changing the Gmail account's password cancels its App Passwords. Create a new one and save it here.",
   'App Passwords may not be available on work or school accounts, or on accounts using Advanced Protection or security keys only.',
 ];
@@ -128,7 +138,7 @@ function AppPasswordGuide() {
         accessibilityState={{ expanded: isOpen }}
       >
         <Ionicons name="information-circle-outline" size={18} color="#1d4ed8" />
-        <Text style={styles.guideTitle}>How to connect a chapter&apos;s Gmail (App Password + IMAP)</Text>
+        <Text style={styles.guideTitle}>How to connect your Gmail for the Members Portal OTP (App Password + IMAP)</Text>
         <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={16} color="#1d4ed8" />
       </TouchableOpacity>
       {isOpen && (
@@ -196,7 +206,14 @@ function RowActions({ row, copy, isTesting, onEdit, onTest }) {
   const canTest = row.ownConfigured && row.otherConfigured && row.status !== 'running';
   return (
     <View style={styles.actions}>
-      <ActionLink label={row.ownConfigured ? 'Change' : 'Set up'} icon="key-outline" onPress={() => onEdit(row)} />
+      {row.canEdit && Object.entries(CREDENTIAL_COPY).map(([credential, item]) => (
+        <ActionLink
+          key={credential}
+          label={isSaved(row, credential) ? item.button : `${item.button} (set up)`}
+          icon="key-outline"
+          onPress={() => onEdit({ row, credential })}
+        />
+      ))}
       {isTesting ? (
         <ActivityIndicator size="small" color="#2563eb" accessibilityLabel={`Testing ${copy.title}`} />
       ) : canTest ? (
@@ -206,8 +223,9 @@ function RowActions({ row, copy, isTesting, onEdit, onTest }) {
   );
 }
 
-function CredentialModal({ row, scope, copy, onClose, onSaved }) {
-  const [identifier, setIdentifier] = useState(row.identifier ?? '');
+function CredentialModal({ row, credential, scope, onClose, onSaved }) {
+  const copy = CREDENTIAL_COPY[credential];
+  const [identifier, setIdentifier] = useState((credential === 'ogd' ? row.ogdUsername : row.gmailAddress) ?? '');
   const [password, setPassword] = useState('');
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [saveState, setSaveState] = useState({ status: 'idle', message: '' });
@@ -219,7 +237,7 @@ function CredentialModal({ row, scope, copy, onClose, onSaved }) {
     }
     setSaveState({ status: 'loading', message: '' });
     try {
-      await saveOgdCredential({ scope, areaId: row.areaId, identifier, password });
+      await saveOgdCredential({ scope, credential, areaId: row.areaId, identifier, password });
       setSaveState({ status: 'success', message: '' });
       onSaved();
     } catch (error) {
@@ -233,7 +251,7 @@ function CredentialModal({ row, scope, copy, onClose, onSaved }) {
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
         <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>{row.chapter}</Text>
+          <Text style={styles.modalTitle}>{row.chapter} · {copy.title}</Text>
           {!!row.sector && <Text style={styles.modalSubtitle}>{row.sector}</Text>}
 
           <Text style={styles.fieldLabel}>{copy.identifierLabel}</Text>
@@ -255,7 +273,7 @@ function CredentialModal({ row, scope, copy, onClose, onSaved }) {
               value={password}
               onChangeText={setPassword}
               secureTextEntry={!isPasswordVisible}
-              placeholder={row.ownConfigured ? 'Enter the password again to save' : (copy.passwordHint ?? '')}
+              placeholder={isSaved(row, credential) ? 'Enter the password again to save' : (copy.passwordHint ?? '')}
               placeholderTextColor="#94a3b8"
               autoCapitalize="none"
               autoCorrect={false}
@@ -292,7 +310,7 @@ function CredentialModal({ row, scope, copy, onClose, onSaved }) {
   );
 }
 
-const TAB_LABELS = { accounts: 'OGD Login', sector: 'Gmail' };
+const TAB_LABELS = { accounts: 'Logins', sector: 'Status' };
 
 // One menu item for every role. A role holding both pages, such as Admin,
 // switches between them here; other roles see just their own.
@@ -322,7 +340,7 @@ export function OgdAccountsPage({ scopes }) {
 
 export default function OgdConnections({ scope }) {
   const copy = MODE_COPY[scope];
-  const columns = useMemo(() => buildColumns(copy), [copy]);
+  const columns = useMemo(() => buildColumns(), []);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_LAYOUT_MIN_WIDTH;
 
@@ -357,7 +375,7 @@ export default function OgdConnections({ scope }) {
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     const filtered = query
-      ? rows.filter((row) => [row.sector, row.cluster, row.chapter, row.identifier].some((value) => value?.toLowerCase().includes(query)))
+      ? rows.filter((row) => [row.sector, row.cluster, row.chapter, row.ogdUsername, row.gmailAddress].some((value) => value?.toLowerCase().includes(query)))
       : rows;
     const column = columns.find((candidate) => candidate.key === sort.key);
     const direction = sort.ascending ? 1 : -1;
@@ -409,8 +427,9 @@ export default function OgdConnections({ scope }) {
         <TableRow key={row.areaId} last={last} style={styles.mobileRow}>
           <Text style={styles.chapterText}>{row.chapter}</Text>
           <Text style={styles.mutedText}>{row.sector || 'No sector'}</Text>
-          <Text style={styles.bodyText}>{copy.identifierColumn}: {row.identifier || 'Not set'}</Text>
-          <Text style={styles.mutedText}>Setup: {setupLabel(row, copy)}</Text>
+          <Text style={styles.bodyText}>Portal: {row.ogdUsername || 'Not set'}</Text>
+          <Text style={styles.bodyText}>Gmail: {row.gmailAddress || 'Not set'}</Text>
+          <Text style={styles.mutedText}>Setup: {setupLabel(row)}</Text>
           <StatusCell row={row} />
           <Text style={styles.mutedText}>Last attempt: {formatDateTime(row.lastAttemptAt)}</Text>
           {actions}
@@ -422,8 +441,11 @@ export default function OgdConnections({ scope }) {
       <TableRow key={row.areaId} last={last}>
         <Text style={[styles.bodyText, { flex: 1.1 }]} numberOfLines={2}>{row.sector || '—'}</Text>
         <Text style={[styles.chapterText, { flex: 1.2 }]} numberOfLines={2}>{row.chapter}</Text>
-        <Text style={[styles.bodyText, { flex: 1.5 }]} numberOfLines={1}>{row.identifier || 'Not set'}</Text>
-        <Text style={[styles.bodyText, { flex: 1 }]} numberOfLines={2}>{setupLabel(row, copy)}</Text>
+        <View style={{ flex: 1.5 }}>
+          <Text style={styles.bodyText} numberOfLines={1}>Portal: {row.ogdUsername || 'Not set'}</Text>
+          <Text style={styles.mutedText} numberOfLines={1}>Gmail: {row.gmailAddress || 'Not set'}</Text>
+        </View>
+        <Text style={[styles.bodyText, { flex: 1 }]} numberOfLines={2}>{setupLabel(row)}</Text>
         <View style={{ flex: 1.6 }}><StatusCell row={row} /></View>
         <Text style={[styles.mutedText, { flex: 1.2 }]} numberOfLines={2}>{formatDateTime(row.lastAttemptAt)}</Text>
         <View style={styles.actionsCell}>{actions}</View>
@@ -436,7 +458,7 @@ export default function OgdConnections({ scope }) {
       <Text style={styles.title}>{copy.title}</Text>
       <Text style={styles.subtitle}>{copy.subtitle}</Text>
 
-      {scope === 'sector' && <AppPasswordGuide />}
+      {scope === 'accounts' && <AppPasswordGuide />}
 
       <TextInput
         value={search}
@@ -461,7 +483,7 @@ export default function OgdConnections({ scope }) {
         )}
         {loadState.status === 'success' && (
           <>
-            <SortHeader columns={columns} sort={sort} onSort={handleSort} isWide={isWide} />
+            <SortHeader columns={columns} sort={sort} onSort={handleSort} isWide={isWide} actionsWidth={200} />
             {pageItems.length === 0
               ? <EmptyRow label={rows.length === 0 ? 'No chapters are assigned to your account yet.' : 'No chapters match your search.'} />
               : pageItems.map(renderRow)}
@@ -479,7 +501,7 @@ export default function OgdConnections({ scope }) {
       </TableCard>
 
       {!!editingRow && (
-        <CredentialModal row={editingRow} scope={scope} copy={copy} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
+        <CredentialModal row={editingRow.row} credential={editingRow.credential} scope={scope} onClose={() => setEditingRow(null)} onSaved={handleSaved} />
       )}
     </ScrollView>
   );
@@ -522,8 +544,8 @@ const styles = StyleSheet.create({
   statusCell: { alignItems: 'flex-start', gap: 3 },
   statusReason: { fontSize: 12, fontWeight: '600', color: '#b91c1c' },
   statusDetail: { fontSize: 11, color: '#64748b' },
-  actionsCell: { width: 170 },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 2 },
+  actionsCell: { width: 200 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6, marginTop: 2 },
   errorBlock: { padding: 16, gap: 8 },
   errorText: { fontSize: 13, color: '#b91c1c', marginBottom: 8 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', alignItems: 'center', justifyContent: 'center', padding: 16 },

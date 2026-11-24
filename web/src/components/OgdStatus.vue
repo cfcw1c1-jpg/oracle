@@ -5,7 +5,7 @@ import { sessionState } from '@/stores/session';
 
 // Header lights for the caller's chapters: green (blinking) when the last OGD
 // sign-in worked, red when it did not or the login is missing. Gmail is only
-// proven by OGD's emailed code, so it turns red when the saved Gmail is
+// proven by the Members Portal's emailed code, so it turns red when the saved Gmail is
 // missing or the last sign-in could not read it.
 const emit = defineEmits(['open']);
 const REFRESH_MS = 60 * 1000;
@@ -50,7 +50,7 @@ function gmailProblem(chapter) {
 }
 
 function ogdProblem(chapter) {
-  if (!chapter.ownConfigured) return 'No OGD login saved';
+  if (!chapter.ownConfigured) return 'No Members Portal login saved';
   if (chapter.status === 'connected') return null;
   if (chapter.status === 'running') return 'Signing in…';
   if (chapter.status === 'failed') return FAILURE_MESSAGES[chapter.failureCode] ?? chapter.statusDetail ?? 'Last sign-in failed';

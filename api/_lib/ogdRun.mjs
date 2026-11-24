@@ -4,7 +4,7 @@ import { createGmailOtpReader } from './gmailOtp.mjs';
 import { AutomationFailure, loginToOgd } from './ogdLogin.mjs';
 import { decryptSecret, encryptSecret } from './secrets.mjs';
 
-// Repeated failures can lock an OGD or Gmail account, so logins are spaced.
+// Repeated failures can lock a Members Portal or Gmail account, so logins are spaced.
 const COOLDOWN_MS = 60 * 1000;
 // A run that will likely reuse a saved session needs no login, so it may
 // follow the last one sooner. If the session turns out to be rejected, the
@@ -63,10 +63,13 @@ export function isReuseOff(row, now) {
 
 function successDetail({ otpRequired, sessionReused }) {
   if (sessionReused) return 'Signed in to OGD using the saved session. No login or OTP was needed.';
-  return otpRequired ? 'Signed in to OGD using the emailed OTP.' : 'Signed in to OGD. No OTP was requested.';
+  return otpRequired
+    ? 'Signed in to OGD through the Members Portal using the emailed OTP.'
+    : 'Signed in to OGD through the Members Portal. No OTP was requested.';
 }
 
 async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession }) {
+  // ogd_username and ogd_password_enc hold the Members Portal login.
   const ogdPassword = decryptSecret(row.ogd_password_enc, areaId, 'ogd');
   const gmailPassword = decryptSecret(row.gmail_password_enc, areaId, 'gmail');
   const secrets = [ogdPassword, gmailPassword];
@@ -146,7 +149,7 @@ export async function runChapterLogin({ db, areaId, userId, afterLogin }) {
     .maybeSingle();
   if (error) throw error;
   if (!row?.gmail_password_enc || !row?.ogd_password_enc) {
-    throw new HttpError(409, 'This chapter needs both its Gmail and its OGD login first.');
+    throw new HttpError(409, 'This chapter needs both its Members Portal login and its Gmail first.');
   }
 
   const startedAt = Date.now();

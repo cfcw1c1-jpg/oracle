@@ -2,14 +2,17 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { AutomationFailure } from './ogdLogin.mjs';
 
-// Reads the OGD OTP email over IMAP, signing in with a Gmail App Password.
+// Reads the Members Portal (or OGD) OTP email over IMAP, signing in with a
+// Gmail App Password.
 const OTP_WAIT_MS = 90000;
 const OTP_POLL_MS = 5000;
 const MAX_MESSAGES_PER_POLL = 5;
 
-// OGD sends its OTP emails from this address. Only its messages are opened,
-// so unrelated mail in the account is never read.
-const OTP_SENDER = 'postmaster@cfcglobaldata.com';
+// The Members Portal, and OGD before it, send their OTP emails from these
+// addresses. Only their messages are opened, so unrelated mail in the
+// account is never read.
+const OTP_SENDERS = ['postmaster@couplesforchristglobal.org', 'postmaster@cfcglobaldata.com'];
+const SENDER_QUERY = `from:(${OTP_SENDERS.join(' OR ')})`;
 const DIGIT_CODE = String.raw`(?<![\d-])(?!(?:19|20)\d{2}(?!\d))(\d{4,8})(?![\d-])`;
 const LABELLED_CODE_PATTERNS = [
   new RegExp(String.raw`(?:\bOTP\b|one[\s-]?time\s+(?:pass\s?code|password|pin|code))[\s\S]{0,80}?${DIGIT_CODE}`, 'i'),
@@ -34,7 +37,7 @@ function createGmailClient({ address, password }) {
 }
 
 function isFromOtpSender({ envelope }) {
-  return (envelope?.from ?? []).some((party) => party.address?.toLowerCase() === OTP_SENDER);
+  return (envelope?.from ?? []).some((party) => OTP_SENDERS.includes(party.address?.toLowerCase()));
 }
 
 // All Mail covers the inbox and any label; Spam is separate in Gmail and is
@@ -50,7 +53,7 @@ async function readOtpFromMailbox(client, path, sinceEpochSeconds) {
   try {
     // Gmail's after: operator takes epoch seconds, so an older OTP still in
     // the mailbox is ignored regardless of the account's timezone.
-    const uids = await client.search({ gmraw: `from:${OTP_SENDER} after:${sinceEpochSeconds}` }, { uid: true });
+    const uids = await client.search({ gmraw: `${SENDER_QUERY} after:${sinceEpochSeconds}` }, { uid: true });
     if (!uids || uids.length === 0) return null;
 
     const headers = await client.fetchAll(uids.slice(-MAX_MESSAGES_PER_POLL).join(','), { uid: true, envelope: true, internalDate: true }, { uid: true });
@@ -72,8 +75,8 @@ async function readOtpFromMailbox(client, path, sinceEpochSeconds) {
   }
 }
 
-// Returns a readOtp function for loginToOgd. Gmail is only contacted when OGD
-// actually asks for an OTP.
+// Returns a readOtp function for loginToOgd. Gmail is only contacted when the
+// Members Portal (or OGD) actually asks for an OTP.
 export function createGmailOtpReader({ address, password, createClient = createGmailClient, otpWaitMs = OTP_WAIT_MS, pollMs = OTP_POLL_MS }) {
   return async function readOtp({ sinceEpochSeconds }) {
     const client = createClient({ address, password });
@@ -99,7 +102,7 @@ export function createGmailOtpReader({ address, password, createClient = createG
         }
         await sleep(pollMs);
       }
-      throw new AutomationFailure('otp_not_found', `OGD asked for an OTP, but no email containing one reached this Gmail within ${Math.round(otpWaitMs / 1000)} seconds.`);
+      throw new AutomationFailure('otp_not_found', `The Members Portal asked for an OTP, but no email containing one reached this Gmail within ${Math.round(otpWaitMs / 1000)} seconds.`);
     } catch (error) {
       if (error instanceof AutomationFailure) throw error;
       throw new AutomationFailure('gmail_connection_error', 'The connection to Gmail dropped while waiting for the OTP.');
