@@ -773,6 +773,21 @@ function markSearchBox(frame, labelPattern, key) {
   }, { modalCss: MODAL_CONTAINERS, source: labelPattern.source, flags: labelPattern.flags, key });
 }
 
+// Closes an open Select2 dropdown in this frame. Never with the Escape key:
+// OGD's popups (simplemodal) close on Escape too, taking the form with them.
+async function closeSelect2(frame) {
+  await frame.evaluate(() => {
+    const $ = window.jQuery;
+    if ($?.fn?.select2) {
+      $('select, input[type=hidden], input[type=text]').each((_, el) => {
+        try { if ($(el).data('select2')) $(el).select2('close'); } catch { /* not a Select2 box */ }
+      });
+    }
+    // Select2 v3 also closes when its mask behind the dropdown is pressed.
+    document.getElementById('select2-drop-mask')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  }).catch(() => null);
+}
+
 async function chooseSearchOption(page, frame, key, wanted, prefer = '') {
   const parts = nameParts(wanted);
   if (!parts.length) return { ok: false, reason: 'no name to search for' };
@@ -781,7 +796,7 @@ async function chooseSearchOption(page, frame, key, wanted, prefer = '') {
   const terms = [...new Set([lastName, String(wanted).trim()].filter((term) => term && term.length > 1))];
   let seen = [];
   for (const term of terms) {
-    await page.keyboard.press('Escape').catch(() => null);
+    await closeSelect2(frame);
     const opener = container.locator('.select2-selection, .select2-choice, .select2-choices, .select2-search__field, input.select2-input').first();
     if (await opener.count()) await opener.click({ timeout: 8000 }); else await container.click({ timeout: 8000 });
     const search = frame.locator(SELECT2_SEARCH).locator('visible=true').first();
@@ -808,7 +823,7 @@ async function chooseSearchOption(page, frame, key, wanted, prefer = '') {
       // With a Member ID to go by, a same-name match showing another ID is someone else.
       const showsIds = matches.some((text) => /[A-Z]{2}-\d{4}-\d+/i.test(text));
       if (prefer && showsIds && !byPrefer) {
-        await page.keyboard.press('Escape').catch(() => null);
+        await closeSelect2(frame);
         return { ok: false, reason: `not among OGD's matches (${matches.slice(0, 8).join(' / ')})` };
       }
       const pick = byPrefer ?? matches.find((text) => normalizeText(text) === normalizeText(wanted)) ?? matches[0];
@@ -823,7 +838,7 @@ async function chooseSearchOption(page, frame, key, wanted, prefer = '') {
       return { ok: false, reason: `clicked "${pick}" but OGD did not keep it` };
     }
   }
-  await page.keyboard.press('Escape').catch(() => null);
+  await closeSelect2(frame);
   return { ok: false, reason: seen.length ? `not among OGD's matches (${seen.slice(0, 8).join(' / ')})` : 'OGD found nobody by that name' };
 }
 
@@ -1146,6 +1161,17 @@ async function clickAndSettle(page, element) {
   await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
 }
 
+// A button inside OGD's attendance popup (its own frame), like "+ Add": the
+// postback reloads that frame, not the page, so wait for the frame instead.
+const FRAME_POSTBACK_WAIT_MS = 10000;
+async function clickInFrameAndSettle(page, element) {
+  const reloaded = page.waitForEvent('framenavigated', { predicate: (frame) => frame !== page.mainFrame(), timeout: FRAME_POSTBACK_WAIT_MS }).catch(() => null);
+  await element.click({ timeout: 10000 }).catch(() => null);
+  const frame = await reloaded;
+  if (frame) await frame.waitForLoadState('load', { timeout: NAVIGATION_TIMEOUT_MS }).catch(() => null);
+  await page.waitForTimeout(ATTENDEE_STEP_WAIT_MS);
+}
+
 // A member search box in any frame: a text box labelled for members, IDs or names.
 async function findSearchBox(page) {
   for (const frame of page.frames()) {
@@ -1328,9 +1354,10 @@ async function addByPicker(page, search, target) {
     // Only "OGD found nobody by that name" counts as not in OGD.
     return !/found nobody/.test(chosen.reason ?? '');
   }
+  // The member is picked; its own "+ Add" saves them (and reloads the popup).
   const own = search.frame.locator('[data-oracle-add="attendee"]').first();
   const add = (await own.isVisible().catch(() => false)) ? own : await visibleButton(page, ADD_BUTTON, search.frame);
-  if (add) await clickAndSettle(page, add);
+  if (add) await (search.ownAdd ? clickInFrameAndSettle(page, add) : clickAndSettle(page, add));
   return true;
 }
 
@@ -1387,6 +1414,8 @@ async function addOnPage(page, targets, deadline, onProgress = () => null) {
     if (!search) return { states: await refresh(), actions, already, notFound, maps, problem: `No way to add attendees found. ${await describeAttendeePage(page)}` };
     actions.push(`used ${search.picker ? 'the member picker' : 'the box'} "${search.label || 'unlabelled'}"`);
     let done = 0;
+    let stoppedEarly = false;
+    const firstPage = (() => { try { return new URL(search.frame.url()).pathname; } catch { return ''; } })();
     await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length, force: true });
     for (const index of missing) {
       if (Date.now() > deadline) break;
@@ -1396,12 +1425,23 @@ async function addOnPage(page, targets, deadline, onProgress = () => null) {
         // OGD showing no such member at all: skipped, not a failure.
         if (!(await addBySearch(page, search, targets[index]))) notFound.add(index);
         if (done === 0) maps.push(await attendeePageMap(page, `after the first search${search.lastReason ? ` (${search.lastReason})` : ''}`).catch(() => ''));
-        search = await findAdder() ?? search;
+        // OGD's attendance popup can reload or close after an add. Only the
+        // same kind of box on the same page may be used next; anything else
+        // (like the Activities list's own Search) would wrongly skip members.
+        const next = await findAdder();
+        const pageOf = (adder) => { try { return new URL(adder.frame.url()).pathname; } catch { return ''; } };
+        if (!next || next.picker !== search.picker || pageOf(next) !== firstPage) {
+          done += 1;
+          actions.push(`stopped after ${done}: OGD's add box was gone (now on ${next ? pageOf(next) : (new URL(page.url()).pathname)})`);
+          stoppedEarly = true;
+          break;
+        }
+        search = next;
       }
       done += 1;
       await onProgress({ stage: 'adding', label: 'Adding attendees in OGD', done, total: missing.length });
     }
-    actions.push(`searched ${done}`);
+    if (!stoppedEarly) actions.push(`searched ${done}`);
     await onProgress({ stage: 'saving', label: 'Saving in OGD', done, total: missing.length, force: true });
     // Each "+ Add" saves on its own; the popup's Save is for the capture schedule.
     const save = search.ownAdd ? null : await visibleButton(page, SAVE_BUTTON);

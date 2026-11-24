@@ -20,8 +20,9 @@ const RUN_LIMIT_MS = 285 * 1000;
 const RECORDED_RUN_LIMIT_MS = 262 * 1000;
 const TRACE_STOP_MS = 15 * 1000;
 
-// Recordings of OGD runs (Playwright traces: a screenshot strip, every click
-// and fill, and page snapshots), kept in a private bucket for troubleshooting.
+// Recordings of OGD runs (Playwright traces: a screenshot strip and every
+// click and fill), kept in a private bucket for troubleshooting. Page
+// snapshots are left out: with them a trace outgrows the storage size limit.
 export const RECORDING_BUCKET = 'ogd-recordings';
 const RECORDINGS_KEPT = 5;
 
@@ -136,7 +137,7 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
     browser?.close().catch(() => null);
   }, tracePath ? RECORDED_RUN_LIMIT_MS : RUN_LIMIT_MS);
   const onContext = tracePath
-    ? (context) => context.tracing.start({ screenshots: true, snapshots: true }).catch((error) => console.error('[ogd] could not start recording:', error?.message))
+    ? (context) => context.tracing.start({ screenshots: true, snapshots: false }).catch((error) => console.error('[ogd] could not start recording:', error?.message))
     : undefined;
   try {
     browser = await launchBrowser();
