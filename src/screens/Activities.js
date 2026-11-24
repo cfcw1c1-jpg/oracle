@@ -142,6 +142,27 @@ function extraFieldsFor(ogdForm, form) {
   return [...shown.values()];
 }
 
+// OGD's own checkboxes on every New Activity form, whatever the Type:
+// Attendees (which services may log attendance in their Members Portal),
+// *MISSION CORE only and *GOVERNANCE TEAM only. Saved under OGD's label so the
+// push finds the same boxes.
+function baseChoiceFieldsOf(ogdForm) {
+  return (ogdForm?.fields ?? []).filter((field) => field.kind === 'checkboxes' || field.kind === 'checkbox');
+}
+function baseTitle(label) {
+  return String(label ?? '').replace(/\s*check all\s*uncheck all\s*$/i, '').replace(/:\s*$/, '').trim() || label;
+}
+function baseChoices(field) {
+  return (field.options ?? []).filter((option) => !isPlaceholder(option.text)).map((option) => option.text);
+}
+// Until changed, every Attendees role is ticked (as on OGD's form) and the
+// "only" boxes are not.
+function baseValue(field, form) {
+  const value = form.ogdFields?.[field.label];
+  if (value !== undefined) return value;
+  return field.kind === 'checkboxes' ? baseChoices(field) : false;
+}
+
 // A value is kept only while the field shows it as a choice.
 function keptValue(field, value) {
   if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) return undefined;
@@ -567,8 +588,12 @@ export default function Activities() {
         id: form.id, areaId: form.areaId, name: form.name, activityType: form.activityType, areaName: form.areaName, startsAt, endsAt,
         teamLeader: form.teamLeader, teamLeaderMemberId: form.teamLeaderMemberId, venue: form.venue, description: form.description, attendeeIds: form.attendeeIds,
         // Only the extra fields the chosen Type shows; values left from another Type are dropped.
-        ogdFields: Object.fromEntries(extraFieldsFor(ogdForm, form).map((field) => [field.label, keptValue(field, form.ogdFields?.[field.label])])
-          .filter(([, value]) => value !== undefined)),
+        ogdFields: {
+          ...Object.fromEntries(extraFieldsFor(ogdForm, form).map((field) => [field.label, keptValue(field, form.ogdFields?.[field.label])])
+            .filter(([, value]) => value !== undefined)),
+          // Always sent, even with nothing ticked: none ticked means open to all in OGD.
+          ...Object.fromEntries(baseChoiceFieldsOf(ogdForm).map((field) => [field.label, baseValue(field, form)])),
+        },
       });
       if (!isMountedRef.current) return;
       setActivities((current) => (current.some((activity) => activity.id === saved.id)
@@ -627,7 +652,7 @@ export default function Activities() {
           <Detail label="Team Leader" value={activity.teamLeader} />
           <Detail label="Venue" value={activity.venue} />
           <Detail label="Description" value={activity.description} />
-          {Object.entries(activity.ogdFields ?? {}).map(([label, value]) => <Detail key={`f-${label}`} label={label} value={Array.isArray(value) ? value.join(', ') : value === true ? 'Yes' : value} />)}
+          {Object.entries(activity.ogdFields ?? {}).map(([label, value]) => <Detail key={`f-${label}`} label={baseTitle(label)} value={Array.isArray(value) ? (value.length ? value.join(', ') : 'None (open to all)') : value === true ? 'Yes' : value === false ? 'No' : value} />)}
           {details.map(([label, value]) => <Detail key={label} label={label} value={value} />)}
           {!!activity.syncedAt && <Detail label="Read from OGD" value={formatDateTime(activity.syncedAt)} />}
         </View>
@@ -1057,6 +1082,32 @@ function EditorModal({ editor, chapters, typeOptions, ogdForm, members, isReady,
           {typeOptions.map((type) => <Chip key={type} label={type} active={form.activityType === type} onPress={() => onForm({ activityType: form.activityType === type ? '' : type })} />)}
         </View>
       </Field>
+      {baseChoiceFieldsOf(ogdForm).filter((field) => field.kind === 'checkboxes').map((field) => {
+        const list = baseValue(field, form);
+        const setList = (next) => onForm({ ogdFields: { ...form.ogdFields, [field.label]: next } });
+        return (
+          <View key={`base-${field.label}`} style={styles.extraBox}>
+            <View style={styles.buttonRow}>
+              <Text style={[styles.fieldLabel, styles.flex]}>{baseTitle(field.label)}</Text>
+              <TouchableOpacity onPress={() => setList(baseChoices(field))} accessibilityRole="button"><Text style={styles.linkText}>check all</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setList([])} accessibilityRole="button"><Text style={styles.linkText}>uncheck all</Text></TouchableOpacity>
+            </View>
+            <View style={styles.chipRow}>
+              {baseChoices(field).map((text) => {
+                const isOn = list.includes(text);
+                return <Chip key={text} label={text} active={isOn} onPress={() => setList(isOn ? list.filter((entry) => entry !== text) : [...list, text])} />;
+              })}
+            </View>
+            {baseChoiceFieldsOf(ogdForm).filter((single) => single.kind === 'checkbox').map((single) => (
+              <View key={single.label} style={styles.switchRow}>
+                <Switch value={baseValue(single, form) === true} onValueChange={(next) => onForm({ ogdFields: { ...form.ogdFields, [single.label]: next } })} />
+                <Text style={styles.bodyText}>{single.label}</Text>
+              </View>
+            ))}
+            <Text style={styles.hint}>When checked, the leader or member can log attendance in their Members Portal. When none are checked, it is open to all.</Text>
+          </View>
+        );
+      })}
       {extraFieldsFor(ogdForm, form).length > 0 && (
         <View style={styles.extraBox}>
           <Text style={styles.fieldLabel}>{form.activityType} details (OGD asks for these)</Text>
@@ -1253,6 +1304,7 @@ const styles = StyleSheet.create({
   buttonTextPrimary: { color: '#fff' },
   buttonTextDanger: { color: '#b91c1c' },
   hint: { fontSize: 11, color: '#64748b' },
+  linkText: { fontSize: 12, fontWeight: '600', color: '#2563eb' },
   notice: { fontSize: 12, color: '#1d4ed8', marginVertical: 6 },
   progressBox: { gap: 6, padding: 10, borderRadius: 8, backgroundColor: '#eff6ff', marginVertical: 6 },
   progressLine: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },

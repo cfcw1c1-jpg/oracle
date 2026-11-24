@@ -21,10 +21,8 @@ function cleanOgdFields(value) {
     const key = text(label, 80);
     if (!key) return [];
     if (typeof entry === 'boolean') return [[key, entry]];
-    if (Array.isArray(entry)) {
-      const list = entry.map((item) => text(item, 200)).filter(Boolean).slice(0, 100);
-      return list.length ? [[key, list]] : [];
-    }
+    // An empty list is kept: for OGD's Attendees boxes, none ticked means open to all.
+    if (Array.isArray(entry)) return [[key, entry.map((item) => text(item, 200)).filter(Boolean).slice(0, 100)]];
     const cleaned = text(entry, 1000);
     return cleaned ? [[key, cleaned]] : [];
   });

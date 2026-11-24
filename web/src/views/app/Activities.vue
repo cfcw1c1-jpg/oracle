@@ -133,6 +133,29 @@ const extraFields = computed(() => {
   return [...shown.values()];
 });
 
+// OGD's own checkboxes on every New Activity form, whatever the Type:
+// Attendees (which services may log attendance in their Members Portal),
+// *MISSION CORE only and *GOVERNANCE TEAM only. Saved under OGD's label so the
+// push finds the same boxes.
+const baseChoiceFields = computed(() => (ogdForm.value?.fields ?? []).filter((field) => field.kind === 'checkboxes' || field.kind === 'checkbox'));
+function baseTitle(label) {
+  return String(label ?? '').replace(/\s*check all\s*uncheck all\s*$/i, '').replace(/:\s*$/, '').trim() || label;
+}
+// Until changed, every Attendees role is ticked (as on OGD's form) and the
+// "only" boxes are not.
+function baseValue(field) {
+  const value = editor.form?.ogdFields?.[field.label];
+  if (value !== undefined) return value;
+  return field.kind === 'checkboxes' ? choicesOf(field).map((option) => option.text) : false;
+}
+function toggleBaseChoice(field, text) {
+  const list = baseValue(field);
+  editor.form.ogdFields[field.label] = list.includes(text) ? list.filter((entry) => entry !== text) : [...list, text];
+}
+function setAllBaseChoices(field, isOn) {
+  editor.form.ogdFields[field.label] = isOn ? choicesOf(field).map((option) => option.text) : [];
+}
+
 // A value is kept only while the field shows it as a choice.
 function keptValue(field, value) {
   if (value === undefined || value === '' || (Array.isArray(value) && !value.length)) return undefined;
@@ -573,8 +596,12 @@ async function submitEditor() {
       startsAt: fromLocalInput(editor.form.start), endsAt: fromLocalInput(editor.form.end), teamLeader: editor.form.teamLeader,
       teamLeaderMemberId: editor.form.teamLeaderMemberId, venue: editor.form.venue, description: editor.form.description, attendeeIds: editor.form.attendeeIds,
       // Only the extra fields the chosen Type shows; values left from another Type are dropped.
-      ogdFields: Object.fromEntries(extraFields.value.map((field) => [field.label, keptValue(field, editor.form.ogdFields?.[field.label])])
-        .filter(([, value]) => value !== undefined)),
+      ogdFields: {
+        ...Object.fromEntries(extraFields.value.map((field) => [field.label, keptValue(field, editor.form.ogdFields?.[field.label])])
+          .filter(([, value]) => value !== undefined)),
+        // Always sent, even with nothing ticked: none ticked means open to all in OGD.
+        ...Object.fromEntries(baseChoiceFields.value.map((field) => [field.label, baseValue(field)])),
+      },
     });
     if (!isActive) return;
     const inRange = saved.startsAt >= fromLocalInput(`${range.from}T00:00`) && saved.startsAt <= fromLocalInput(`${range.to}T23:59`);
@@ -808,7 +835,7 @@ onBeforeUnmount(() => {
             <div class="detail-grid">
               <div><span class="muted tiny">Chapter</span><p>{{ chapterById.get(row.areaId)?.chapter ?? '—' }}</p></div>
               <div><span class="muted tiny">Description</span><p>{{ row.description || '—' }}</p></div>
-              <div v-for="[label, value] in Object.entries(row.ogdFields ?? {})" :key="`f-${label}`"><span class="muted tiny">{{ label }}</span><p>{{ Array.isArray(value) ? value.join(', ') : (value === true ? 'Yes' : value) }}</p></div>
+              <div v-for="[label, value] in Object.entries(row.ogdFields ?? {})" :key="`f-${label}`"><span class="muted tiny">{{ baseTitle(label) }}</span><p>{{ Array.isArray(value) ? (value.length ? value.join(', ') : 'None (open to all)') : (value === true ? 'Yes' : value === false ? 'No' : value) }}</p></div>
               <div v-for="[label, value] in detailEntries(row)" :key="label"><span class="muted tiny">{{ label }}</span><p>{{ value }}</p></div>
               <div v-if="row.syncedAt"><span class="muted tiny">Read from OGD</span><p>{{ formatDateTime(row.syncedAt) }}</p></div>
             </div>
@@ -937,6 +964,24 @@ onBeforeUnmount(() => {
             <p v-if="isReadingForm" class="muted small">Reading OGD's form… this takes a few minutes. You can keep filling in the rest.</p>
             <p v-if="formError" class="small text-danger">{{ formError }}</p>
             <div><button type="button" class="btn btn-sm" :disabled="isReadingForm || !readyCount" @click="readFormFromEditor"><RefreshCw :size="13" />{{ isReadingForm ? 'Reading OGD form…' : 'Read form from OGD' }}</button></div>
+          </div>
+          <div v-for="field in baseChoiceFields.filter((entry) => entry.kind === 'checkboxes')" :key="`base-${field.label}`" class="extra span2">
+            <div class="row gap">
+              <span class="field-label grow">{{ baseTitle(field.label) }}</span>
+              <button type="button" class="link-btn" @click="setAllBaseChoices(field, true)">check all</button>
+              <button type="button" class="link-btn" @click="setAllBaseChoices(field, false)">uncheck all</button>
+            </div>
+            <div class="choice-list">
+              <label v-for="option in choicesOf(field)" :key="option.text" class="row gap check">
+                <input type="checkbox" :checked="baseValue(field).includes(option.text)" @change="toggleBaseChoice(field, option.text)" /><span>{{ option.text }}</span>
+              </label>
+            </div>
+            <div class="stack">
+              <label v-for="single in baseChoiceFields.filter((entry) => entry.kind === 'checkbox')" :key="single.label" class="row gap check">
+                <input type="checkbox" :checked="baseValue(single) === true" @change="editor.form.ogdFields[single.label] = $event.target.checked" /><span>{{ single.label }}</span>
+              </label>
+            </div>
+            <p class="muted tiny">When checked, the leader or member can log attendance in their Members Portal. When none are checked, it is open to all.</p>
           </div>
           <div v-if="extraFields.length" class="extra span2">
             <p class="field-label">{{ editor.form.activityType }} details (OGD asks for these)</p>
