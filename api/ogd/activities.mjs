@@ -113,7 +113,8 @@ async function resolveAttendees(db, memberIds, source) {
 }
 
 // action: 'save' (create or edit an Oracle activity), 'delete', 'attendees'
-// (add or remove attendees on any activity), or 'members' (the chapter's
+// (add or remove attendees on any activity), 'copyAttendees' (copy them into
+// other activities), or 'members' (the chapter's
 // members, for choosing attendees and the team leader).
 export const POST = route(async (request) => {
   const body = await request.json().catch(() => null);
@@ -190,6 +191,39 @@ export const POST = route(async (request) => {
     const { data, error } = await db.from('activities').update({ attendees, updated_at: new Date().toISOString() }).eq('id', row.id).select(ACTIVITY_COLUMNS).single();
     if (error) throw error;
     return { activity: toActivity(data) };
+  }
+
+  // Copies every attendee of one activity that has a Member ID into each of
+  // the chosen activities, skipping anyone already listed there. The copies
+  // count as added in Oracle, so they wait to be added in OGD like any other.
+  if (body.action === 'copyAttendees') {
+    const source = await loadOwned(db, chapters, body.id);
+    const targetIds = [...new Set((Array.isArray(body.targetIds) ? body.targetIds : []).map(Number))].filter((id) => id && id !== source.id);
+    if (!targetIds.length) throw new HttpError(400, 'Choose at least one activity to copy the attendees to.');
+    if (targetIds.length > 50) throw new HttpError(400, 'Choose up to 50 activities at a time.');
+    const targets = await Promise.all(targetIds.map((id) => loadOwned(db, chapters, id)));
+
+    const memberIds = [...new Set((source.attendees ?? []).map((attendee) => attendee.memberId).filter(Boolean).map((id) => String(id).toUpperCase()))];
+    const copies = await resolveAttendees(db, memberIds, 'oracle');
+    const skippedNoId = (source.attendees ?? []).filter((attendee) => !attendee.memberId).length;
+    const notInMembers = memberIds.length - copies.length;
+
+    const results = [];
+    for (const target of targets) {
+      const present = new Set((target.attendees ?? []).map(attendeeKey));
+      const added = copies.filter((attendee) => !present.has(attendeeKey(attendee)));
+      if (!added.length) {
+        results.push({ activity: toActivity(target), added: 0, alreadyThere: copies.length });
+        continue;
+      }
+      if ((target.attendees ?? []).length + added.length > MAX_ATTENDEES) throw new HttpError(400, `"${target.name}" would have too many attendees.`);
+      const { data, error } = await db.from('activities')
+        .update({ attendees: [...(target.attendees ?? []), ...added], updated_at: new Date().toISOString() })
+        .eq('id', target.id).select(ACTIVITY_COLUMNS).single();
+      if (error) throw error;
+      results.push({ activity: toActivity(data), added: added.length, alreadyThere: copies.length - added.length });
+    }
+    return { results, copied: copies.length, skippedNoId, notInMembers };
   }
 
   throw new HttpError(400, 'Unknown action.');

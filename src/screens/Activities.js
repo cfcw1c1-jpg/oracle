@@ -20,6 +20,7 @@ import { ActionLink, EmptyRow, Pill, TableCard, TablePagination, TableRow, usePa
 import {
   deleteActivity, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, saveActivity, siteUrl, syncActivities,
   updateActivityAttendees,
+  copyActivityAttendees,
 } from '../lib/ogdApi';
 import { FAILURE_MESSAGES, formatDateTime } from './OgdConnections';
 import { describeProgress, formatSeconds } from '../lib/pushProgress';
@@ -223,6 +224,7 @@ export default function Activities() {
   const [memberCache, setMemberCache] = useState({});
   const [editor, setEditor] = useState(null);
   const [adding, setAdding] = useState(null);
+  const [copying, setCopying] = useState(null);
   const isMountedRef = useRef(true);
   // Live push progress: { 'kind:id': { startedAt, progress, memo, count } }.
   const [progressRuns, setProgressRuns] = useState({});
@@ -469,6 +471,29 @@ export default function Activities() {
     }
   }
 
+  // ---------- Copying attendees into other activities ----------
+
+  function openCopyAttendees(activity) {
+    setCopying({ activity, targets: [], search: '', status: 'idle', message: '' });
+  }
+
+  async function confirmCopyAttendees() {
+    const { activity, targets } = copying;
+    setCopying((current) => ({ ...current, status: 'saving', message: '' }));
+    try {
+      const result = await copyActivityAttendees(activity.id, targets);
+      result.results.forEach((item) => replaceActivity(item.activity));
+      const added = result.results.reduce((sum, item) => sum + item.added, 0);
+      const notes = [];
+      if (result.skippedNoId) notes.push(`${result.skippedNoId} without a Member ID`);
+      if (result.notInMembers) notes.push(`${result.notInMembers} not in Oracle's members`);
+      const message = `Added ${added} attendee entr${added === 1 ? 'y' : 'ies'} across ${result.results.length} activit${result.results.length === 1 ? 'y' : 'ies'}; anyone already listed was skipped.${notes.length ? ` Not copied: ${notes.join(', ')}.` : ''}`;
+      if (isMountedRef.current) setCopying((current) => current && { ...current, status: 'done', message });
+    } catch (error) {
+      if (isMountedRef.current) setCopying((current) => current && { ...current, status: 'error', message: error.message });
+    }
+  }
+
   // ---------- New / edit ----------
 
   function openNew() {
@@ -660,6 +685,7 @@ export default function Activities() {
               />
             )}
             <Button label="Add attendees" icon="person-add-outline" onPress={() => openAddAttendees(activity)} />
+            <Button label="Copy to…" icon="people-outline" disabled={!activity.attendees.some((attendee) => attendee.memberId)} onPress={() => openCopyAttendees(activity)} />
           </View>
         </View>
         {isSending && !!progressOf('attendees', activity) && <ProgressBar view={progressOf('attendees', activity)} note="Adding the attendees to this activity in OGD. Keep this screen open." />}
@@ -870,6 +896,17 @@ export default function Activities() {
           onChange={setAdding}
           onSubmit={confirmAddAttendees}
           onClose={() => setAdding(null)}
+        />
+      )}
+
+      {!!copying && (
+        <CopyAttendeesModal
+          copying={copying}
+          activities={activities}
+          chapterById={chapterById}
+          onChange={setCopying}
+          onSubmit={confirmCopyAttendees}
+          onClose={() => setCopying(null)}
         />
       )}
     </ScrollView>
@@ -1119,6 +1156,69 @@ function AddAttendeesModal({ adding, members, onChange, onSubmit, onClose }) {
         onSearch={(search) => onChange((current) => ({ ...current, search }))}
         onToggle={(id) => onChange((current) => ({ ...current, selection: current.selection.includes(id) ? current.selection.filter((entry) => entry !== id) : [...current.selection, id] }))}
       />
+    </Sheet>
+  );
+}
+
+// Every other activity loaded for the chosen dates, to copy attendees into.
+function CopyAttendeesModal({ copying, activities, chapterById, onChange, onSubmit, onClose }) {
+  const { activity, targets, search, status, message } = copying;
+  const copyable = new Set(activity.attendees.map((attendee) => attendee.memberId).filter(Boolean)).size;
+  const query = search.trim().toLowerCase();
+  const list = activities
+    .filter((entry) => entry.id !== activity.id)
+    .filter((entry) => !query || `${entry.name} ${entry.activityType ?? ''} ${chapterById.get(entry.areaId)?.chapter ?? ''}`.toLowerCase().includes(query));
+  const isSaving = status === 'saving';
+  const isDone = status === 'done';
+  const toggle = (id) => onChange((current) => ({ ...current, targets: current.targets.includes(id) ? current.targets.filter((entry) => entry !== id) : [...current.targets, id] }));
+  return (
+    <Sheet
+      title="Copy attendees to other activities"
+      subtitle={`${copyable} attendee(s) from ${activity.name}`}
+      onClose={onClose}
+      locked={isSaving}
+      footer={(
+        <View style={styles.buttonRow}>
+          <Button label={isDone ? 'Close' : 'Cancel'} disabled={isSaving} onPress={onClose} />
+          {!isDone && (
+            <Button
+              kind="primary"
+              label={isSaving ? 'Copying…' : `Copy to ${targets.length || ''} activit${targets.length === 1 ? 'y' : 'ies'}`}
+              busy={isSaving}
+              disabled={!targets.length}
+              onPress={onSubmit}
+            />
+          )}
+        </View>
+      )}
+    >
+      {!isDone && (
+        <View>
+          <TextInput
+            value={search}
+            onChangeText={(text) => onChange((current) => ({ ...current, search: text }))}
+            placeholder="Search activities by name, type or chapter..."
+            placeholderTextColor="#94a3b8"
+            style={styles.input}
+          />
+          {list.length === 0 && <Text style={styles.mutedText}>No other activities in the chosen dates.</Text>}
+          {list.map((entry) => {
+            const isOn = targets.includes(entry.id);
+            return (
+              <TouchableOpacity key={entry.id} onPress={() => toggle(entry.id)} style={styles.memberRow} accessibilityRole="checkbox" accessibilityState={{ checked: isOn }}>
+                <Ionicons name={isOn ? 'checkbox' : 'square-outline'} size={20} color={isOn ? '#2563eb' : '#94a3b8'} />
+                <View style={styles.flex}>
+                  <Text style={styles.attendeeName}>{entry.name}</Text>
+                  <Text style={styles.mutedText}>{formatWhen(entry.startsAt)} · {entry.attendees.length} attendee(s)</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+          <Text style={styles.hint}>Lists the activities for the dates chosen above; widen them to see more. Anyone already in an activity is skipped. Copies into an activity that is in OGD wait there until you use &quot;Add … to OGD&quot;.</Text>
+        </View>
+      )}
+      {isDone && <Text style={styles.successText}>{message}</Text>}
+      {status === 'error' && <Text style={styles.errorText}>{message}</Text>}
     </Sheet>
   );
 }

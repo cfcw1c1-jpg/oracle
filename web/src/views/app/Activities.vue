@@ -1,5 +1,5 @@
 <script setup>
-import { CalendarPlus, Check, Copy, CopyPlus, Download, ExternalLink, Pencil, RefreshCw, Send, Trash2, UserPlus, X } from 'lucide-vue-next';
+import { CalendarPlus, Check, Copy, CopyPlus, Users, Download, ExternalLink, Pencil, RefreshCw, Send, Trash2, UserPlus, X } from 'lucide-vue-next';
 import { computed, markRaw, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
@@ -9,7 +9,7 @@ import PushProgress from '@/components/PushProgress.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { confirmAction, exportCsv, formatDateTime } from '@/lib/data';
 import {
-  deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
+  copyActivityAttendees, deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
 } from '@/lib/ogdApi';
 import { describeProgress } from '@/lib/pushProgress';
 
@@ -629,6 +629,50 @@ async function confirmAddAttendees() {
   }
 }
 
+// ---------- Copying attendees into other activities ----------
+
+const copyingFrom = ref(null);
+const copyTargets = ref([]);
+const copySearch = ref('');
+const copyState = reactive({ status: 'idle', message: '' });
+
+function openCopyAttendees(activity) {
+  copyingFrom.value = activity;
+  copyTargets.value = [];
+  copySearch.value = '';
+  Object.assign(copyState, { status: 'idle', message: '' });
+}
+
+// Members the activity lists with a Member ID; others cannot be copied.
+const copyableCount = computed(() => new Set((copyingFrom.value?.attendees ?? []).map((attendee) => attendee.memberId).filter(Boolean)).size);
+
+// Every other activity loaded for the chosen dates, newest first.
+const copyCandidates = computed(() => {
+  if (!copyingFrom.value) return [];
+  const query = copySearch.value.trim().toLowerCase();
+  return activities.value
+    .filter((activity) => activity.id !== copyingFrom.value.id)
+    .filter((activity) => !query || `${activity.name} ${activity.activityType ?? ''} ${chapterById.value.get(activity.areaId)?.chapter ?? ''}`.toLowerCase().includes(query));
+});
+
+async function confirmCopyAttendees() {
+  const source = copyingFrom.value;
+  if (!source || !copyTargets.value.length) return;
+  Object.assign(copyState, { status: 'saving', message: '' });
+  try {
+    const result = await copyActivityAttendees(source.id, copyTargets.value);
+    result.results.forEach(({ activity }) => replaceActivity(activity));
+    const added = result.results.reduce((sum, item) => sum + item.added, 0);
+    const notes = [];
+    if (result.skippedNoId) notes.push(`${result.skippedNoId} without a Member ID`);
+    if (result.notInMembers) notes.push(`${result.notInMembers} not in Oracle's members`);
+    const message = `Added ${added} attendee entr${added === 1 ? 'y' : 'ies'} across ${result.results.length} activit${result.results.length === 1 ? 'y' : 'ies'}; anyone already listed was skipped.${notes.length ? ` Not copied: ${notes.join(', ')}.` : ''}`;
+    Object.assign(copyState, { status: 'done', message });
+  } catch (error) {
+    Object.assign(copyState, { status: 'error', message: error.message });
+  }
+}
+
 function detailEntries(activity) {
   return Object.entries(activity.details ?? {}).filter(([, value]) => value);
 }
@@ -806,6 +850,7 @@ onBeforeUnmount(() => {
                   <Send :size="13" />{{ sendingIds.has(row.id) ? 'Adding in OGD…' : `Add ${row.pendingInOgd} to OGD` }}
                 </button>
                 <button class="btn btn-sm" @click="openAddAttendees(row)"><UserPlus :size="13" />Add attendees</button>
+                <button class="btn btn-sm" :disabled="!row.attendees.some((attendee) => attendee.memberId)" title="Copy these attendees into other activities" @click="openCopyAttendees(row)"><Users :size="13" />Copy to…</button>
                 <button class="btn btn-sm" :disabled="!row.attendees.length" @click="exportAttendees([row])"><Download :size="13" />CSV</button>
               </div>
             </div>
@@ -975,6 +1020,31 @@ onBeforeUnmount(() => {
       <template #footer>
         <button class="btn" @click="addingFor = null">Cancel</button>
         <button class="btn btn-primary" :disabled="!addSelection.length" @click="confirmAddAttendees">Add {{ addSelection.length || '' }}</button>
+      </template>
+    </AppModal>
+
+    <AppModal v-if="copyingFrom" title="Copy attendees to other activities" :subtitle="`${copyableCount} attendee(s) from ${copyingFrom.name}`" :width="600" :locked="copyState.status === 'saving'" @close="copyingFrom = null">
+      <div class="stack">
+        <template v-if="copyState.status !== 'done'">
+          <SearchInput v-model="copySearch" placeholder="Search activities by name, type or chapter..." />
+          <div class="member-list">
+            <label v-for="activity in copyCandidates" :key="activity.id" class="member-option">
+              <input v-model="copyTargets" type="checkbox" :value="activity.id" />
+              <span class="grow">{{ activity.name }}</span>
+              <span class="muted tiny">{{ formatWhen(activity.startsAt) }} · {{ activity.attendees.length }} attendee(s)</span>
+            </label>
+            <p v-if="!copyCandidates.length" class="muted small">No other activities in the chosen dates.</p>
+          </div>
+          <p class="muted tiny">Lists the activities for the dates chosen above; widen them to see more. Anyone already in an activity is skipped. Copies into an activity that is in OGD wait there until you use "Add … to OGD".</p>
+        </template>
+        <p v-if="copyState.status === 'done'" class="small text-success" role="status">{{ copyState.message }}</p>
+        <p v-if="copyState.status === 'error'" class="small text-danger">{{ copyState.message }}</p>
+      </div>
+      <template #footer>
+        <button class="btn" :disabled="copyState.status === 'saving'" @click="copyingFrom = null">{{ copyState.status === 'done' ? 'Close' : 'Cancel' }}</button>
+        <button v-if="copyState.status !== 'done'" class="btn btn-primary" :disabled="!copyTargets.length || copyState.status === 'saving'" @click="confirmCopyAttendees">
+          {{ copyState.status === 'saving' ? 'Copying…' : `Copy to ${copyTargets.length || ''} activit${copyTargets.length === 1 ? 'y' : 'ies'}` }}
+        </button>
       </template>
     </AppModal>
   </div>

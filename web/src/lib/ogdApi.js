@@ -86,6 +86,12 @@ export async function updateActivityAttendees(id, { add = [], remove = [] }) {
   return (await request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'attendees', id, add, remove }) })).activity;
 }
 
+// Copies one activity's attendees (those with a Member ID) into each target.
+// Returns { results: [{ activity, added, alreadyThere }], copied, skippedNoId, notInMembers }.
+export function copyActivityAttendees(id, targetIds) {
+  return request('/api/ogd/activities', { method: 'POST', body: JSON.stringify({ action: 'copyAttendees', id, targetIds }) });
+}
+
 export function syncActivities(values) {
   return request('/api/ogd/browser?task=sync-activities', { method: 'POST', body: JSON.stringify(values) });
 }

@@ -2,7 +2,7 @@
   "expo": {
     "name": "The Oracle App",
     "slug": "oracle-app",
-    "version": "1.4.22",
+    "version": "1.4.23",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "oracleapp",
