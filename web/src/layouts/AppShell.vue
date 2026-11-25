@@ -203,7 +203,7 @@ function openMessagesFromDisclaimer() {
           <p v-if="!isCollapsed" class="nav-group">{{ group.name }}</p>
           <button
             v-for="item in group.items" :key="item.key" class="nav-item" :class="{ on: currentTab === item.key }"
-            :title="isCollapsed ? item.label : undefined" @click="selectTab(item.key)"
+            :title="isCollapsed ? item.label : undefined" :aria-current="currentTab === item.key ? 'page' : undefined" @click="selectTab(item.key)"
           >
             <component :is="item.icon" :size="17" />
             <span v-if="!isCollapsed" class="clamp grow">{{ item.label }}</span>
