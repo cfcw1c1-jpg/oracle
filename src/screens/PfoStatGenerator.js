@@ -130,6 +130,9 @@ export const ROLE_LABELS = {
   FMHH: 'Family Min Household Head',
 };
 
+// The roles the Formation Stats "Roles" filter offers.
+const FORMATION_STATS_ROLE_CODES = ['HH', 'HHL'];
+
 export function normalizeRole(code) {
   return (code || '').trim().toUpperCase() || 'MEMBER';
 }
@@ -265,14 +268,9 @@ export default function PfoStatGenerator() {
     return ['All', ...Array.from(values).sort()];
   }, [membersRows, assignedAreaNames]);
 
-  // Every distinct PastoralService code actually present in the data,
-  // offered as multi-select checkboxes -- not a hardcoded list, since
-  // PastoralService is free text (Manage Members) and can carry codes
-  // beyond ROLE_LABELS.
-  const roleOptions = useMemo(() => {
-    const values = new Set(membersRows.map((m) => normalizeRole(m.PastoralService)));
-    return Array.from(values).sort();
-  }, [membersRows]);
+  // Only Household Head and Household Leader are offered as role filters
+  // (Family Min and other roles are left out on purpose).
+  const roleOptions = FORMATION_STATS_ROLE_CODES;
 
   // Prefix match (same convention used across the app) so an Area named
   // "West 1C2" also covers AreaName variants like "West 1C2B"/"West 1C2D".
