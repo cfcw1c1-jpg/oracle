@@ -247,7 +247,7 @@ export const FORMATION_STAGES = [
     color: '#ef4444',
     tracks: [
       // Leader trainings count only the members serving at that level.
-      { code: 'HLT', name: 'Household Leaders Training', group: 'Household Leaders Training', roles: ['HH', 'HHL', 'FMHH', 'FMHHL'] },
+      { code: 'HLT', name: 'Household Leaders Training', group: 'Household Leaders Training', roles: ['HH', 'HHL'] },
       { code: 'ULT', name: 'Unit Leaders Training', group: 'Unit Leaders Training', roles: ['UH', 'UL'] },
       { code: 'CLT', name: 'Chapter Leaders Training', group: 'Chapter Leaders Training', roles: ['CH', 'CL'] },
       { code: 'MCR', name: 'Mission Core Retreat', group: 'Mission Core Retreats' },
