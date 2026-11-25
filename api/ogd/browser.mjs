@@ -5,6 +5,7 @@ import { POST as pushAttendees } from '../_lib/tasks/push-attendees.mjs';
 import { POST as pushChanges } from '../_lib/tasks/push-changes.mjs';
 import { POST as readActivityForm } from '../_lib/tasks/read-activity-form.mjs';
 import { POST as syncActivities } from '../_lib/tasks/sync-activities.mjs';
+import { POST as syncClp } from '../_lib/tasks/sync-clp.mjs';
 import { POST as syncMembers } from '../_lib/tasks/sync-members.mjs';
 import { POST as testLogin } from '../_lib/tasks/test-login.mjs';
 
@@ -21,6 +22,7 @@ const TASKS = {
   'push-changes': pushChanges,
   'read-activity-form': readActivityForm,
   'sync-activities': syncActivities,
+  'sync-clp': syncClp,
   'sync-members': syncMembers,
   'test-login': testLogin,
 };

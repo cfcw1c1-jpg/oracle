@@ -133,4 +133,15 @@ export const FAILURE_MESSAGES = {
   activity_form_unexpected: 'Signed in, but could not fill in OGD\'s New Activity form. Nothing was saved in OGD.',
   activity_save_failed: 'OGD did not save the new activity.',
   activity_attendees_unexpected: 'Signed in, but could not add every attendee in OGD.',
+  clp_page_unexpected: 'Signed in, but could not read the Evangelization (CLP) page in OGD.',
 };
+
+// CLP Maintenance: the caller's chapters with their OGD readiness and last CLP sync.
+export async function fetchClpSyncStatus() {
+  return (await request('/api/ogd/browser?task=sync-clp', { method: 'POST', body: JSON.stringify({ action: 'status' }) })).chapters;
+}
+
+// Reads a chapter's CLPs from OGD's Evangelization page into CLP Maintenance.
+export function syncClps(areaId) {
+  return request('/api/ogd/browser?task=sync-clp', { method: 'POST', body: JSON.stringify({ areaId }) });
+}

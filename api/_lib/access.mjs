@@ -11,6 +11,7 @@ export const SCOPES = {
   reports: { pageKey: 'monthlyPastoralReports', credentials: null },
   celebrants: { pageKey: 'reports', credentials: null },
   activities: { pageKey: 'activities', credentials: null },
+  clp: { pageKey: 'clp', credentials: null },
 };
 
 export class HttpError extends Error {
