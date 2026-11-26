@@ -1,9 +1,9 @@
-// Draws birthday greeting images (1080 × 1350, portrait for social posts) with
+// Draws birthday greeting images (1600 × 1000, wide landscape) with
 // only each celebrant's date, name and role. Long lists are split across
 // several images. Everything is drawn on a canvas in the browser.
 
-const WIDTH = 1080;
-const HEIGHT = 1350;
+const WIDTH = 1600;
+const HEIGHT = 1000;
 const FONT = '"DM Sans Variable", "DM Sans", system-ui, sans-serif';
 const SHORT_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
@@ -19,10 +19,10 @@ const COLORS = {
   confetti: ['#f2c46d', '#ff8fab', '#7ad3c8', '#ffffff', '#b8a4ff'],
 };
 
-// One column up to this many rows; two columns after that.
-const SINGLE_COLUMN_MAX = 10;
-const ROWS_PER_COLUMN = 12;
-const PER_PAGE = ROWS_PER_COLUMN * 2;
+// One column up to 6, two columns of 6 up to 12, then three columns of 7.
+const ROWS_SHORT = 6;
+const ROWS_TALL = 7;
+const PER_PAGE = ROWS_TALL * 3;
 
 // Fixed sequence so the same list always draws the same confetti.
 function seededRandom(seed) {
@@ -88,7 +88,7 @@ function drawBackground(ctx, seed) {
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-  const glow = ctx.createRadialGradient(WIDTH / 2, 230, 20, WIDTH / 2, 230, 520);
+  const glow = ctx.createRadialGradient(WIDTH / 2, 190, 20, WIDTH / 2, 190, 620);
   glow.addColorStop(0, 'rgba(242,196,109,0.22)');
   glow.addColorStop(1, 'rgba(242,196,109,0)');
   ctx.fillStyle = glow;
@@ -99,8 +99,8 @@ function drawBackground(ctx, seed) {
     const x = random() * WIDTH;
     const y = random() * HEIGHT;
     // Keep confetti around the edges and title, not over the list.
-    if (y > 360 && x > 50 && x < WIDTH - 50) continue;
-    if (y > 100 && y < 345 && x > 150 && x < WIDTH - 150) continue;
+    if (y > 300 && x > 50 && x < WIDTH - 50) continue;
+    if (y > 80 && y < 295 && x > 300 && x < WIDTH - 300) continue;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(random() * Math.PI);
@@ -116,10 +116,12 @@ function drawBackground(ctx, seed) {
   }
 
   // Kept in the corners, clear of the title.
-  drawBalloon(ctx, 70, 120, 40, '#ff8fab', -0.16);
-  drawBalloon(ctx, 138, 78, 32, COLORS.gold, 0.06);
-  drawBalloon(ctx, WIDTH - 70, 115, 40, '#7ad3c8', 0.16);
-  drawBalloon(ctx, WIDTH - 138, 75, 32, '#b8a4ff', -0.06);
+  drawBalloon(ctx, 90, 110, 40, '#ff8fab', -0.16);
+  drawBalloon(ctx, 165, 70, 32, COLORS.gold, 0.06);
+  drawBalloon(ctx, 235, 120, 28, '#7ad3c8', 0.1);
+  drawBalloon(ctx, WIDTH - 90, 105, 40, '#7ad3c8', 0.16);
+  drawBalloon(ctx, WIDTH - 165, 68, 32, '#b8a4ff', -0.06);
+  drawBalloon(ctx, WIDTH - 235, 118, 28, '#ff8fab', -0.1);
 }
 
 function drawHeader(ctx, subtitle) {
@@ -128,16 +130,16 @@ function drawHeader(ctx, subtitle) {
   ctx.fillStyle = COLORS.gold;
   ctx.font = `600 26px ${FONT}`;
   setSpacing(ctx, '8px');
-  ctx.fillText('CELEBRATING YOU', WIDTH / 2, 150);
+  ctx.fillText('CELEBRATING YOU', WIDTH / 2, 112);
   setSpacing(ctx, '0px');
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = `800 92px ${FONT}`;
-  ctx.fillText('Happy Birthday!', WIDTH / 2, 268);
+  ctx.font = `800 88px ${FONT}`;
+  ctx.fillText('Happy Birthday!', WIDTH / 2, 210);
 
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = `500 30px ${FONT}`;
-  ctx.fillText(fitText(ctx, subtitle, WIDTH - 160), WIDTH / 2, 326);
+  ctx.fillText(fitText(ctx, subtitle, WIDTH - 600), WIDTH / 2, 264);
 }
 
 function drawDateBadge(ctx, x, y, size, celebrant) {
@@ -158,18 +160,19 @@ function drawDateBadge(ctx, x, y, size, celebrant) {
 }
 
 function rowLayout(count) {
-  const twoColumns = count > SINGLE_COLUMN_MAX;
-  const perColumn = twoColumns ? ROWS_PER_COLUMN : SINGLE_COLUMN_MAX;
-  return { twoColumns, perColumn, rowHeight: twoColumns ? 63 : 76, usedRows: Math.min(count, perColumn) };
+  let columns = 1;
+  if (count > ROWS_SHORT * 2) columns = 3;
+  else if (count > ROWS_SHORT) columns = 2;
+  const perColumn = columns === 3 ? ROWS_TALL : ROWS_SHORT;
+  return { columns, perColumn, rowHeight: columns === 3 ? 64 : 76, usedRows: Math.min(count, perColumn) };
 }
 
 function drawRows(ctx, celebrants, area) {
-  const { twoColumns, perColumn, rowHeight } = rowLayout(celebrants.length);
-  const columns = twoColumns ? 2 : 1;
-  const badge = twoColumns ? 54 : 64;
-  const nameSize = twoColumns ? 24 : 32;
-  const roleSize = twoColumns ? 18 : 22;
-  const gap = 28;
+  const { columns, perColumn, rowHeight } = rowLayout(celebrants.length);
+  const badge = columns === 3 ? 54 : 64;
+  const nameSize = columns === 3 ? 25 : 30;
+  const roleSize = columns === 3 ? 18 : 21;
+  const gap = 40;
   const columnWidth = (area.width - gap * (columns - 1)) / columns;
   const usedRows = Math.min(celebrants.length, perColumn);
   const top = area.y + (area.height - usedRows * rowHeight) / 2;
@@ -203,11 +206,11 @@ function drawFooter(ctx, pageIndex, pageCount) {
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.font = `500 26px ${FONT}`;
-  ctx.fillText(fitText(ctx, 'May God bless you with joy, good health and a wonderful year ahead!', WIDTH - 100), WIDTH / 2, HEIGHT - 78);
+  ctx.fillText(fitText(ctx, 'May God bless you with joy, good health and a wonderful year ahead!', WIDTH - 100), WIDTH / 2, HEIGHT - 62);
   if (pageCount > 1) {
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = `500 20px ${FONT}`;
-    ctx.fillText(`${pageIndex + 1} of ${pageCount}`, WIDTH / 2, HEIGHT - 38);
+    ctx.fillText(`${pageIndex + 1} of ${pageCount}`, WIDTH / 2, HEIGHT - 26);
   }
 }
 
@@ -229,10 +232,12 @@ export async function renderBirthdayImages(celebrants, subtitle) {
     drawHeader(ctx, subtitle);
 
     // The panel fits its rows and sits a little below the title.
-    const { rowHeight, usedRows } = rowLayout(page.length);
-    const panelHeight = Math.max(usedRows * rowHeight + 60, 260);
-    const space = { top: 380, bottom: HEIGHT - 150 };
-    const panel = { x: 60, y: space.top + Math.max(0, (space.bottom - space.top - panelHeight) * 0.3), width: WIDTH - 120, height: panelHeight };
+    // A single column is kept narrower so the names don't sit far from the dates.
+    const { columns, rowHeight, usedRows } = rowLayout(page.length);
+    const panelHeight = Math.max(usedRows * rowHeight + 60, 240);
+    const panelWidth = columns === 1 ? 900 : WIDTH - 120;
+    const space = { top: 310, bottom: HEIGHT - 110 };
+    const panel = { x: (WIDTH - panelWidth) / 2, y: space.top + Math.max(0, (space.bottom - space.top - panelHeight) * 0.3), width: panelWidth, height: panelHeight };
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.25)';
     ctx.shadowBlur = 40;

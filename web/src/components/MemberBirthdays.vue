@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
       </DataTable>
     </template>
 
-    <AppModal v-if="imageState.isOpen" title="Birthday Greeting Image" :subtitle="`${visibleCelebrants.length} celebrant${visibleCelebrants.length === 1 ? '' : 's'} in ${monthNames}: date, name and role only.`" :width="760" @close="closeImages">
+    <AppModal v-if="imageState.isOpen" title="Birthday Greeting Image" :subtitle="`${visibleCelebrants.length} celebrant${visibleCelebrants.length === 1 ? '' : 's'} in ${monthNames}: date, name and role only.`" :width="900" @close="closeImages">
       <LoadingBlock v-if="imageState.status === 'loading'" />
       <p v-else-if="imageState.status === 'error'" class="text-danger">{{ imageState.message }}</p>
       <div v-else class="previews">
@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
 .search { flex: 1 1 240px; }
 .actions { gap: 8px; flex-wrap: wrap; }
 .months { display: flex; flex-direction: column; gap: 8px; padding-bottom: 0; }
-.previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; }
 .preview { margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .preview img { width: 100%; height: auto; border-radius: var(--radius-md); border: 1px solid var(--line); }
 .preview figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
