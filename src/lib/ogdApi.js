@@ -29,6 +29,11 @@ async function request(path, options = {}) {
   return payload;
 }
 
+// Materials files in Cloudflare R2: signed links and deletes (api/materials.mjs).
+export function materialsRequest(payload) {
+  return request('/api/materials', { method: 'POST', body: JSON.stringify(payload) });
+}
+
 export async function fetchOgdChapters(scope) {
   const { chapters } = await request(`/api/ogd/chapters?scope=${encodeURIComponent(scope)}`);
   return chapters;

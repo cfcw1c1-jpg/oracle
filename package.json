@@ -1,7 +1,7 @@
 {
   "name": "oracle-app",
   "main": "expo-router/entry",
-  "version": "1.4.41",
+  "version": "1.4.42",
   "dependencies": {
     "@expo/ui": "~57.0.10",
     "@expo/vector-icons": "^15.0.2",
@@ -9,6 +9,7 @@
     "@sparticuz/chromium": "153.0.0",
     "@supabase/supabase-js": "^2.110.7",
     "@vercel/functions": "3.10.6",
+    "aws4fetch": "1.0.20",
     "expo": "~57.0.12",
     "expo-constants": "~57.0.6",
     "expo-dev-client": "~57.0.11",

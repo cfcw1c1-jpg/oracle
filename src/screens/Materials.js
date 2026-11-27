@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
+import { materialsRequest } from '../lib/ogdApi';
 import { ActionLink, EmptyRow, IconBadge } from '../components/admin-table';
 
 const NAVY = '#002060';
@@ -160,7 +161,7 @@ export default function Materials({ isAdmin }) {
       setFilesLoading(true);
       const { data, error } = await supabase
         .from('materials')
-        .select('id, folder_id, file_name, storage_path, mime_type, size_bytes, created_at')
+        .select('id, folder_id, file_name, storage_path, storage_provider, mime_type, size_bytes, created_at')
         .eq('folder_id', folderId)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -212,17 +213,20 @@ export default function Materials({ isAdmin }) {
       async () => {
         try {
           // Storage objects aren't removed by the materials rows' ON DELETE
-          // CASCADE, so collect and remove them explicitly first.
+          // CASCADE, so collect and remove them explicitly first, including
+          // those in folders inside this one (the web app nests folders).
+          const { data: allFolders, error: foldersError } = await supabase.from('material_folders').select('id, parent_id');
+          if (foldersError) throw foldersError;
+          const ids = [folder.id];
+          for (let i = 0; i < ids.length; i += 1) {
+            for (const f of allFolders || []) if (f.parent_id === ids[i] && !ids.includes(f.id)) ids.push(f.id);
+          }
           const { data: rows, error: listError } = await supabase
             .from('materials')
-            .select('storage_path')
-            .eq('folder_id', folder.id);
+            .select('id, storage_path, storage_provider')
+            .in('folder_id', ids);
           if (listError) throw listError;
-          const paths = (rows || []).map((r) => r.storage_path);
-          if (paths.length > 0) {
-            const { error: removeError } = await supabase.storage.from(BUCKET).remove(paths);
-            if (removeError) throw removeError;
-          }
+          await removeStoredFiles(rows || []);
           const { error } = await supabase.from('material_folders').delete().eq('id', folder.id);
           if (error) throw error;
           if (selectedFolderId === folder.id) setSelectedFolderId(null);
@@ -288,14 +292,25 @@ export default function Materials({ isAdmin }) {
     }
   }
 
+  // Removes stored files and their rows: R2 ones through the server,
+  // Supabase Storage ones directly.
+  async function removeStoredFiles(rows) {
+    const r2Rows = rows.filter((r) => r.storage_provider === 'r2');
+    const supabaseRows = rows.filter((r) => r.storage_provider !== 'r2');
+    if (r2Rows.length > 0) await materialsRequest({ action: 'delete', materialIds: r2Rows.map((r) => r.id) });
+    if (supabaseRows.length > 0) {
+      const { error: removeError } = await supabase.storage.from(BUCKET).remove(supabaseRows.map((r) => r.storage_path));
+      if (removeError) throw removeError;
+      const { error } = await supabase.from('materials').delete().in('id', supabaseRows.map((r) => r.id));
+      if (error) throw error;
+    }
+  }
+
   function handleDeleteFile(file) {
     confirmAction('Delete File', `Delete "${file.file_name}"? This can't be undone.`, async () => {
       try {
         setBusyFileId(file.id);
-        const { error: removeError } = await supabase.storage.from(BUCKET).remove([file.storage_path]);
-        if (removeError) throw removeError;
-        const { error } = await supabase.from('materials').delete().eq('id', file.id);
-        if (error) throw error;
+        await removeStoredFiles([file]);
         await loadFiles(file.folder_id);
         loadFolders();
       } catch (err) {
@@ -312,11 +327,17 @@ export default function Materials({ isAdmin }) {
   async function openFile(file, { download }) {
     try {
       setBusyFileId(file.id);
-      const { data, error } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
-      if (error) throw error;
-      const url = data.signedUrl;
+      let url;
+      if (file.storage_provider === 'r2') {
+        // Files uploaded from the web app live in Cloudflare R2.
+        url = (await materialsRequest({ action: 'download-url', materialId: file.id, download })).url;
+      } else {
+        const { data, error } = await supabase.storage
+          .from(BUCKET)
+          .createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
+        if (error) throw error;
+        url = data.signedUrl;
+      }
 
       if (Platform.OS === 'web') {
         window.open(url, '_blank', 'noopener');

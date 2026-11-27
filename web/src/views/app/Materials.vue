@@ -182,7 +182,7 @@ async function loadFiles(folderId) {
   if (!folderId) return;
   isLoadingFiles.value = true;
   try {
-    const { data, error } = await supabase.from('materials').select('id, folder_id, file_name, storage_path, mime_type, size_bytes, created_at').eq('folder_id', folderId).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('materials').select('id, folder_id, file_name, storage_path, storage_provider, mime_type, size_bytes, created_at').eq('folder_id', folderId).order('created_at', { ascending: false });
     if (error) throw error;
     if (token === loadToken) files.value = data || [];
   } catch (error) {
@@ -214,6 +214,45 @@ function toggleAllFiles() {
   selectedFileIds.value = allFilesSelected.value ? new Set() : new Set(files.value.map((file) => file.id));
 }
 
+// ---------- Where files are stored ----------
+// New uploads go to Cloudflare R2 through /api/materials (signed links, the
+// bucket stays private). Files uploaded before that stay in Supabase Storage
+// (storage_provider 'supabase'). If the R2 endpoint is not set up (local dev,
+// missing variables), uploads fall back to Supabase Storage.
+let r2Unavailable = false;
+
+async function materialsApi(payload) {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) throw new Error('Your session has ended. Sign in again, then retry.');
+  const response = await fetch('/api/materials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.access_token}` },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body) {
+    const error = new Error(body?.error || 'The server could not complete this request.');
+    error.status = response.status;
+    error.unavailable = response.status === 404 || (response.status === 503 && body?.error === 'r2_not_configured');
+    throw error;
+  }
+  return body;
+}
+
+// Removes stored files and their rows: R2 ones through the server, Supabase
+// ones directly. rows: [{ id, storage_path, storage_provider }].
+async function removeStoredFiles(rows) {
+  const r2Rows = rows.filter((row) => row.storage_provider === 'r2');
+  const supabaseRows = rows.filter((row) => row.storage_provider !== 'r2');
+  if (r2Rows.length) await materialsApi({ action: 'delete', materialIds: r2Rows.map((row) => row.id) });
+  if (supabaseRows.length) {
+    const { error: removeError } = await supabase.storage.from(BUCKET).remove(supabaseRows.map((row) => row.storage_path));
+    if (removeError) throw removeError;
+    const { error } = await supabase.from('materials').delete().in('id', supabaseRows.map((row) => row.id));
+    if (error) throw error;
+  }
+}
+
 async function deleteSelectedFiles() {
   const chosen = files.value.filter((file) => selectedFileIds.value.has(file.id));
   if (!chosen.length) return;
@@ -221,10 +260,7 @@ async function deleteSelectedFiles() {
   if (!confirmAction('Delete Files', `Delete ${label}? This can't be undone.`)) return;
   isDeletingFiles.value = true;
   try {
-    const { error: removeError } = await supabase.storage.from(BUCKET).remove(chosen.map((file) => file.storage_path));
-    if (removeError) throw removeError;
-    const { error } = await supabase.from('materials').delete().in('id', chosen.map((file) => file.id));
-    if (error) throw error;
+    await removeStoredFiles(chosen);
     selectedFileIds.value = new Set();
     await loadFiles(selectedId.value);
     loadFolders();
@@ -313,13 +349,9 @@ async function deleteFolder(folder) {
   if (!confirmAction('Delete Folder', `Delete "${folder.name}" and ${what}? This can't be undone.`)) return;
   try {
     // Deleting the rows doesn't remove the stored files, so those go first.
-    const { data, error: listError } = await supabase.from('materials').select('storage_path').in('folder_id', ids);
+    const { data, error: listError } = await supabase.from('materials').select('id, storage_path, storage_provider').in('folder_id', ids);
     if (listError) throw listError;
-    const paths = (data || []).map((row) => row.storage_path);
-    if (paths.length) {
-      const { error } = await supabase.storage.from(BUCKET).remove(paths);
-      if (error) throw error;
-    }
+    if (data?.length) await removeStoredFiles(data);
     const { error } = await supabase.from('material_folders').delete().eq('id', folder.id);
     if (error) throw error;
     selectedId.value = folder.parent_id || null;
@@ -344,21 +376,12 @@ function storageErrorMessage(xhr) {
   }
 }
 
-// Uploads straight to Storage so the progress bar can follow the bytes sent
-// (the Supabase client has no progress events).
-async function uploadWithProgress(storagePath, file, contentType, onProgress) {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Your session has ended. Sign in again, then retry.');
-  const objectPath = storagePath.split('/').map(encodeURIComponent).join('/');
-  await new Promise((resolve, reject) => {
+// Sends a file with XMLHttpRequest so the progress bar can follow the bytes.
+function sendWithProgress(method, url, headers, file, onProgress) {
+  return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectPath}`);
-    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.setRequestHeader('apikey', supabaseAnonKey);
-    xhr.setRequestHeader('Content-Type', contentType);
-    xhr.setRequestHeader('x-upsert', 'false');
-    xhr.setRequestHeader('cache-control', 'max-age=3600');
+    xhr.open(method, url);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(event.loaded / event.total);
     };
@@ -366,6 +389,53 @@ async function uploadWithProgress(storagePath, file, contentType, onProgress) {
     xhr.onerror = () => reject(new Error('The connection dropped while uploading. Check your internet and try again.'));
     xhr.send(file);
   });
+}
+
+// Uploads one file and saves its materials row. Tries R2 first; returns the
+// provider used.
+async function storeFile(folder, file, onProgress) {
+  const contentType = file.type || 'application/octet-stream';
+  if (!r2Unavailable) {
+    let ticket = null;
+    try {
+      ticket = await materialsApi({ action: 'upload-url', folderId: folder.id, fileName: file.name, contentType, size: file.size });
+    } catch (error) {
+      if (!error.unavailable) throw error;
+      r2Unavailable = true;
+    }
+    if (ticket) {
+      await sendWithProgress('PUT', ticket.url, { 'Content-Type': contentType }, file, onProgress);
+      const { error: insertError } = await supabase.from('materials').insert([{ folder_id: folder.id, file_name: file.name, storage_path: ticket.key, storage_provider: 'r2', mime_type: contentType, size_bytes: file.size }]);
+      if (insertError) {
+        await materialsApi({ action: 'discard', key: ticket.key }).catch(() => null);
+        throw insertError;
+      }
+      return 'r2';
+    }
+  }
+  const storagePath = `${folder.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${storageSafeName(file.name)}`;
+  await uploadWithProgress(storagePath, file, contentType, onProgress);
+  const { error: insertError } = await supabase.from('materials').insert([{ folder_id: folder.id, file_name: file.name, storage_path: storagePath, mime_type: contentType, size_bytes: file.size }]);
+  if (insertError) {
+    await supabase.storage.from(BUCKET).remove([storagePath]);
+    throw insertError;
+  }
+  return 'supabase';
+}
+
+// Uploads straight to Supabase Storage (the fallback when R2 is not set up).
+async function uploadWithProgress(storagePath, file, contentType, onProgress) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Your session has ended. Sign in again, then retry.');
+  const objectPath = storagePath.split('/').map(encodeURIComponent).join('/');
+  await sendWithProgress('POST', `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectPath}`, {
+    Authorization: `Bearer ${token}`,
+    apikey: supabaseAnonKey,
+    'Content-Type': contentType,
+    'x-upsert': 'false',
+    'cache-control': 'max-age=3600',
+  }, file, onProgress);
 }
 
 // Adds files to the upload queue for a folder. Files added while another
@@ -397,15 +467,7 @@ async function runUploadQueue() {
       // Images and Office files are shrunk first (see lib/compress.js).
       const file = await compressForUpload(original, 'material');
       step({ stage: 'Uploading', size: file.size });
-      const storagePath = `${folder.id}/${Date.now()}-${uploaded}-${storageSafeName(file.name)}`;
-      const contentType = file.type || 'application/octet-stream';
-      await uploadWithProgress(storagePath, file, contentType, (fraction) => step({ percent: Math.round(fraction * 100) }));
-      step({ stage: 'Saving', percent: 100 });
-      const { error: insertError } = await supabase.from('materials').insert([{ folder_id: folder.id, file_name: file.name, storage_path: storagePath, mime_type: contentType, size_bytes: file.size }]);
-      if (insertError) {
-        await supabase.storage.from(BUCKET).remove([storagePath]);
-        throw insertError;
-      }
+      await storeFile(folder, file, (fraction) => step({ percent: Math.round(fraction * 100), stage: fraction >= 1 ? 'Saving' : 'Uploading' }));
       uploaded += 1;
       originalBytes += original.size;
       storedBytes += file.size;
@@ -431,10 +493,7 @@ async function deleteFile(file) {
   if (!confirmAction('Delete File', `Delete "${file.file_name}"? This can't be undone.`)) return;
   busyFileId.value = file.id;
   try {
-    const { error: removeError } = await supabase.storage.from(BUCKET).remove([file.storage_path]);
-    if (removeError) throw removeError;
-    const { error } = await supabase.from('materials').delete().eq('id', file.id);
-    if (error) throw error;
+    await removeStoredFiles([file]);
     await loadFiles(file.folder_id);
     loadFolders();
   } catch (error) {
@@ -449,11 +508,17 @@ async function openFile(file, download) {
   // Opened before the await, or browsers treat it as an unprompted popup.
   const opened = window.open('', '_blank');
   try {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
-    if (error) throw error;
+    let signedUrl;
+    if (file.storage_provider === 'r2') {
+      signedUrl = (await materialsApi({ action: 'download-url', materialId: file.id, download })).url;
+    } else {
+      const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
+      if (error) throw error;
+      signedUrl = data.signedUrl;
+    }
     if (opened) {
       opened.opener = null;
-      opened.location.href = data.signedUrl;
+      opened.location.href = signedUrl;
     }
   } catch (error) {
     opened?.close();
