@@ -1,6 +1,6 @@
 import { ROLE_LABELS } from './formation';
 
-export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, YearRegistered, Status, SpouseName, Phone, MobileNo, Email, Birthday';
+export const MEMBER_COLUMNS = 'MemberIDNo, Lastname, Firstname, PastoralService, AreaName, NameOfHouseholdHead, YearRegistered, Status, SpouseName, Phone, MobileNo, Email, Birthday, WeddingDate';
 export const ROLE_OPTION_CODES = Object.keys(ROLE_LABELS);
 export const STATUS_OPTIONS = ['Active', 'Inactive', 'Deceased', 'SOLD', 'HANDMAID'];
 export const STATUS_TONE = { Active: 'success', SOLD: 'warning', HANDMAID: 'accent' };

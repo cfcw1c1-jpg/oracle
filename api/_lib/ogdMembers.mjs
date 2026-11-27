@@ -62,8 +62,8 @@ export function toMemberRow(headers, cells) {
 // A chapter's sync only writes members whose OGD Area belongs to it. OGD names
 // sub-units by suffix ("West 1C1A" under "West 1C1"), matching the Directory's
 // prefix scoping.
-// households maps Member ID to a household head, or to { head, birthday } read
-// from the member's popup. Missing values are left out, so a stored value is
+// households maps Member ID to a household head, or to { head, birthday,
+// weddingDate } read from the member's popup. Missing values are left out, so a stored value is
 // never blanked.
 export function planMemberSync({ headers, records, households = new Map() }, chapterName) {
   const members = new Map();
@@ -77,10 +77,12 @@ export function planMemberSync({ headers, records, households = new Map() }, cha
       const info = households.get(result.member.MemberIDNo);
       const head = typeof info === 'string' ? info : info?.head;
       const birthday = typeof info === 'object' ? info?.birthday : null;
+      const weddingDate = typeof info === 'object' ? info?.weddingDate : null;
       members.set(result.member.MemberIDNo, {
         ...result.member,
         ...(head ? { NameOfHouseholdHead: head } : {}),
         ...(birthday ? { Birthday: birthday } : {}),
+        ...(weddingDate ? { WeddingDate: weddingDate } : {}),
       });
     }
   }
@@ -270,7 +272,7 @@ function popupScopes(page, framesBefore) {
 // patterns inside the member popup: first in frames the popup added, then
 // inside a popup container. Links are tried before wider elements so the
 // click lands on the link itself; buttons are matched by their value.
-async function findInPopup(page, framesBefore, label, timeoutMs = MODAL_WAIT_MS) {
+export async function findInPopup(page, framesBefore, label, timeoutMs = MODAL_WAIT_MS) {
   const patterns = tabPatterns(label);
   const end = Date.now() + timeoutMs;
   do {

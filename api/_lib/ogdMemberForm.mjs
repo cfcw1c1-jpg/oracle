@@ -1,4 +1,4 @@
-import { closePopup, openMemberPopup, readHouseholdHead, waitForPopupContent } from './ogdMembers.mjs';
+import { closePopup, findInPopup, openMemberPopup, readHouseholdHead, waitForPopupContent } from './ogdMembers.mjs';
 
 // Writes Oracle changes into a member's details on OGD: member popup >
 // Personal tab (or whichever tab the popup opens on). Fields are found by
@@ -26,6 +26,12 @@ export const PUSH_FIELDS = {
   NameOfHouseholdHead: { label: 'Household head', match: /(household|hh)\s*head/i },
   YearRegistered: { label: 'Year registered', match: /year\s*(registered|joined)|date\s*(registered|joined)/i },
   Birthday: { label: 'Birthday', match: /^(birth\s*day|birth\s*date|date\s*of\s*birth)/i, date: true },
+};
+
+// Fields the Members sync only reads from OGD (Oracle never pushes them).
+const READ_FIELDS = {
+  // Family tab: "Church Wedding Date".
+  WeddingDate: { label: 'Church wedding date', match: /wedding\s*date|date\s*of\s*(church\s*)?(wedding|marriage)|marriage\s*date/i },
 };
 
 // OGD shows dates as m/d/yyyy; Oracle stores yyyy-mm-dd.
@@ -59,7 +65,7 @@ export function sameValue(siteValue, wanted) {
 
 // Picks the OGD form field for an Oracle column. Prefers editable fields.
 export function matchField(fields, column) {
-  const spec = PUSH_FIELDS[column];
+  const spec = PUSH_FIELDS[column] ?? READ_FIELDS[column];
   if (!spec) return null;
   const fits = (text) => Boolean(text) && spec.match.test(text) && !(spec.not && spec.not.test(text));
   const candidates = fields.filter((field) => fits(field.label) || fits(field.nameLabel));
@@ -257,24 +263,58 @@ export async function pushMemberChanges(page, member, changes) {
   }
 }
 
-// Per-member step for the Members sync: the birthday from the Personal tab the
-// popup opens on, then the household head from the Service tab, in one visit.
-// A birthday that cannot be read never holds up the household head, and after
-// a few members in a row without one the run stops looking, so a form OGD
-// changed cannot slow the whole sync down.
+// Per-member step for the Members sync, in one visit: the birthday from the
+// Personal tab the popup opens on, the church wedding date from the Family
+// tab, then the household head from the Service tab. A birthday or wedding
+// date that cannot be read never holds up the household head, and after a few
+// members in a row where it could not be found the run stops looking, so a
+// form OGD changed cannot slow the whole sync down. An empty wedding date
+// (not married) still counts as found.
 const BIRTHDAY_WAIT_MS = 4000;
-const BIRTHDAY_GIVE_UP_AFTER = 5;
+const FAMILY_WAIT_MS = 4000;
+const GIVE_UP_AFTER = 5;
 const birthdayMisses = new WeakMap();
+const familyMisses = new WeakMap();
+
+// Opens the Family tab and reads its Church Wedding Date field. Resolves to
+// { found, weddingDate }; found is false when the tab or field is missing.
+async function readWeddingDate(page, member, framesBefore) {
+  const tab = await findInPopup(page, framesBefore, 'family', FAMILY_WAIT_MS);
+  if (!tab) return { found: false, weddingDate: null };
+  await tab.click({ timeout: 10000 });
+  // Waits for the Family form itself, not the Personal one still showing.
+  const found = await waitForPopupContent(
+    page,
+    async (frame) => {
+      if (framesBefore.has(frame)) return null;
+      const form = await readForm(frame, member.memberId);
+      const field = form && matchField(form.fields, 'WeddingDate');
+      return field ? { showsMember: form.showsMember, field } : null;
+    },
+    FAMILY_WAIT_MS,
+  );
+  if (!found) return { found: false, weddingDate: null };
+  return { found: true, weddingDate: toOracleDate(found.result.field.value) };
+}
 
 export async function readMemberInfo(page, member) {
   let birthday = null;
-  const misses = birthdayMisses.get(page) ?? 0;
-  const readBirthday = misses >= BIRTHDAY_GIVE_UP_AFTER ? null : async (framesBefore) => {
-    const found = await findForm(page, member.memberId, framesBefore, BIRTHDAY_WAIT_MS);
-    const field = found && matchField(found.result.fields, 'Birthday');
-    birthday = field ? toOracleDate(field.value) : null;
-  };
-  const head = await readHouseholdHead(page, member, readBirthday);
-  if (readBirthday) birthdayMisses.set(page, birthday ? 0 : misses + 1);
-  return head || birthday ? { head, birthday } : undefined;
+  let wedding = { found: false, weddingDate: null };
+  const missedBirthdays = birthdayMisses.get(page) ?? 0;
+  const missedFamily = familyMisses.get(page) ?? 0;
+  const tryBirthday = missedBirthdays < GIVE_UP_AFTER;
+  const tryFamily = missedFamily < GIVE_UP_AFTER;
+  const readFirstTabs = tryBirthday || tryFamily ? async (framesBefore) => {
+    if (tryBirthday) {
+      const found = await findForm(page, member.memberId, framesBefore, BIRTHDAY_WAIT_MS).catch(() => null);
+      const field = found && matchField(found.result.fields, 'Birthday');
+      birthday = field ? toOracleDate(field.value) : null;
+    }
+    if (tryFamily) wedding = await readWeddingDate(page, member, framesBefore).catch(() => wedding);
+  } : null;
+  const head = await readHouseholdHead(page, member, readFirstTabs);
+  if (tryBirthday) birthdayMisses.set(page, birthday ? 0 : missedBirthdays + 1);
+  if (tryFamily) familyMisses.set(page, wedding.found ? 0 : missedFamily + 1);
+  const weddingDate = wedding.weddingDate;
+  return head || birthday || weddingDate ? { head, birthday, weddingDate } : undefined;
 }

@@ -18,8 +18,8 @@ const COLUMNS_BY_CODE = groupTrainingColumns(TRAINING_COLUMNS.map((column) => co
 // A chapter has two syncs, each started on its own from the OGD Accounts page
 // and each running over as many runs as it needs:
 //   info        Members Database list plus each member's birthday (Personal
-//               tab) and present household head (Service tab); resumes at
-//               hh_next_page
+//               tab), church wedding date (Family tab) and present household
+//               head (Service tab); resumes at hh_next_page
 //   formations  each member's formation talks (Formation tab) into
 //               pfo_members; resumes at fm_next_page
 // One finishing does not start the other. sync_part records which ran last.
