@@ -1,6 +1,6 @@
 <script setup>
 import { Archive, ChevronLeft, ChevronRight, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, Music, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
@@ -34,6 +34,9 @@ const collapsed = ref(new Set());
 const selectedFileIds = ref(new Set());
 const isDeletingFiles = ref(false);
 const isDragging = ref(false);
+// True while files are dragged anywhere over the page (Admins only): every
+// folder is then listed, open, as a place to drop them.
+const isDraggingFiles = ref(false);
 // Folder row in the tree a file is being dragged over.
 const dropFolderId = ref(null);
 // Files waiting to upload, one at a time: [{ file, folder }].
@@ -63,7 +66,7 @@ const folderTree = computed(() => {
       if (seen.has(folder.id)) continue;
       const hasChildren = Boolean(childrenOf.value.get(folder.id)?.length);
       rows.push({ folder, depth, hasChildren });
-      if (!collapsed.value.has(folder.id)) walk(folder.id, depth + 1, new Set([...seen, folder.id]));
+      if (isDraggingFiles.value || !collapsed.value.has(folder.id)) walk(folder.id, depth + 1, new Set([...seen, folder.id]));
     }
   };
   walk(null, 0, new Set());
@@ -107,7 +110,7 @@ function descendantIds(folderId) {
 }
 const visibleFolders = computed(() => {
   const query = folderSearch.value.trim().toLowerCase();
-  if (!query) return folderTree.value;
+  if (!query || isDraggingFiles.value) return folderTree.value;
   // While searching, matches are listed flat with their full path.
   return folders.value
     .filter((folder) => folder.name.toLowerCase().includes(query) || (folder.description || '').toLowerCase().includes(query))
@@ -460,12 +463,59 @@ async function openFile(file, download) {
   }
 }
 
-onMounted(loadFolders);
+// Watches drags over the whole window. dragenter/dragleave fire for every
+// element crossed, so a counter tells when the drag really left the page.
+let dragDepth = 0;
+const hasFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes('Files');
+function onWindowDragEnter(event) {
+  if (!props.isAdmin || !hasFiles(event)) return;
+  dragDepth += 1;
+  isDraggingFiles.value = true;
+}
+function onWindowDragLeave(event) {
+  if (!isDraggingFiles.value) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  // No relatedTarget means the drag left the browser window; the tree opening
+  // up mid-drag can also swallow a dragleave, so this is the surer signal.
+  const outside = event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight;
+  if (dragDepth === 0 || (!event.relatedTarget && outside)) endWindowDrag();
+}
+function onWindowDragOver(event) {
+  // A drop that misses every folder must not make the browser open the file.
+  if (props.isAdmin && hasFiles(event)) event.preventDefault();
+}
+function onWindowDrop(event) {
+  if (props.isAdmin && hasFiles(event)) event.preventDefault();
+  endWindowDrag();
+}
+function endWindowDrag() {
+  dragDepth = 0;
+  isDraggingFiles.value = false;
+  isDragging.value = false;
+  dropFolderId.value = null;
+}
+
+onMounted(() => {
+  loadFolders();
+  window.addEventListener('dragenter', onWindowDragEnter);
+  window.addEventListener('dragleave', onWindowDragLeave);
+  window.addEventListener('dragover', onWindowDragOver);
+  window.addEventListener('drop', onWindowDrop);
+  window.addEventListener('dragend', endWindowDrag);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('dragenter', onWindowDragEnter);
+  window.removeEventListener('dragleave', onWindowDragLeave);
+  window.removeEventListener('dragover', onWindowDragOver);
+  window.removeEventListener('drop', onWindowDrop);
+  window.removeEventListener('dragend', endWindowDrag);
+  clearTimeout(noticeTimer);
+});
 </script>
 
 <template>
   <div class="page">
-    <div class="mat" :class="{ 'has-selection': selectedFolder }">
+    <div class="mat" :class="{ 'has-selection': selectedFolder, 'dragging-files': isDraggingFiles }">
       <section class="card pane-folders">
         <header class="card-head">
           <div>
@@ -474,7 +524,8 @@ onMounted(loadFolders);
           </div>
           <button v-if="isAdmin" class="btn btn-primary btn-sm" @click="newFolder()"><Plus :size="14" />New Folder</button>
         </header>
-        <div class="folder-search"><SearchInput v-model="folderSearch" placeholder="Search folders" /></div>
+        <div v-if="isDraggingFiles" class="drag-banner"><UploadCloud :size="15" />Drop on any folder below to upload there</div>
+        <div v-else class="folder-search"><SearchInput v-model="folderSearch" placeholder="Search folders" /></div>
         <LoadingBlock v-if="isLoadingFolders && !folders.length" />
         <p v-else-if="!visibleFolders.length" class="empty">{{ folders.length ? 'No folders match your search.' : isAdmin ? 'No folders yet. Create one to start uploading.' : 'No materials have been shared yet.' }}</p>
         <div
@@ -648,6 +699,9 @@ onMounted(loadFolders);
 .upload-notice.danger { background: color-mix(in srgb, #dc2626 12%, transparent); }
 .folder.drop-target { background: var(--accent-soft); outline: 2px dashed var(--accent, #4f46e5); outline-offset: -3px; }
 @media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
+.drag-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px dashed var(--accent, #4f46e5); background: var(--accent-soft); font-size: 13px; font-weight: 600; }
+.dragging-files .tree-row { outline: 1px dashed var(--line); outline-offset: -3px; }
+.dragging-files .tree-row.drop-target { outline: 2px dashed var(--accent, #4f46e5); }
 .select-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 20px; border-top: 1px solid var(--line); font-size: 13px; background: var(--surface-hover); }
 .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .file.picked { background: var(--accent-soft); }
@@ -662,5 +716,7 @@ onMounted(loadFolders);
   .pane-files { display: none; }
   .has-selection .pane-folders { display: none; }
   .has-selection .pane-files { display: block; }
+  /* While dragging files, the folder list shows even with a folder open. */
+  .has-selection.dragging-files .pane-folders { display: block; }
 }
 </style>
