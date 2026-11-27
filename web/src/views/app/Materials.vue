@@ -6,9 +6,9 @@ import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { compressForUpload } from '@/lib/compress';
 import { confirmAction, showAlert } from '@/lib/data';
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 
-defineProps({ isAdmin: Boolean });
+const props = defineProps({ isAdmin: Boolean });
 
 const BUCKET = 'materials';
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
@@ -34,6 +34,13 @@ const collapsed = ref(new Set());
 const selectedFileIds = ref(new Set());
 const isDeletingFiles = ref(false);
 const isDragging = ref(false);
+// Folder row in the tree a file is being dragged over.
+const dropFolderId = ref(null);
+// Files waiting to upload, one at a time: [{ file, folder }].
+const uploadQueue = [];
+// Shown in the files pane after an upload finishes.
+const uploadNotice = ref(null);
+let noticeTimer = null;
 
 const selectedFolder = computed(() => folders.value.find((folder) => folder.id === selectedId.value) || null);
 
@@ -225,10 +232,46 @@ async function deleteSelectedFiles() {
   }
 }
 
-function onDrop(event) {
+const draggingFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes('Files');
+
+function onPaneDragOver(event) {
+  if (!draggingFiles(event)) return;
+  // Always taken, so a drop never makes the browser open the file instead.
+  event.preventDefault();
+  isDragging.value = true;
+}
+
+function onPaneDrop(event) {
+  if (!draggingFiles(event)) return;
+  event.preventDefault();
   isDragging.value = false;
   const dropped = [...(event.dataTransfer?.files ?? [])];
-  if (dropped.length) uploadFiles(dropped);
+  if (!dropped.length) return;
+  if (!props.isAdmin) showNotice('Only Admins can upload files.', 'danger');
+  else if (!selectedFolder.value) showNotice('Open a folder first, or drop the files on a folder in the list.', 'danger');
+  else uploadFiles(dropped, selectedFolder.value);
+}
+
+function onFolderDragOver(event, folder) {
+  if (!props.isAdmin || !draggingFiles(event)) return;
+  event.preventDefault();
+  dropFolderId.value = folder.id;
+}
+
+function onFolderDrop(event, folder) {
+  if (!props.isAdmin || !draggingFiles(event)) return;
+  event.preventDefault();
+  dropFolderId.value = null;
+  const dropped = [...(event.dataTransfer?.files ?? [])];
+  if (dropped.length) uploadFiles(dropped, folder);
+}
+
+function showNotice(text, tone = 'success') {
+  clearTimeout(noticeTimer);
+  uploadNotice.value = { text, tone };
+  noticeTimer = setTimeout(() => {
+    uploadNotice.value = null;
+  }, 8000);
 }
 
 async function saveFolder() {
@@ -286,46 +329,99 @@ async function deleteFolder(folder) {
 function uploadChosenFiles(event) {
   const chosen = [...event.target.files];
   event.target.value = '';
-  uploadFiles(chosen);
+  uploadFiles(chosen, selectedFolder.value);
 }
 
-async function uploadFiles(chosen) {
-  const folder = selectedFolder.value;
-  if (!chosen.length || !folder || uploadProgress.value) return;
+function storageErrorMessage(xhr) {
+  try {
+    const body = JSON.parse(xhr.responseText);
+    return body.message || body.error || `Upload failed (${xhr.status}).`;
+  } catch {
+    return `Upload failed (${xhr.status}).`;
+  }
+}
 
+// Uploads straight to Storage so the progress bar can follow the bytes sent
+// (the Supabase client has no progress events).
+async function uploadWithProgress(storagePath, file, contentType, onProgress) {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Your session has ended. Sign in again, then retry.');
+  const objectPath = storagePath.split('/').map(encodeURIComponent).join('/');
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectPath}`);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('apikey', supabaseAnonKey);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.setRequestHeader('cache-control', 'max-age=3600');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(storageErrorMessage(xhr))));
+    xhr.onerror = () => reject(new Error('The connection dropped while uploading. Check your internet and try again.'));
+    xhr.send(file);
+  });
+}
+
+// Adds files to the upload queue for a folder. Files added while another
+// upload runs wait their turn instead of being dropped.
+function uploadFiles(chosen, folder) {
+  if (!chosen.length || !folder) return;
+  for (const file of chosen) uploadQueue.push({ file, folder });
+  if (uploadProgress.value) {
+    uploadProgress.value = { ...uploadProgress.value, total: uploadProgress.value.total + chosen.length };
+    return;
+  }
+  runUploadQueue();
+}
+
+async function runUploadQueue() {
   const failures = [];
+  const doneFolders = new Map();
   let originalBytes = 0;
   let storedBytes = 0;
-  uploadProgress.value = { done: 0, total: chosen.length, stage: 'Compressing' };
-  for (const [index, original] of chosen.entries()) {
-    // Images and Office files are shrunk first (see lib/compress.js).
-    uploadProgress.value = { ...uploadProgress.value, stage: 'Compressing' };
-    const file = await compressForUpload(original, 'material');
-    uploadProgress.value = { ...uploadProgress.value, stage: 'Uploading' };
-    const storagePath = `${folder.id}/${Date.now()}-${index}-${storageSafeName(file.name)}`;
-    const contentType = file.type || 'application/octet-stream';
+  let uploaded = 0;
+  uploadProgress.value = { done: 0, total: uploadQueue.length, name: '', size: 0, folderName: '', stage: 'Compressing', percent: 0 };
+  while (uploadQueue.length) {
+    const { file: original, folder } = uploadQueue.shift();
+    const step = (fields) => {
+      uploadProgress.value = { ...uploadProgress.value, ...fields };
+    };
+    step({ name: original.name, size: original.size, folderName: folder.name, stage: 'Compressing', percent: 0 });
     try {
-      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(storagePath, file, { contentType, upsert: false });
-      if (uploadError) throw uploadError;
+      // Images and Office files are shrunk first (see lib/compress.js).
+      const file = await compressForUpload(original, 'material');
+      step({ stage: 'Uploading', size: file.size });
+      const storagePath = `${folder.id}/${Date.now()}-${uploaded}-${storageSafeName(file.name)}`;
+      const contentType = file.type || 'application/octet-stream';
+      await uploadWithProgress(storagePath, file, contentType, (fraction) => step({ percent: Math.round(fraction * 100) }));
+      step({ stage: 'Saving', percent: 100 });
       const { error: insertError } = await supabase.from('materials').insert([{ folder_id: folder.id, file_name: file.name, storage_path: storagePath, mime_type: contentType, size_bytes: file.size }]);
       if (insertError) {
         await supabase.storage.from(BUCKET).remove([storagePath]);
         throw insertError;
       }
+      uploaded += 1;
       originalBytes += original.size;
       storedBytes += file.size;
+      doneFolders.set(folder.id, folder.name);
+      if (folder.id === selectedId.value) loadFiles(folder.id);
     } catch (error) {
       failures.push(`${original.name}: ${error.message}`);
     }
-    uploadProgress.value = { ...uploadProgress.value, done: index + 1 };
+    step({ done: uploadProgress.value.done + 1 });
   }
   uploadProgress.value = null;
-  if (failures.length) showAlert('Some Files Failed to Upload', failures.join('\n'));
-  else if (originalBytes - storedBytes > 10240) {
-    showAlert('Files Uploaded', `Compressed from ${formatBytes(originalBytes)} to ${formatBytes(storedBytes)} (saved ${formatBytes(originalBytes - storedBytes)}).`);
-  }
-  loadFiles(folder.id);
   loadFolders();
+
+  if (uploaded) {
+    const where = doneFolders.size === 1 ? ` to "${[...doneFolders.values()][0]}"` : '';
+    const saved = originalBytes - storedBytes > 10240 ? `, compressed from ${formatBytes(originalBytes)} (saved ${formatBytes(originalBytes - storedBytes)})` : '';
+    showNotice(`Uploaded ${uploaded} file${uploaded === 1 ? '' : 's'}${where}: ${formatBytes(storedBytes)}${saved}.`);
+  }
+  if (failures.length) showAlert(uploaded ? 'Some Files Failed to Upload' : 'Upload Failed', failures.join('\n'));
 }
 
 async function deleteFile(file) {
@@ -385,7 +481,10 @@ onMounted(loadFolders);
           v-for="{ folder, depth, path, hasChildren } in visibleFolders"
           :key="folder.id"
           class="folder tree-row"
-          :class="{ on: folder.id === selectedId }"
+          :class="{ on: folder.id === selectedId, 'drop-target': folder.id === dropFolderId }"
+          @dragover="onFolderDragOver($event, folder)"
+          @dragleave="dropFolderId === folder.id && (dropFolderId = null)"
+          @drop="onFolderDrop($event, folder)"
           :style="{ paddingLeft: `${12 + depth * 18}px` }"
           role="button"
           tabindex="0"
@@ -411,11 +510,29 @@ onMounted(loadFolders);
       <section
         class="card pane-files"
         :class="{ dragging: isDragging }"
-        @dragover.prevent="isDragging = isAdmin && !!selectedFolder"
+        @dragover="onPaneDragOver"
         @dragleave.self="isDragging = false"
-        @drop.prevent="isAdmin && selectedFolder ? onDrop($event) : (isDragging = false)"
+        @drop="onPaneDrop"
       >
-        <div v-if="isDragging" class="drop-hint"><UploadCloud :size="28" /><p>Drop files to upload them to "{{ selectedFolder?.name }}"</p></div>
+        <div v-if="isDragging" class="drop-hint">
+          <UploadCloud :size="28" />
+          <p v-if="!isAdmin">Only Admins can upload files.</p>
+          <p v-else-if="selectedFolder">Drop to upload to "{{ selectedFolder.name }}"</p>
+          <p v-else>Open a folder first, or drop on a folder in the list.</p>
+        </div>
+        <div v-if="uploadProgress" class="upload-panel" role="status" aria-live="polite">
+          <div class="upload-line">
+            <UploadCloud :size="16" />
+            <span class="grow clamp"><strong>{{ uploadProgress.stage }}</strong> {{ uploadProgress.name }} <span class="muted">· {{ formatBytes(uploadProgress.size) }} · to "{{ uploadProgress.folderName }}"</span></span>
+            <span class="muted small nowrap">{{ Math.min(uploadProgress.done + 1, uploadProgress.total) }} of {{ uploadProgress.total }}</span>
+          </div>
+          <div class="upload-bar"><span :class="{ busy: uploadProgress.stage !== 'Uploading' }" :style="{ width: `${uploadProgress.stage === 'Uploading' ? uploadProgress.percent : 100}%` }" /></div>
+          <p v-if="uploadProgress.stage === 'Uploading'" class="muted small">{{ uploadProgress.percent }}% sent. Keep this page open until it finishes.</p>
+        </div>
+        <div v-if="uploadNotice" class="upload-notice" :class="uploadNotice.tone">
+          <span class="grow">{{ uploadNotice.text }}</span>
+          <button class="link-btn" @click="uploadNotice = null">Dismiss</button>
+        </div>
         <div v-if="!selectedFolder" class="placeholder"><FolderOpen :size="30" /><p>Select a folder to see its files.</p></div>
         <template v-else>
           <header class="card-head">
@@ -433,7 +550,7 @@ onMounted(loadFolders);
               <button class="link-btn danger" @click="deleteFolder(selectedFolder)"><Trash2 :size="13" />Delete</button>
               <button class="btn btn-sm" @click="newFolder(selectedFolder.id)"><FolderPlus :size="14" />New Subfolder</button>
               <input ref="fileInput" type="file" multiple hidden @change="uploadChosenFiles" />
-              <button class="btn btn-primary btn-sm" :disabled="!!uploadProgress" @click="fileInput.click()"><UploadCloud :size="14" />{{ uploadProgress ? `${uploadProgress.stage} ${Math.min(uploadProgress.done + 1, uploadProgress.total)}/${uploadProgress.total}` : 'Upload Files' }}</button>
+              <button class="btn btn-primary btn-sm" @click="fileInput.click()"><UploadCloud :size="14" />Upload Files</button>
             </div>
           </header>
           <div v-for="child in subfolders" :key="child.id" class="folder" role="button" tabindex="0" @click="selectedId = child.id" @keydown.enter.prevent="selectedId = child.id">
@@ -519,6 +636,18 @@ onMounted(loadFolders);
 .pane-files { position: relative; }
 .pane-files.dragging { outline: 2px dashed var(--accent, #4f46e5); outline-offset: -6px; }
 .drop-hint { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: color-mix(in srgb, var(--surface, #fff) 88%, transparent); border-radius: inherit; font-size: 14px; font-weight: 600; pointer-events: none; }
+.upload-panel { display: grid; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--accent-soft); font-size: 13px; }
+.upload-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nowrap { white-space: nowrap; }
+.upload-bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.upload-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent, #4f46e5); transition: width 0.2s ease; }
+.upload-bar span.busy { background: linear-gradient(90deg, var(--accent, #4f46e5) 0 30%, transparent 30% 100%); background-size: 200% 100%; animation: upload-busy 1.1s linear infinite; }
+@keyframes upload-busy { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.upload-notice { display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.upload-notice.success { background: color-mix(in srgb, #16a34a 12%, transparent); }
+.upload-notice.danger { background: color-mix(in srgb, #dc2626 12%, transparent); }
+.folder.drop-target { background: var(--accent-soft); outline: 2px dashed var(--accent, #4f46e5); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
 .select-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 20px; border-top: 1px solid var(--line); font-size: 13px; background: var(--surface-hover); }
 .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .file.picked { background: var(--accent-soft); }
