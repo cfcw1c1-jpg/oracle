@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppModal from '@/components/AppModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
+import { compressForUpload } from '@/lib/compress';
 import { searchTerm, showAlert } from '@/lib/data';
 import { supabase } from '@/lib/supabase';
 import { loadUnreadMessages, sessionState } from '@/stores/session';
@@ -158,11 +159,13 @@ async function send() {
 }
 
 async function sendImage(event) {
-  const file = event.target.files?.[0];
+  const picked = event.target.files?.[0];
   event.target.value = '';
-  if (!file || !selectedId.value || !currentUserId.value) return;
+  if (!picked || !selectedId.value || !currentUserId.value) return;
   isUploading.value = true;
   try {
+    // Photos are stored at most 1600px on their longer side.
+    const file = await compressForUpload(picked, 'message');
     const extension = (file.name.split('.').pop() || file.type.split('/').pop() || 'jpg').toLowerCase();
     const path = `${currentUserId.value}/${Date.now()}.${extension}`;
     const { error: uploadError } = await supabase.storage.from('message-images').upload(path, file, { contentType: file.type || 'image/jpeg' });

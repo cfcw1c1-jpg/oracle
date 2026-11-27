@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
+import { compressForUpload } from '@/lib/compress';
 import { confirmAction, showAlert } from '@/lib/data';
 import { supabase } from '@/lib/supabase';
 
@@ -290,8 +291,14 @@ async function uploadFiles(chosen) {
   if (!chosen.length || !folder || uploadProgress.value) return;
 
   const failures = [];
-  uploadProgress.value = { done: 0, total: chosen.length };
-  for (const [index, file] of chosen.entries()) {
+  let originalBytes = 0;
+  let storedBytes = 0;
+  uploadProgress.value = { done: 0, total: chosen.length, stage: 'Compressing' };
+  for (const [index, original] of chosen.entries()) {
+    // Images and Office files are shrunk first (see lib/compress.js).
+    uploadProgress.value = { ...uploadProgress.value, stage: 'Compressing' };
+    const file = await compressForUpload(original, 'material');
+    uploadProgress.value = { ...uploadProgress.value, stage: 'Uploading' };
     const storagePath = `${folder.id}/${Date.now()}-${index}-${storageSafeName(file.name)}`;
     const contentType = file.type || 'application/octet-stream';
     try {
@@ -302,13 +309,18 @@ async function uploadFiles(chosen) {
         await supabase.storage.from(BUCKET).remove([storagePath]);
         throw insertError;
       }
+      originalBytes += original.size;
+      storedBytes += file.size;
     } catch (error) {
-      failures.push(`${file.name}: ${error.message}`);
+      failures.push(`${original.name}: ${error.message}`);
     }
-    uploadProgress.value = { done: index + 1, total: chosen.length };
+    uploadProgress.value = { ...uploadProgress.value, done: index + 1 };
   }
   uploadProgress.value = null;
   if (failures.length) showAlert('Some Files Failed to Upload', failures.join('\n'));
+  else if (originalBytes - storedBytes > 10240) {
+    showAlert('Files Uploaded', `Compressed from ${formatBytes(originalBytes)} to ${formatBytes(storedBytes)} (saved ${formatBytes(originalBytes - storedBytes)}).`);
+  }
   loadFiles(folder.id);
   loadFolders();
 }
@@ -417,7 +429,7 @@ onMounted(loadFolders);
               <button class="link-btn danger" @click="deleteFolder(selectedFolder)"><Trash2 :size="13" />Delete</button>
               <button class="btn btn-sm" @click="newFolder(selectedFolder.id)"><FolderPlus :size="14" />New Subfolder</button>
               <input ref="fileInput" type="file" multiple hidden @change="uploadChosenFiles" />
-              <button class="btn btn-primary btn-sm" :disabled="!!uploadProgress" @click="fileInput.click()"><UploadCloud :size="14" />{{ uploadProgress ? `Uploading ${uploadProgress.done}/${uploadProgress.total}` : 'Upload Files' }}</button>
+              <button class="btn btn-primary btn-sm" :disabled="!!uploadProgress" @click="fileInput.click()"><UploadCloud :size="14" />{{ uploadProgress ? `${uploadProgress.stage} ${Math.min(uploadProgress.done + 1, uploadProgress.total)}/${uploadProgress.total}` : 'Upload Files' }}</button>
             </div>
           </header>
           <div v-for="child in subfolders" :key="child.id" class="folder" role="button" tabindex="0" @click="selectedId = child.id" @keydown.enter.prevent="selectedId = child.id">

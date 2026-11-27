@@ -4,6 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import PageHead from '@/components/PageHead.vue';
 import PasswordField from '@/components/PasswordField.vue';
+import { compressForUpload } from '@/lib/compress';
 import { showAlert } from '@/lib/data';
 import { supabase } from '@/lib/supabase';
 
@@ -36,11 +37,13 @@ async function loadUser() {
 }
 
 async function uploadAvatar(event) {
-  const file = event.target.files?.[0];
+  const picked = event.target.files?.[0];
   event.target.value = '';
-  if (!file) return;
+  if (!picked) return;
   isUploading.value = true;
   try {
+    // Profile pictures are shown small, so they are stored at most 512px.
+    const file = await compressForUpload(picked, 'avatar');
     const extension = (file.name.split('.').pop() || file.type.split('/').pop() || 'jpg').toLowerCase();
     const path = `${user.value.id}/avatar-${Date.now()}.${extension}`;
     const { error: uploadError } = await supabase.storage.from('avatars').upload(path, file, { contentType: file.type || 'image/jpeg', upsert: true });
