@@ -1,8 +1,9 @@
 <script setup>
-import { Archive, ChevronLeft, ChevronRight, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, Music, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
+import { Archive, ChevronLeft, ChevronRight, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, Music, QrCode, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import ImageViewer from '@/components/ImageViewer.vue';
+import MaterialShareModal from '@/components/MaterialShareModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { compressForUpload } from '@/lib/compress';
@@ -30,6 +31,8 @@ const busyFileId = ref(null);
 const folderForm = ref(null);
 const isSavingFolder = ref(false);
 const fileInput = ref(null);
+// Folder or file being shared: { type, id, name }.
+const shareTarget = ref(null);
 // Folders whose subfolders are hidden in the tree.
 const collapsed = ref(new Set());
 const selectedFileIds = ref(new Set());
@@ -760,6 +763,7 @@ onBeforeUnmount(() => {
             <div v-if="isAdmin" class="row row-wrap">
               <button class="link-btn" @click="folderForm = { id: selectedFolder.id, name: selectedFolder.name, description: selectedFolder.description || '', parent_id: selectedFolder.parent_id || null }"><Pencil :size="13" />Edit</button>
               <button class="link-btn danger" @click="deleteFolder(selectedFolder)"><Trash2 :size="13" />Delete</button>
+              <button class="btn btn-sm" @click="shareTarget = { type: 'folder', id: selectedFolder.id, name: selectedFolder.name }"><QrCode :size="14" />Share</button>
               <button class="btn btn-sm" @click="newFolder(selectedFolder.id)"><FolderPlus :size="14" />New Subfolder</button>
               <input ref="fileInput" type="file" multiple hidden @change="uploadChosenFiles" />
               <button class="btn btn-primary btn-sm" @click="fileInput.click()"><UploadCloud :size="14" />Upload Files</button>
@@ -800,12 +804,15 @@ onBeforeUnmount(() => {
             <div v-else class="row file-actions">
               <button class="link-btn" @click="openFile(file, false)"><Eye :size="13" />Open</button>
               <button class="link-btn" @click="openFile(file, true)"><Download :size="13" />Download</button>
+              <button v-if="isAdmin" class="link-btn" @click="shareTarget = { type: 'file', id: file.id, name: file.file_name }"><QrCode :size="13" />Share</button>
               <button v-if="isAdmin" class="link-btn danger" @click="deleteFile(file)"><Trash2 :size="13" />Delete</button>
             </div>
           </div>
         </template>
       </section>
     </div>
+
+    <MaterialShareModal v-if="shareTarget" :target="shareTarget" @close="shareTarget = null" />
 
     <ImageViewer
       v-if="viewer && viewerImages.length"

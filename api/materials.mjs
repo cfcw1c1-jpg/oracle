@@ -1,6 +1,6 @@
-import { AwsClient } from 'aws4fetch';
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient, HttpError, route } from './_lib/access.mjs';
+import { objectUrl, presign, presignDownload, r2 } from './_lib/r2.mjs';
 
 // POST /api/materials: Materials files kept in Cloudflare R2 (bucket
 // R2_BUCKET). The bucket is private; this hands out short-lived signed links
@@ -25,28 +25,6 @@ const UPLOAD_TTL_SECONDS = 60 * 60;
 const DOWNLOAD_TTL_SECONDS = 60 * 60;
 // R2's limit for a single PUT.
 const MAX_UPLOAD_BYTES = 5 * 1024 ** 3;
-
-function r2() {
-  const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
-  const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
-  const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
-  const R2_BUCKET = process.env.R2_BUCKET;
-  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) return null;
-  return {
-    client: new AwsClient({ accessKeyId: R2_ACCESS_KEY_ID.trim(), secretAccessKey: R2_SECRET_ACCESS_KEY.trim(), service: 's3', region: 'auto' }),
-    base: `https://${R2_ACCOUNT_ID.trim()}.r2.cloudflarestorage.com/${encodeURIComponent(R2_BUCKET.trim())}`,
-  };
-}
-
-const objectUrl = (base, key) => `${base}/${key.split('/').map(encodeURIComponent).join('/')}`;
-
-async function presign(storage, key, method, ttlSeconds, params = {}) {
-  const url = new URL(objectUrl(storage.base, key));
-  url.searchParams.set('X-Amz-Expires', String(ttlSeconds));
-  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
-  const signed = await storage.client.sign(new Request(url, { method }), { aws: { signQuery: true } });
-  return signed.url;
-}
 
 // A Supabase client acting as the caller, so is_admin(), has_page_access()
 // and the materials RLS policies apply to them.
@@ -82,12 +60,6 @@ function safeName(name) {
   return String(name || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120) || 'file';
 }
 
-// "Session 1 Handout.pdf" for Content-Disposition, with a UTF-8 fallback.
-function disposition(fileName, download) {
-  const ascii = String(fileName).replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-  return `${download ? 'attachment' : 'inline'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
-}
-
 async function uploadUrl(db, storage, body) {
   await requireAdmin(db);
   const folderId = String(body.folderId || '');
@@ -111,9 +83,7 @@ async function downloadUrl(db, storage, body) {
     .maybeSingle();
   if (error) throw error;
   if (!material || material.storage_provider !== 'r2') throw new HttpError(404, 'That file no longer exists.');
-  const params = { 'response-content-disposition': disposition(material.file_name, Boolean(body.download)) };
-  if (material.mime_type) params['response-content-type'] = material.mime_type;
-  return { url: await presign(storage, material.storage_path, 'GET', DOWNLOAD_TTL_SECONDS, params) };
+  return { url: await presignDownload(storage, material, Boolean(body.download), DOWNLOAD_TTL_SECONDS) };
 }
 
 async function deleteFiles(db, storage, body) {

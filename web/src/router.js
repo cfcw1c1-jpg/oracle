@@ -8,6 +8,7 @@ export const router = createRouter({
     { path: '/privacy-policy', component: () => import('./views/public/PrivacyPolicy.vue'), meta: { public: true } },
     { path: '/training-lookup', component: () => import('./views/public/TrainingLookup.vue'), meta: { public: true } },
     { path: '/activity-attendance', component: () => import('./views/public/ActivityAttendance.vue'), meta: { public: true } },
+    { path: '/shared-materials', component: () => import('./views/public/SharedMaterials.vue'), meta: { public: true } },
     { path: '/clp-registration', component: () => import('./views/public/ClpRegistration.vue'), meta: { public: true } },
     { path: '/:tab?', component: () => import('./layouts/AppShell.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
