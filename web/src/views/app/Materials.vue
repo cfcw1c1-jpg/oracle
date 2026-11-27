@@ -2,6 +2,7 @@
 import { Archive, ChevronLeft, ChevronRight, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, Music, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
+import ImageViewer from '@/components/ImageViewer.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { compressForUpload } from '@/lib/compress';
@@ -236,25 +237,34 @@ async function loadThumbnails(list, token) {
   }
 }
 
-async function viewImage(file) {
-  const images = files.value.filter(isImage);
-  viewer.value = { file, index: images.findIndex((item) => item.id === file.id), url: thumbnails.value[file.id] || null };
-  if (!viewer.value.url) {
-    try {
-      const url = await signedLink(file, false);
-      if (viewer.value?.file.id === file.id) viewer.value = { ...viewer.value, url };
-    } catch (error) {
-      viewer.value = null;
-      showAlert('Error Opening Image', error.message);
-    }
+// The open folder's images for the viewer; urls fill in as links arrive.
+const viewerImages = computed(() => files.value.filter(isImage).map((file) => ({
+  id: file.id,
+  name: file.file_name,
+  url: thumbnails.value[file.id] || null,
+  meta: [formatBytes(file.size_bytes), fileMeta(file)].filter(Boolean).join(' · '),
+})));
+
+function viewImage(file) {
+  const index = viewerImages.value.findIndex((image) => image.id === file.id);
+  if (index !== -1) viewer.value = { index };
+}
+
+async function fetchViewerUrl(fileId) {
+  const file = files.value.find((item) => item.id === fileId);
+  if (!file || thumbnails.value[fileId]) return;
+  try {
+    const url = await signedLink(file, false);
+    thumbnails.value = { ...thumbnails.value, [fileId]: url };
+  } catch (error) {
+    viewer.value = null;
+    showAlert('Error Opening Image', error.message);
   }
 }
 
-function stepViewer(offset) {
-  const images = files.value.filter(isImage);
-  if (!viewer.value || images.length < 2) return;
-  const next = images[(viewer.value.index + offset + images.length) % images.length];
-  viewImage(next);
+function downloadFromViewer(image) {
+  const file = files.value.find((item) => item.id === image?.id);
+  if (file) openFile(file, true);
 }
 
 async function loadFiles(folderId) {
@@ -797,20 +807,14 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <AppModal v-if="viewer" :title="viewer.file.file_name" :width="1000" @close="viewer = null">
-      <div class="viewer" tabindex="0" @keydown.left="stepViewer(-1)" @keydown.right="stepViewer(1)">
-        <img v-if="viewer.url" :src="viewer.url" :alt="viewer.file.file_name" />
-        <span v-else class="spinner" />
-      </div>
-      <template #footer>
-        <template v-if="files.filter(isImage).length > 1">
-          <button class="btn" aria-label="Previous image" @click="stepViewer(-1)"><ChevronLeft :size="16" /></button>
-          <button class="btn" aria-label="Next image" @click="stepViewer(1)"><ChevronRight :size="16" /></button>
-        </template>
-        <span class="grow muted small">{{ fileMeta(viewer.file) }} · {{ formatBytes(viewer.file.size_bytes) }}</span>
-        <button class="btn btn-primary" @click="openFile(viewer.file, true)"><Download :size="14" />Download</button>
-      </template>
-    </AppModal>
+    <ImageViewer
+      v-if="viewer && viewerImages.length"
+      v-model:index="viewer.index"
+      :images="viewerImages"
+      @need-url="fetchViewerUrl"
+      @download="downloadFromViewer"
+      @close="viewer = null"
+    />
 
     <AppModal v-if="folderForm" :title="folderForm.id ? 'Edit Folder' : folderForm.parent_id ? 'New Subfolder' : 'New Folder'" :locked="isSavingFolder" @close="folderForm = null">
       <div class="stack">
@@ -871,8 +875,6 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
 .thumb { flex: none; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-hover); display: inline-flex; align-items: center; justify-content: center; color: var(--muted); cursor: zoom-in; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.viewer { display: flex; align-items: center; justify-content: center; min-height: 240px; outline: none; }
-.viewer img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 8px; }
 .move-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px solid var(--line); background: var(--surface-hover); font-size: 13px; }
 .drag-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px dashed var(--accent, #4f46e5); background: var(--accent-soft); font-size: 13px; font-weight: 600; }
 .dragging-files .tree-row { outline: 1px dashed var(--line); outline-offset: -3px; }
