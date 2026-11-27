@@ -161,11 +161,46 @@ function storageSafeName(name) {
   return (name || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
 }
 
+// Files uploaded before R2 still sit in Supabase Storage until moved.
+const supabaseFileCount = ref(0);
+const moveState = ref(null);
+
+async function countSupabaseFiles() {
+  const { count, error } = await supabase.from('materials').select('id', { count: 'exact', head: true }).eq('storage_provider', 'supabase');
+  if (!error) supabaseFileCount.value = count ?? 0;
+}
+
+async function moveAllToR2() {
+  const total = supabaseFileCount.value;
+  if (!total || moveState.value) return;
+  if (!confirmAction('Move to Cloudflare R2', `Move ${total} file${total === 1 ? '' : 's'} from Supabase Storage to Cloudflare R2? They stay listed and keep working while they move.`)) return;
+  moveState.value = { moved: 0, total };
+  const failures = [];
+  try {
+    // Each call moves a few files; stop when none remain or a round moves nothing.
+    for (;;) {
+      const result = await materialsApi({ action: 'move-to-r2' });
+      moveState.value = { moved: moveState.value.moved + result.moved.length, total };
+      failures.push(...result.failed);
+      supabaseFileCount.value = result.remaining;
+      if (!result.remaining || !result.moved.length) break;
+    }
+  } catch (error) {
+    failures.push(error.message);
+  }
+  const moved = moveState.value.moved;
+  moveState.value = null;
+  if (selectedId.value) loadFiles(selectedId.value);
+  if (moved) showNotice(`Moved ${moved} file${moved === 1 ? '' : 's'} to Cloudflare R2.`);
+  if (failures.length) showAlert('Some Files Were Not Moved', failures.join('\n'));
+}
+
 async function loadFolders() {
   try {
     const { data, error } = await supabase.from('material_folders').select('id, name, description, parent_id, created_at, materials ( count )').order('name', { ascending: true });
     if (error) throw error;
     folders.value = (data || []).map((folder) => ({ ...folder, fileCount: folder.materials?.[0]?.count || 0 }));
+    if (props.isAdmin) countSupabaseFiles();
     const stillExists = folders.value.some((folder) => folder.id === selectedId.value);
     if (!stillExists) selectedId.value = window.matchMedia('(min-width: 820px)').matches ? folders.value[0]?.id || null : null;
   } catch (error) {
@@ -589,6 +624,11 @@ onBeforeUnmount(() => {
           </div>
           <button v-if="isAdmin" class="btn btn-primary btn-sm" @click="newFolder()"><Plus :size="14" />New Folder</button>
         </header>
+        <div v-if="isAdmin && (supabaseFileCount || moveState)" class="move-banner">
+          <span class="grow">{{ moveState ? `Moving to Cloudflare R2… ${moveState.moved} of ${moveState.total}` : `${supabaseFileCount} file${supabaseFileCount === 1 ? '' : 's'} still in Supabase Storage` }}</span>
+          <button v-if="!moveState" class="btn btn-sm" @click="moveAllToR2"><UploadCloud :size="14" />Move to Cloudflare R2</button>
+          <span v-else class="spinner sm" />
+        </div>
         <div v-if="isDraggingFiles" class="drag-banner"><UploadCloud :size="15" />Drop on any folder below to upload there</div>
         <div v-else class="folder-search"><SearchInput v-model="folderSearch" placeholder="Search folders" /></div>
         <LoadingBlock v-if="isLoadingFolders && !folders.length" />
@@ -693,7 +733,7 @@ onBeforeUnmount(() => {
             <span class="icon-chip"><component :is="fileKind(file).icon" :size="16" /></span>
             <div class="grow">
               <p class="strong two-line">{{ file.file_name }}</p>
-              <p class="muted small clamp">{{ fileMeta(file) }}</p>
+              <p class="muted small clamp">{{ fileMeta(file) }}<template v-if="isAdmin && file.storage_provider !== 'r2'"> · in Supabase Storage</template></p>
             </div>
             <span v-if="file.size_bytes != null" class="size-chip" :title="`${file.size_bytes.toLocaleString()} bytes`">{{ formatBytes(file.size_bytes) }}</span>
             <span v-if="busyFileId === file.id" class="spinner sm" />
@@ -764,6 +804,7 @@ onBeforeUnmount(() => {
 .upload-notice.danger { background: color-mix(in srgb, #dc2626 12%, transparent); }
 .folder.drop-target { background: var(--accent-soft); outline: 2px dashed var(--accent, #4f46e5); outline-offset: -3px; }
 @media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
+.move-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px solid var(--line); background: var(--surface-hover); font-size: 13px; }
 .drag-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px dashed var(--accent, #4f46e5); background: var(--accent-soft); font-size: 13px; font-weight: 600; }
 .dragging-files .tree-row { outline: 1px dashed var(--line); outline-offset: -3px; }
 .dragging-files .tree-row.drop-target { outline: 2px dashed var(--accent, #4f46e5); }

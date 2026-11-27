@@ -1,6 +1,6 @@
 import { AwsClient } from 'aws4fetch';
 import { createClient } from '@supabase/supabase-js';
-import { HttpError, route } from './_lib/access.mjs';
+import { createAdminClient, HttpError, route } from './_lib/access.mjs';
 
 // POST /api/materials: Materials files kept in Cloudflare R2 (bucket
 // R2_BUCKET). The bucket is private; this hands out short-lived signed links
@@ -13,6 +13,8 @@ import { HttpError, route } from './_lib/access.mjs';
 //       and their materials rows -> { deleted }
 //   { action: 'discard', key }  Admin; removes an uploaded object whose
 //       materials row could not be saved -> { ok }
+//   { action: 'move-to-r2' }  Admin; moves the next few files still in
+//       Supabase Storage into R2 -> { moved, failed, remaining }
 // Answers 503 { code: 'r2_not_configured' } when the R2 variables are not
 // set, so the page can keep using Supabase Storage.
 
@@ -146,7 +148,63 @@ async function discard(db, storage, body) {
   return { ok: true };
 }
 
-const ACTIONS = { 'upload-url': uploadUrl, 'download-url': downloadUrl, delete: deleteFiles, discard };
+// Files moved per request, so each call ends well inside the function's
+// time limit; the page calls again until none remain.
+const MOVE_BATCH = 3;
+const SUPABASE_BUCKET = 'materials';
+
+// Copy to R2, point the row at the copy, then delete the Supabase copy. If a
+// step fails the row still points at a file that exists.
+async function moveToR2(db, storage) {
+  await requireAdmin(db);
+  const service = createAdminClient();
+  const { data: rows, error } = await db
+    .from('materials')
+    .select('id, folder_id, file_name, storage_path, mime_type')
+    .eq('storage_provider', 'supabase')
+    .order('created_at')
+    .limit(MOVE_BATCH);
+  if (error) throw error;
+  const moved = [];
+  const failed = [];
+  for (const row of rows) {
+    try {
+      const { data: blob, error: downloadError } = await service.storage.from(SUPABASE_BUCKET).download(row.storage_path);
+      if (downloadError) throw new Error(`could not read it from Supabase (${downloadError.message})`);
+      const key = `materials/${row.folder_id}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${safeName(row.file_name)}`;
+      const body = new Uint8Array(await blob.arrayBuffer());
+      const put = await storage.client.fetch(objectUrl(storage.base, key), {
+        method: 'PUT',
+        headers: { 'Content-Type': row.mime_type || 'application/octet-stream' },
+        body,
+      });
+      if (!put.ok) throw new Error(`R2 refused the copy (${put.status})`);
+      const { error: updateError } = await db
+        .from('materials')
+        .update({ storage_provider: 'r2', storage_path: key, size_bytes: body.byteLength })
+        .eq('id', row.id)
+        .eq('storage_provider', 'supabase');
+      if (updateError) {
+        await storage.client.fetch(objectUrl(storage.base, key), { method: 'DELETE' }).catch(() => null);
+        throw new Error(`could not update its entry (${updateError.message})`);
+      }
+      // The row now points at R2; a leftover Supabase copy would only waste space.
+      const { error: removeError } = await service.storage.from(SUPABASE_BUCKET).remove([row.storage_path]);
+      if (removeError) console.error('[materials] old copy not removed:', row.storage_path, removeError.message);
+      moved.push(row.file_name);
+    } catch (moveError) {
+      failed.push(`${row.file_name}: ${moveError.message}`);
+    }
+  }
+  const { count, error: countError } = await db
+    .from('materials')
+    .select('id', { count: 'exact', head: true })
+    .eq('storage_provider', 'supabase');
+  if (countError) throw countError;
+  return { moved, failed, remaining: count ?? 0 };
+}
+
+const ACTIONS = { 'upload-url': uploadUrl, 'download-url': downloadUrl, delete: deleteFiles, discard, 'move-to-r2': moveToR2 };
 
 const handle = route(async (request, body) => {
   const action = ACTIONS[body.action];
