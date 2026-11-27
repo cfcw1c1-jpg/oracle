@@ -1,6 +1,7 @@
-// Draws birthday greeting images (1600 × 1000, wide landscape) with
-// only each celebrant's date, name and role. Long lists are split across
-// several images. Everything is drawn on a canvas in the browser.
+// Draws greeting images (1600 × 1000, wide landscape) for birthdays and
+// wedding anniversaries, with only each celebrant's date, name and one line
+// under it (role, or years married). Long lists are split across several
+// images. Everything is drawn on a canvas in the browser.
 
 const WIDTH = 1600;
 const HEIGHT = 1000;
@@ -124,18 +125,31 @@ function drawBackground(ctx, seed) {
   drawBalloon(ctx, WIDTH - 235, 118, 28, '#ff8fab', -0.1);
 }
 
-function drawHeader(ctx, subtitle) {
+const GREETINGS = {
+  birthday: {
+    kicker: 'CELEBRATING YOU',
+    title: 'Happy Birthday!',
+    footer: 'May God bless you with joy, good health and a wonderful year ahead!',
+  },
+  anniversary: {
+    kicker: 'CELEBRATING LOVE',
+    title: 'Happy Anniversary!',
+    footer: 'May God keep blessing your marriage with love, joy and faithfulness!',
+  },
+};
+
+function drawHeader(ctx, subtitle, greeting) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = COLORS.gold;
   ctx.font = `600 26px ${FONT}`;
   setSpacing(ctx, '8px');
-  ctx.fillText('CELEBRATING YOU', WIDTH / 2, 112);
+  ctx.fillText(greeting.kicker, WIDTH / 2, 112);
   setSpacing(ctx, '0px');
 
   ctx.fillStyle = '#ffffff';
   ctx.font = `800 88px ${FONT}`;
-  ctx.fillText('Happy Birthday!', WIDTH / 2, 210);
+  ctx.fillText(greeting.title, WIDTH / 2, 210);
 
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.font = `500 30px ${FONT}`;
@@ -202,11 +216,11 @@ function drawRows(ctx, celebrants, area) {
   });
 }
 
-function drawFooter(ctx, pageIndex, pageCount) {
+function drawFooter(ctx, pageIndex, pageCount, greeting) {
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.font = `500 26px ${FONT}`;
-  ctx.fillText(fitText(ctx, 'May God bless you with joy, good health and a wonderful year ahead!', WIDTH - 100), WIDTH / 2, HEIGHT - 62);
+  ctx.fillText(fitText(ctx, greeting.footer, WIDTH - 100), WIDTH / 2, HEIGHT - 62);
   if (pageCount > 1) {
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = `500 20px ${FONT}`;
@@ -215,8 +229,9 @@ function drawFooter(ctx, pageIndex, pageCount) {
 }
 
 // celebrants: [{ month (1-12), day, name, role }] already in the order to show.
-// Returns one PNG data URL and Blob per image.
-export async function renderBirthdayImages(celebrants, subtitle) {
+// kind: 'birthday' or 'anniversary'. Returns one PNG data URL and Blob per image.
+export async function renderGreetingImages(celebrants, subtitle, kind = 'birthday') {
+  const greeting = GREETINGS[kind] ?? GREETINGS.birthday;
   if (document.fonts?.load) {
     await Promise.all(['500', '600', '700', '800'].map((weight) => document.fonts.load(`${weight} 32px "DM Sans Variable"`)));
   }
@@ -229,7 +244,7 @@ export async function renderBirthdayImages(celebrants, subtitle) {
     canvas.height = HEIGHT;
     const ctx = canvas.getContext('2d');
     drawBackground(ctx, 7 + pageIndex * 101);
-    drawHeader(ctx, subtitle);
+    drawHeader(ctx, subtitle, greeting);
 
     // The panel fits its rows and sits a little below the title.
     // A single column is kept narrower so the names don't sit far from the dates.
@@ -248,9 +263,12 @@ export async function renderBirthdayImages(celebrants, subtitle) {
     ctx.restore();
 
     drawRows(ctx, page, { x: panel.x + 44, y: panel.y + 30, width: panel.width - 88, height: panel.height - 60 });
-    drawFooter(ctx, pageIndex, pages.length);
+    drawFooter(ctx, pageIndex, pages.length, greeting);
 
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     return { url: canvas.toDataURL('image/png'), blob };
   }));
 }
+
+export const renderBirthdayImages = (celebrants, subtitle) => renderGreetingImages(celebrants, subtitle, 'birthday');
+export const renderAnniversaryImages = (couples, subtitle) => renderGreetingImages(couples, subtitle, 'anniversary');

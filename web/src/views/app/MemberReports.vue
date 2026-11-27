@@ -1,7 +1,8 @@
 <script setup>
-import { ArrowLeft, ArrowRight, Cake } from 'lucide-vue-next';
+import { ArrowLeft, ArrowRight, Cake, Heart } from 'lucide-vue-next';
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import MemberAnniversaries from '@/components/MemberAnniversaries.vue';
 import MemberBirthdays from '@/components/MemberBirthdays.vue';
 import PageHead from '@/components/PageHead.vue';
 
@@ -15,6 +16,13 @@ const REPORTS = [
     description: 'Members celebrating their birthday in a chosen month, with the age they turn. Filter by area and status, then export to CSV.',
     icon: Cake,
     component: MemberBirthdays,
+  },
+  {
+    key: 'anniversaries',
+    title: 'Wedding Anniversaries',
+    description: 'Couples celebrating their church wedding anniversary in a chosen month, with the years married. Filter by area and status, then export to CSV or make a greeting image.',
+    icon: Heart,
+    component: MemberAnniversaries,
   },
 ];
 
