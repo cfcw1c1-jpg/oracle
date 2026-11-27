@@ -173,25 +173,94 @@ function drawDateBadge(ctx, x, y, size, celebrant) {
   ctx.fillText(String(celebrant.day).padStart(2, '0'), x + size / 2, y + size * 0.82);
 }
 
-function rowLayout(count) {
+// Column count, sizes and widths for a page of `count` rows. `wrapped` makes
+// the rows taller so a name set on two lines still fits beside its badge.
+function rowLayout(count, wrapped = false) {
   let columns = 1;
   if (count > ROWS_SHORT * 2) columns = 3;
   else if (count > ROWS_SHORT) columns = 2;
   const perColumn = columns === 3 ? ROWS_TALL : ROWS_SHORT;
-  return { columns, perColumn, rowHeight: columns === 3 ? 64 : 76, usedRows: Math.min(count, perColumn) };
+  const badge = columns === 3 ? 54 : 64;
+  // A single column is kept narrower so the names don't sit far from the dates.
+  const panelWidth = columns === 1 ? 900 : WIDTH - 120;
+  const gap = 40;
+  const columnWidth = (panelWidth - 88 - gap * (columns - 1)) / columns;
+  let rowHeight = columns === 3 ? 64 : 76;
+  if (wrapped) rowHeight = columns === 3 ? 74 : 84;
+  return {
+    columns, perColumn, badge, gap, panelWidth, columnWidth, rowHeight,
+    textWidth: columnWidth - badge - 24,
+    nameSize: columns === 3 ? 25 : 30,
+    roleSize: columns === 3 ? 18 : 21,
+    usedRows: Math.min(count, perColumn),
+  };
 }
 
-function drawRows(ctx, celebrants, area) {
-  const { columns, perColumn, rowHeight } = rowLayout(celebrants.length);
-  const badge = columns === 3 ? 54 : 64;
-  const nameSize = columns === 3 ? 25 : 30;
-  const roleSize = columns === 3 ? 18 : 21;
-  const gap = 40;
-  const columnWidth = (area.width - gap * (columns - 1)) / columns;
-  const usedRows = Math.min(celebrants.length, perColumn);
+const fits = (ctx, text, width, font) => {
+  ctx.font = font;
+  return ctx.measureText(text).width <= width;
+};
+
+// Sets a name in full: on one line, a little smaller if needed, or else on
+// two lines (split after "&" when it can, otherwise at the most even word
+// break). Only a name too long even for two small lines is shortened.
+function setName(ctx, name, width, size) {
+  const font = (px) => `700 ${px}px ${FONT}`;
+  for (let px = size; px >= Math.round(size * 0.85); px -= 1) {
+    if (fits(ctx, name, width, font(px))) return { lines: [name], size: px };
+  }
+  const words = name.split(/\s+/);
+  const splits = [];
+  for (let index = 1; index < words.length; index += 1) {
+    splits.push({ lines: [words.slice(0, index).join(' '), words.slice(index).join(' ')], atAnd: words[index - 1] === '&' });
+  }
+  const largest = (lines) => {
+    for (let px = Math.round(size * 0.85); px >= Math.round(size * 0.6); px -= 1) {
+      if (lines.every((line) => fits(ctx, line, width, font(px)))) return px;
+    }
+    return 0;
+  };
+  let best = null;
+  for (const split of splits) {
+    const px = largest(split.lines);
+    // A split after "&" wins unless another is clearly larger.
+    const score = px + (split.atAnd ? 2 : 0);
+    if (px && (!best || score > best.score)) best = { lines: split.lines, size: px, score };
+  }
+  if (best) return { lines: best.lines, size: best.size };
+  const px = Math.round(size * 0.6);
+  ctx.font = font(px);
+  const fallback = splits.length ? splits[Math.floor(splits.length / 2)].lines : [name];
+  return { lines: fallback.map((line) => fitText(ctx, line, width)), size: px };
+}
+
+function setRole(ctx, role, width, size) {
+  const font = (px) => `500 ${px}px ${FONT}`;
+  for (let px = size; px >= Math.round(size * 0.85); px -= 1) {
+    if (fits(ctx, role, width, font(px))) return { text: role, size: px };
+  }
+  const px = Math.round(size * 0.85);
+  ctx.font = font(px);
+  return { text: fitText(ctx, role, width), size: px };
+}
+
+// Sets every row's name and role, then picks the page layout.
+function prepareRows(ctx, celebrants) {
+  const base = rowLayout(celebrants.length);
+  const rows = celebrants.map((celebrant) => ({
+    celebrant,
+    name: setName(ctx, celebrant.name ?? '', base.textWidth, base.nameSize),
+    role: setRole(ctx, celebrant.role ?? '', base.textWidth, base.roleSize),
+  }));
+  const wrapped = rows.some((row) => row.name.lines.length > 1);
+  return { rows, layout: wrapped ? rowLayout(celebrants.length, true) : base };
+}
+
+function drawRows(ctx, rows, layout, area) {
+  const { perColumn, rowHeight, badge, gap, columnWidth, textWidth, usedRows } = layout;
   const top = area.y + (area.height - usedRows * rowHeight) / 2;
 
-  celebrants.forEach((celebrant, index) => {
+  rows.forEach(({ celebrant, name, role }, index) => {
     const column = Math.floor(index / perColumn);
     const row = index % perColumn;
     const x = area.x + column * (columnWidth + gap);
@@ -200,14 +269,24 @@ function drawRows(ctx, celebrants, area) {
     drawDateBadge(ctx, x, badgeY, badge, celebrant);
 
     const textX = x + badge + 20;
-    const textWidth = columnWidth - badge - 24;
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.ink;
-    ctx.font = `700 ${nameSize}px ${FONT}`;
-    ctx.fillText(fitText(ctx, celebrant.name, textWidth), textX, badgeY + badge * 0.48);
-    ctx.fillStyle = COLORS.muted;
-    ctx.font = `500 ${roleSize}px ${FONT}`;
-    ctx.fillText(fitText(ctx, celebrant.role, textWidth), textX, badgeY + badge * 0.9);
+    ctx.font = `700 ${name.size}px ${FONT}`;
+    if (name.lines.length === 1) {
+      ctx.fillText(name.lines[0], textX, badgeY + badge * 0.48);
+      ctx.fillStyle = COLORS.muted;
+      ctx.font = `500 ${role.size}px ${FONT}`;
+      ctx.fillText(role.text, textX, badgeY + badge * 0.9);
+    } else {
+      // Two name lines and the role, centred on the row.
+      const lineStep = name.size * 1.1;
+      const block = name.size + lineStep + role.size * 1.3;
+      const first = y + (rowHeight - block) / 2 + name.size * 0.9;
+      name.lines.forEach((line, lineIndex) => ctx.fillText(line, textX, first + lineIndex * lineStep));
+      ctx.fillStyle = COLORS.muted;
+      ctx.font = `500 ${role.size}px ${FONT}`;
+      ctx.fillText(role.text, textX, first + lineStep + role.size * 1.3);
+    }
 
     if (row < usedRows - 1) {
       ctx.fillStyle = COLORS.rule;
@@ -247,10 +326,9 @@ export async function renderGreetingImages(celebrants, subtitle, kind = 'birthda
     drawHeader(ctx, subtitle, greeting);
 
     // The panel fits its rows and sits a little below the title.
-    // A single column is kept narrower so the names don't sit far from the dates.
-    const { columns, rowHeight, usedRows } = rowLayout(page.length);
+    const { rows, layout } = prepareRows(ctx, page);
+    const { rowHeight, usedRows, panelWidth } = layout;
     const panelHeight = Math.max(usedRows * rowHeight + 60, 240);
-    const panelWidth = columns === 1 ? 900 : WIDTH - 120;
     const space = { top: 310, bottom: HEIGHT - 110 };
     const panel = { x: (WIDTH - panelWidth) / 2, y: space.top + Math.max(0, (space.bottom - space.top - panelHeight) * 0.3), width: panelWidth, height: panelHeight };
     ctx.save();
@@ -262,7 +340,7 @@ export async function renderGreetingImages(celebrants, subtitle, kind = 'birthda
     ctx.fill();
     ctx.restore();
 
-    drawRows(ctx, page, { x: panel.x + 44, y: panel.y + 30, width: panel.width - 88, height: panel.height - 60 });
+    drawRows(ctx, rows, layout, { x: panel.x + 44, y: panel.y + 30, width: panel.width - 88, height: panel.height - 60 });
     drawFooter(ctx, pageIndex, pages.length, greeting);
 
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
