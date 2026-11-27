@@ -389,7 +389,7 @@ function progressLabel(row) {
 const FIELD_LABELS = {
   Lastname: 'Last name', Firstname: 'First name', Status: 'Status', SpouseName: 'Spouse',
   Phone: 'Phone', MobileNo: 'Mobile #', Email: 'Email', PastoralService: 'Pastoral service', AreaName: 'Area',
-  NameOfHouseholdHead: 'Household head', YearRegistered: 'Year registered', Birthday: 'Birthday',
+  NameOfHouseholdHead: 'Household head', YearRegistered: 'Year registered', Birthday: 'Birthday', WeddingDate: 'Church wedding date',
 };
 // Talks ticked in PFO Trainings or Assign to Talks are queued by their
 // training column; they show as "CLPT 2 talk" and Ticked / Not ticked.

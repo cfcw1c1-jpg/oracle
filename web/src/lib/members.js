@@ -29,6 +29,7 @@ export function formFromMember(member = {}) {
     Phone: member.Phone || '',
     Email: member.Email || '',
     Birthday: member.Birthday || '',
+    WeddingDate: member.WeddingDate || '',
   };
 }
 
@@ -56,6 +57,7 @@ export function payloadFromForm(form) {
       Phone: form.Phone.trim() || null,
       Email: form.Email.trim() || null,
       Birthday: form.Birthday || null,
+      WeddingDate: form.WeddingDate || null,
     },
   };
 }

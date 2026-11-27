@@ -29,6 +29,7 @@ defineProps({
     <label class="field"><span class="field-label">Year Registered</span><input v-model="form.YearRegistered" class="input" inputmode="numeric" maxlength="4" placeholder="e.g. 2024" /></label>
     <label class="field"><span class="field-label">Birthday</span><input v-model="form.Birthday" class="input" type="date" max="9999-12-31" /></label>
     <label class="field"><span class="field-label">Spouse</span><input v-model="form.SpouseName" class="input" placeholder="Dela Cruz, Maria" /></label>
+    <label class="field"><span class="field-label">Church Wedding Date</span><input v-model="form.WeddingDate" class="input" type="date" max="9999-12-31" /></label>
     <label class="field"><span class="field-label">Email</span><input v-model="form.Email" class="input" type="email" placeholder="name@example.com" autocapitalize="none" /></label>
     <label class="field"><span class="field-label">Mobile #</span><input v-model="form.MobileNo" class="input" inputmode="tel" placeholder="09XXXXXXXXX" /></label>
     <label class="field"><span class="field-label">Phone</span><input v-model="form.Phone" class="input" inputmode="tel" placeholder="Landline" /></label>

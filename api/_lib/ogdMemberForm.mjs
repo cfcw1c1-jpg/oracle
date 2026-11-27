@@ -1,7 +1,8 @@
 import { closePopup, findInPopup, openMemberPopup, readHouseholdHead, waitForPopupContent } from './ogdMembers.mjs';
 
 // Writes Oracle changes into a member's details on OGD: member popup >
-// Personal tab (or whichever tab the popup opens on). Fields are found by
+// Personal tab (or whichever tab the popup opens on), and the Family tab for
+// the church wedding date. Fields are found by
 // their label, only the queued fields are touched, and every save is checked
 // by opening the member again and reading the values back.
 
@@ -12,7 +13,8 @@ const SAVE_WAIT_MS = 20000;
 const POLL_MS = 500;
 
 // Oracle column -> how its field is labelled on OGD. `not` keeps look-alikes
-// apart (a "Mobile Phone" field is not the Phone field).
+// apart (a "Mobile Phone" field is not the Phone field). `tab` names the popup
+// tab a field sits on when it is not the details (Personal) tab.
 export const PUSH_FIELDS = {
   Lastname: { label: 'Last name', match: /^(last\s*name|surname|family\s*name)\b/i },
   Firstname: { label: 'First name', match: /^(first\s*name|given\s*name)\b/i },
@@ -26,12 +28,8 @@ export const PUSH_FIELDS = {
   NameOfHouseholdHead: { label: 'Household head', match: /(household|hh)\s*head/i },
   YearRegistered: { label: 'Year registered', match: /year\s*(registered|joined)|date\s*(registered|joined)/i },
   Birthday: { label: 'Birthday', match: /^(birth\s*day|birth\s*date|date\s*of\s*birth)/i, date: true },
-};
-
-// Fields the Members sync only reads from OGD (Oracle never pushes them).
-const READ_FIELDS = {
-  // Family tab: "Church Wedding Date".
-  WeddingDate: { label: 'Church wedding date', match: /wedding\s*date|date\s*of\s*(church\s*)?(wedding|marriage)|marriage\s*date/i },
+  // Family tab: "Church Wedding Date", saved with the Save button beside it.
+  WeddingDate: { label: 'Church wedding date', match: /wedding\s*date|date\s*of\s*(church\s*)?(wedding|marriage)|marriage\s*date/i, date: true, tab: 'family' },
 };
 
 // OGD shows dates as m/d/yyyy; Oracle stores yyyy-mm-dd.
@@ -65,7 +63,7 @@ export function sameValue(siteValue, wanted) {
 
 // Picks the OGD form field for an Oracle column. Prefers editable fields.
 export function matchField(fields, column) {
-  const spec = PUSH_FIELDS[column] ?? READ_FIELDS[column];
+  const spec = PUSH_FIELDS[column];
   if (!spec) return null;
   const fits = (text) => Boolean(text) && spec.match.test(text) && !(spec.not && spec.not.test(text));
   const candidates = fields.filter((field) => fits(field.label) || fits(field.nameLabel));
@@ -153,12 +151,15 @@ function readForm(frame, memberId) {
 
 // The member's details form: a frame the popup added that shows the member
 // and has fields. The list's own frame (search box, member IDs) never counts.
-async function findForm(page, memberId, framesBefore, timeoutMs) {
+// With wanted (Oracle columns), only a form holding one of their fields
+// counts, so a tab still loading is not mistaken for the one asked for.
+async function findForm(page, memberId, framesBefore, timeoutMs, wanted = null) {
   return waitForPopupContent(
     page,
     async (frame) => {
       if (framesBefore.has(frame)) return null;
       const form = await readForm(frame, memberId);
+      if (wanted) return form && wanted.some((column) => matchField(form.fields, column)) ? form : null;
       return form?.fields.length ? form : form?.hasEdit ? form : null;
     },
     timeoutMs,
@@ -193,22 +194,39 @@ async function fillField(frame, field, wanted) {
 
 // Pushes one member's queued changes. changes: [{ id, field, new_value }].
 // Returns [{ id, status: 'pushed' | 'failed', detail }] for every change.
+// Details (Personal tab) fields are saved first, then Family tab fields.
 export async function pushMemberChanges(page, member, changes) {
+  const family = changes.filter((change) => PUSH_FIELDS[change.field]?.tab === 'family');
+  const details = changes.filter((change) => !family.includes(change));
+  const outcomes = [];
+  if (details.length) outcomes.push(...(await pushOnTab(page, member, details, DETAILS_TABS)));
+  if (family.length) {
+    const wanted = [...new Set(family.map((change) => change.field))];
+    outcomes.push(...(await pushOnTab(page, member, family, ['family'], wanted)));
+  }
+  return outcomes;
+}
+
+// One tab's save: fill the fields, Save, then reopen the popup and read back.
+async function pushOnTab(page, member, changes, tabLabels, wanted = null) {
   const outcome = new Map();
   const finish = (change, status, detail = null) => outcome.set(change.id, { id: change.id, status, detail });
+  const missingForm = wanted
+    ? `The member popup has no ${tabLabels[0]} tab with a ${wanted.map(fieldLabel).join(', ')} field.`
+    : 'The member popup showed no details form.';
 
   let framesBefore = new Set(page.frames());
   try {
-    framesBefore = await openMemberPopup(page, member, DETAILS_TABS);
-    let found = await findForm(page, member.memberId, framesBefore);
-    if (!found) throw new Error('The member popup showed no details form.');
+    framesBefore = await openMemberPopup(page, member, tabLabels);
+    let found = await findForm(page, member.memberId, framesBefore, undefined, wanted);
+    if (!found) throw new Error(missingForm);
 
     // Some forms open read-only behind an Edit button.
     const anyEditable = found.result.fields.some((field) => field.editable);
     if (!anyEditable && found.result.hasEdit) {
       await clickButton(found.frame, /^(edit|edit member|edit profile)$/i);
       await page.waitForTimeout(1500);
-      found = (await findForm(page, member.memberId, framesBefore)) ?? found;
+      found = (await findForm(page, member.memberId, framesBefore, undefined, wanted)) ?? found;
     }
 
     const { frame, result: form } = found;
@@ -246,8 +264,8 @@ export async function pushMemberChanges(page, member, changes) {
 
     // Reads the saved values back from a freshly opened popup.
     await closePopup(page, member.memberId, framesBefore);
-    framesBefore = await openMemberPopup(page, member, DETAILS_TABS);
-    const check = await findForm(page, member.memberId, framesBefore);
+    framesBefore = await openMemberPopup(page, member, tabLabels);
+    const check = await findForm(page, member.memberId, framesBefore, undefined, wanted);
     for (const change of toSave) {
       const field = check && matchField(check.result.fields, change.field);
       if (field && sameValue(field.value, change.new_value)) finish(change, 'pushed');
