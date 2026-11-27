@@ -211,6 +211,52 @@ async function loadFolders() {
 }
 
 let loadToken = 0;
+// ---------- Images ----------
+// Images get a thumbnail in the list and open in a viewer on the page.
+const thumbnails = ref({});
+const viewer = ref(null);
+const isImage = (file) => fileKind(file) === KINDS.image;
+
+// A short-lived link to show or save a file.
+async function signedLink(file, download) {
+  if (file.storage_provider === 'r2') return (await materialsApi({ action: 'download-url', materialId: file.id, download })).url;
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+async function loadThumbnails(list, token) {
+  const images = list.filter(isImage);
+  thumbnails.value = {};
+  // A few at a time, so a folder full of photos doesn't flood the server.
+  for (let index = 0; index < images.length; index += 4) {
+    const links = await Promise.all(images.slice(index, index + 4).map((file) => signedLink(file, false).then((url) => [file.id, url]).catch(() => null)));
+    if (token !== loadToken) return;
+    thumbnails.value = { ...thumbnails.value, ...Object.fromEntries(links.filter(Boolean)) };
+  }
+}
+
+async function viewImage(file) {
+  const images = files.value.filter(isImage);
+  viewer.value = { file, index: images.findIndex((item) => item.id === file.id), url: thumbnails.value[file.id] || null };
+  if (!viewer.value.url) {
+    try {
+      const url = await signedLink(file, false);
+      if (viewer.value?.file.id === file.id) viewer.value = { ...viewer.value, url };
+    } catch (error) {
+      viewer.value = null;
+      showAlert('Error Opening Image', error.message);
+    }
+  }
+}
+
+function stepViewer(offset) {
+  const images = files.value.filter(isImage);
+  if (!viewer.value || images.length < 2) return;
+  const next = images[(viewer.value.index + offset + images.length) % images.length];
+  viewImage(next);
+}
+
 async function loadFiles(folderId) {
   const token = ++loadToken;
   files.value = [];
@@ -219,7 +265,10 @@ async function loadFiles(folderId) {
   try {
     const { data, error } = await supabase.from('materials').select('id, folder_id, file_name, storage_path, storage_provider, mime_type, size_bytes, created_at').eq('folder_id', folderId).order('created_at', { ascending: false });
     if (error) throw error;
-    if (token === loadToken) files.value = data || [];
+    if (token === loadToken) {
+      files.value = data || [];
+      loadThumbnails(files.value, token);
+    }
   } catch (error) {
     showAlert('Error Loading Files', error.message);
   } finally {
@@ -539,18 +588,15 @@ async function deleteFile(file) {
 }
 
 async function openFile(file, download) {
+  if (!download && isImage(file)) {
+    viewImage(file);
+    return;
+  }
   busyFileId.value = file.id;
   // Opened before the await, or browsers treat it as an unprompted popup.
   const opened = window.open('', '_blank');
   try {
-    let signedUrl;
-    if (file.storage_provider === 'r2') {
-      signedUrl = (await materialsApi({ action: 'download-url', materialId: file.id, download })).url;
-    } else {
-      const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_path, SIGNED_URL_TTL_SECONDS, download ? { download: file.file_name } : undefined);
-      if (error) throw error;
-      signedUrl = data.signedUrl;
-    }
+    const signedUrl = await signedLink(file, download);
     if (opened) {
       opened.opener = null;
       opened.location.href = signedUrl;
@@ -727,10 +773,14 @@ onBeforeUnmount(() => {
             </template>
           </div>
           <LoadingBlock v-if="isLoadingFiles && !files.length" />
-          <p v-else-if="!files.length && !subfolders.length" class="empty">{{ isAdmin ? 'This folder is empty. Drag files here or use "Upload Files" to add PDFs, slides, documents, videos, or audio, or "New Subfolder" to add a folder inside it.' : 'This folder is empty.' }}</p>
+          <p v-else-if="!files.length && !subfolders.length" class="empty">{{ isAdmin ? 'This folder is empty. Drag files here or use "Upload Files" to add PDFs, slides, documents, images, videos, or audio, or "New Subfolder" to add a folder inside it.' : 'This folder is empty.' }}</p>
           <div v-for="file in files" :key="file.id" class="file" :class="{ picked: selectedFileIds.has(file.id) }">
             <input v-if="isAdmin" type="checkbox" class="file-check" :checked="selectedFileIds.has(file.id)" :aria-label="`Select ${file.file_name}`" @change="toggleFile(file.id)" />
-            <span class="icon-chip"><component :is="fileKind(file).icon" :size="16" /></span>
+            <button v-if="isImage(file)" class="thumb" :aria-label="`View ${file.file_name}`" @click="viewImage(file)">
+              <img v-if="thumbnails[file.id]" :src="thumbnails[file.id]" alt="" loading="lazy" />
+              <FileImage v-else :size="16" />
+            </button>
+            <span v-else class="icon-chip"><component :is="fileKind(file).icon" :size="16" /></span>
             <div class="grow">
               <p class="strong two-line">{{ file.file_name }}</p>
               <p class="muted small clamp">{{ fileMeta(file) }}<template v-if="isAdmin && file.storage_provider !== 'r2'"> · in Supabase Storage</template></p>
@@ -746,6 +796,21 @@ onBeforeUnmount(() => {
         </template>
       </section>
     </div>
+
+    <AppModal v-if="viewer" :title="viewer.file.file_name" :width="1000" @close="viewer = null">
+      <div class="viewer" tabindex="0" @keydown.left="stepViewer(-1)" @keydown.right="stepViewer(1)">
+        <img v-if="viewer.url" :src="viewer.url" :alt="viewer.file.file_name" />
+        <span v-else class="spinner" />
+      </div>
+      <template #footer>
+        <template v-if="files.filter(isImage).length > 1">
+          <button class="btn" aria-label="Previous image" @click="stepViewer(-1)"><ChevronLeft :size="16" /></button>
+          <button class="btn" aria-label="Next image" @click="stepViewer(1)"><ChevronRight :size="16" /></button>
+        </template>
+        <span class="grow muted small">{{ fileMeta(viewer.file) }} · {{ formatBytes(viewer.file.size_bytes) }}</span>
+        <button class="btn btn-primary" @click="openFile(viewer.file, true)"><Download :size="14" />Download</button>
+      </template>
+    </AppModal>
 
     <AppModal v-if="folderForm" :title="folderForm.id ? 'Edit Folder' : folderForm.parent_id ? 'New Subfolder' : 'New Folder'" :locked="isSavingFolder" @close="folderForm = null">
       <div class="stack">
@@ -804,6 +869,10 @@ onBeforeUnmount(() => {
 .upload-notice.danger { background: color-mix(in srgb, #dc2626 12%, transparent); }
 .folder.drop-target { background: var(--accent-soft); outline: 2px dashed var(--accent, #4f46e5); outline-offset: -3px; }
 @media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
+.thumb { flex: none; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-hover); display: inline-flex; align-items: center; justify-content: center; color: var(--muted); cursor: zoom-in; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.viewer { display: flex; align-items: center; justify-content: center; min-height: 240px; outline: none; }
+.viewer img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 8px; }
 .move-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px solid var(--line); background: var(--surface-hover); font-size: 13px; }
 .drag-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px dashed var(--accent, #4f46e5); background: var(--accent-soft); font-size: 13px; font-weight: 600; }
 .dragging-files .tree-row { outline: 1px dashed var(--line); outline-offset: -3px; }
