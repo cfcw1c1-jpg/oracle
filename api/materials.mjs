@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { createAdminClient, HttpError, route } from './_lib/access.mjs';
+import { shareInfo, shareLink } from './_lib/materialShare.mjs';
 import { objectUrl, presign, presignDownload, r2 } from './_lib/r2.mjs';
 
 // POST /api/materials: Materials files kept in Cloudflare R2 (bucket
@@ -15,6 +16,8 @@ import { objectUrl, presign, presignDownload, r2 } from './_lib/r2.mjs';
 //       materials row could not be saved -> { ok }
 //   { action: 'move-to-r2' }  Admin; moves the next few files still in
 //       Supabase Storage into R2 -> { moved, failed, remaining }
+// Public share links (no sign-in) are answered by _lib/materialShare.mjs:
+//   GET ?share=TOKEN and { action: 'share-link', token, materialId, download }.
 // Answers 503 { code: 'r2_not_configured' } when the R2 variables are not
 // set, so the page can keep using Supabase Storage.
 
@@ -188,5 +191,12 @@ const handle = route(async (request, body) => {
 export async function POST(request) {
   const body = await request.json().catch(() => null);
   if (!body) return Response.json({ error: 'Invalid request.' }, { status: 400 });
+  // Public share links need no sign-in (see _lib/materialShare.mjs).
+  if (body.action === 'share-link') return shareLink(body);
   return handle(request, body);
+}
+
+// GET /api/materials?share=TOKEN: what a public share link shows.
+export async function GET(request) {
+  return shareInfo(new URL(request.url).searchParams.get('share'));
 }

@@ -1,13 +1,14 @@
-import { createAdminClient } from './_lib/access.mjs';
-import { presignDownload, r2 } from './_lib/r2.mjs';
+import { createAdminClient } from './access.mjs';
+import { presignDownload, r2 } from './r2.mjs';
 
-// Public, time-limited Materials shares (no sign-in). The token comes from
-// the share link / QR code an Admin made on the Materials page.
-//   GET  /api/material-share?token=...
+// Public, time-limited Materials shares (no sign-in), served by
+// api/materials.mjs. The token comes from the share link / QR code an Admin
+// made on the Materials page.
+//   GET  /api/materials?share=TOKEN
 //        -> { title, kind, expiresAt, folders: [{ path, files: [...] }] }
 //        410 { code: 'expired' } once the time limit passes; 404 when the
 //        link is unknown or was revoked
-//   POST /api/material-share { token, materialId, download }
+//   POST /api/materials { action: 'share-link', token, materialId, download }
 //        -> { url }  a signed link that ends no later than the share does
 // The token is checked on every request, so an expired link stops working
 // at once, and no file link outlives its share.
@@ -85,10 +86,9 @@ async function inShare(db, share, file) {
   return tree.some((folder) => folder.id === file.folder_id);
 }
 
-export async function GET(request) {
+export async function shareInfo(token) {
   try {
     const db = createAdminClient();
-    const token = new URL(request.url).searchParams.get('token');
     const found = await findShare(db, token);
     if (found.status !== 200) return refuse(found);
     const shared = await describe(db, found.share);
@@ -101,10 +101,8 @@ export async function GET(request) {
   }
 }
 
-export async function POST(request) {
+export async function shareLink(body) {
   try {
-    const body = await request.json().catch(() => null);
-    if (!body) return json({ error: 'Invalid request.' }, 400);
     const db = createAdminClient();
     const found = await findShare(db, String(body.token || ''));
     if (found.status !== 200) return refuse(found);

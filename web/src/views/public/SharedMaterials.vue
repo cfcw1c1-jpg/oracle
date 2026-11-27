@@ -8,7 +8,7 @@ import PublicShell from '@/components/PublicShell.vue';
 
 // Public page for a Materials share link / QR code: lists the shared files
 // for viewing and downloading until the link's time limit ends, then says a
-// new QR code is needed. /api/material-share checks the token every time.
+// new QR code is needed. /api/materials checks the token every time.
 
 const route = useRoute();
 const token = typeof route.query.token === 'string' ? route.query.token : '';
@@ -71,7 +71,7 @@ async function load() {
     return;
   }
   try {
-    const response = await fetch(`/api/material-share?token=${encodeURIComponent(token)}`);
+    const response = await fetch(`/api/materials?share=${encodeURIComponent(token)}`);
     const payload = await response.json().catch(() => null);
     if (response.status === 410) return markExpired(payload?.expiresAt ? `This share link ended on ${formatWhen(payload.expiresAt)}.` : '');
     if (response.status === 404) {
@@ -90,10 +90,10 @@ async function load() {
 }
 
 async function linkFor(file, download) {
-  const response = await fetch('/api/material-share', {
+  const response = await fetch('/api/materials', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, materialId: file.id, download }),
+    body: JSON.stringify({ action: 'share-link', token, materialId: file.id, download }),
   });
   const payload = await response.json().catch(() => null);
   if (response.status === 410) {
