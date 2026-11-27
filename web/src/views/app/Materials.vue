@@ -141,8 +141,11 @@ function fileKind(file) {
 
 function fileMeta(file) {
   const date = file.created_at ? new Date(file.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-  return [fileKind(file).label, formatBytes(file.size_bytes), date].filter(Boolean).join(' · ');
+  return [fileKind(file).label, date].filter(Boolean).join(' · ');
 }
+
+// Total size of the open folder's own files (not its subfolders).
+const folderBytes = computed(() => files.value.reduce((sum, file) => sum + (file.size_bytes || 0), 0));
 
 function storageSafeName(name) {
   return (name || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
@@ -423,6 +426,7 @@ onMounted(loadFolders);
               </nav>
               <h2 class="card-title">{{ selectedFolder.name }}</h2>
               <p v-if="selectedFolder.description" class="card-sub">{{ selectedFolder.description }}</p>
+              <p v-if="files.length" class="card-sub">{{ files.length }} file{{ files.length === 1 ? '' : 's' }} · {{ formatBytes(folderBytes) }}</p>
             </div>
             <div v-if="isAdmin" class="row row-wrap">
               <button class="link-btn" @click="folderForm = { id: selectedFolder.id, name: selectedFolder.name, description: selectedFolder.description || '', parent_id: selectedFolder.parent_id || null }"><Pencil :size="13" />Edit</button>
@@ -458,6 +462,7 @@ onMounted(loadFolders);
               <p class="strong two-line">{{ file.file_name }}</p>
               <p class="muted small clamp">{{ fileMeta(file) }}</p>
             </div>
+            <span v-if="file.size_bytes != null" class="size-chip" :title="`${file.size_bytes.toLocaleString()} bytes`">{{ formatBytes(file.size_bytes) }}</span>
             <span v-if="busyFileId === file.id" class="spinner sm" />
             <div v-else class="row file-actions">
               <button class="link-btn" @click="openFile(file, false)"><Eye :size="13" />Open</button>
@@ -498,6 +503,7 @@ onMounted(loadFolders);
 .two-line { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .file { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
 .file-actions { gap: 14px; }
+.size-chip { flex: none; padding: 2px 8px; border-radius: 999px; background: var(--surface-hover); border: 1px solid var(--line); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .placeholder { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 60px 20px; color: var(--muted); font-size: 13px; }
 .head-text { min-width: 180px; }
 .tree-row { gap: 8px; cursor: pointer; }
