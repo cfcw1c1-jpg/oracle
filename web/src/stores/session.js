@@ -46,6 +46,17 @@ export function canView(pageKey) {
   return Boolean(sessionState.access?.allowedPages?.includes(pageKey));
 }
 
+// The last access loaded on this device, so the app can open offline with the
+// pages the person had. Only used when the lookup cannot reach the server.
+const accessCacheKey = (userId) => `oracle-access-${userId}`;
+function cachedAccess(userId) {
+  try {
+    return JSON.parse(localStorage.getItem(accessCacheKey(userId)) || 'null');
+  } catch {
+    return null;
+  }
+}
+
 // A role with no profile row or a failed lookup gets no pages, never all pages.
 export async function loadAccess(userId = sessionState.session?.user?.id) {
   if (!userId) return;
@@ -65,9 +76,16 @@ export async function loadAccess(userId = sessionState.session?.user?.id) {
     }
     const roleName = profile?.roles?.name || null;
     sessionState.access = { profile, roleName, isAdmin: roleName === 'Admin', allowedPages };
+    try {
+      localStorage.setItem(accessCacheKey(userId), JSON.stringify(sessionState.access));
+    } catch {
+      // Storage full or blocked: offline start just won't have the pages.
+    }
   } catch (error) {
     console.error('Error loading access:', error.message);
-    sessionState.access = sessionState.access ?? { profile: null, roleName: null, isAdmin: false, allowedPages: [] };
+    const offline = navigator.onLine === false || /failed to fetch|networkerror|load failed/i.test(String(error?.message));
+    const saved = offline ? cachedAccess(userId) : null;
+    sessionState.access = sessionState.access ?? saved ?? { profile: null, roleName: null, isAdmin: false, allowedPages: [] };
   } finally {
     sessionState.accessLoading = false;
   }
@@ -127,6 +145,12 @@ function handleUserChange(userId) {
   stopPresence = null;
 
   if (!userId) {
+    // Signing out forgets this device's saved access.
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith('oracle-access-')) localStorage.removeItem(key);
+    } catch {
+      // Nothing saved.
+    }
     sessionState.access = null;
     sessionState.accessLoading = true;
     sessionState.unreadMessages = 0;

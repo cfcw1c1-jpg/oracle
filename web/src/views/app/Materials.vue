@@ -1,5 +1,5 @@
 <script setup>
-import { Archive, ChevronLeft, ChevronRight, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, Music, QrCode, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
+import { Archive, ChevronLeft, ChevronRight, CloudOff, Download, Eye, File, FileImage, FileSpreadsheet, FileText, Film, Folder, FolderOpen, FolderPlus, HardDriveDownload, Music, QrCode, Paperclip, Pencil, Plus, Presentation, Trash2, UploadCloud } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import ImageViewer from '@/components/ImageViewer.vue';
@@ -7,6 +7,8 @@ import MaterialShareModal from '@/components/MaterialShareModal.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
 import SearchInput from '@/components/SearchInput.vue';
 import { compressForUpload } from '@/lib/compress';
+import { isNetworkError, readFileBlob, useOnline } from '@/lib/offline';
+import { cacheFiles, cacheFolders, getCachedFiles, getCachedFolders, getSaved, removeFolderOffline, saveFolderOffline, savedRootFor } from '@/lib/offlineMaterials';
 import { confirmAction, showAlert } from '@/lib/data';
 import { supabase, supabaseAnonKey, supabaseUrl } from '@/lib/supabase';
 
@@ -199,19 +201,121 @@ async function moveAllToR2() {
   if (failures.length) showAlert('Some Files Were Not Moved', failures.join('\n'));
 }
 
+function pickFolderIfNone() {
+  const stillExists = folders.value.some((folder) => folder.id === selectedId.value);
+  if (!stillExists) selectedId.value = window.matchMedia('(min-width: 820px)').matches ? folders.value[0]?.id || null : null;
+}
+
 async function loadFolders() {
   try {
     const { data, error } = await supabase.from('material_folders').select('id, name, description, parent_id, created_at, materials ( count )').order('name', { ascending: true });
     if (error) throw error;
-    folders.value = (data || []).map((folder) => ({ ...folder, fileCount: folder.materials?.[0]?.count || 0 }));
+    folders.value = (data || []).map(({ materials, ...folder }) => ({ ...folder, fileCount: materials?.[0]?.count || 0 }));
+    cacheFolders(folders.value).catch(() => null);
     if (props.isAdmin) countSupabaseFiles();
-    const stillExists = folders.value.some((folder) => folder.id === selectedId.value);
-    if (!stillExists) selectedId.value = window.matchMedia('(min-width: 820px)').matches ? folders.value[0]?.id || null : null;
+    pickFolderIfNone();
+    syncSavedFolders();
   } catch (error) {
-    showAlert('Error Loading Folders', error.message);
+    if (!isNetworkError(error)) showAlert('Error Loading Folders', error.message);
+    else {
+      // Offline: the folder list from the last visit.
+      folders.value = await getCachedFolders().catch(() => []);
+      pickFolderIfNone();
+    }
   } finally {
     isLoadingFolders.value = false;
   }
+}
+
+// ---------- Offline ----------
+// Any viewer can save a folder (and the folders inside it) on this device to
+// open without internet. Saved folders update themselves whenever the page
+// loads online or the connection comes back. Changes (upload, delete, share)
+// need internet.
+const online = useOnline();
+const canEdit = computed(() => props.isAdmin && online.value);
+const saved = ref({});
+const offlineSave = ref(null);
+let syncing = false;
+const localUrls = new Map();
+const FILE_COLUMNS = 'id, folder_id, file_name, storage_path, storage_provider, mime_type, size_bytes, created_at';
+
+const isFolderSaved = (folderId) => Boolean(savedRootFor(saved.value, folderId));
+const savedRootId = computed(() => (selectedFolder.value ? savedRootFor(saved.value, selectedFolder.value.id) : null));
+const savedRoot = computed(() => (savedRootId.value ? saved.value[savedRootId.value] : null));
+
+// An object URL for a file saved on this device, or null.
+async function localFileUrl(file) {
+  if (localUrls.has(file.id)) return localUrls.get(file.id);
+  const blob = await readFileBlob(file.id).catch(() => null);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: file.mime_type || '' }));
+  localUrls.set(file.id, url);
+  return url;
+}
+
+function formatSynced(iso) {
+  return iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
+
+async function saveOffline(folder, { quiet = false } = {}) {
+  if (offlineSave.value) return;
+  const folderIds = descendantIds(folder.id);
+  offlineSave.value = { name: folder.name, done: 0, total: 0 };
+  try {
+    const { data, error } = await supabase.from('materials').select(FILE_COLUMNS).in('folder_id', folderIds);
+    if (error) throw error;
+    const result = await saveFolderOffline({
+      rootId: folder.id,
+      rootName: folder.name,
+      folderIds,
+      rows: data || [],
+      getLink: (row) => signedLink(row, false),
+      onProgress: (progress) => {
+        offlineSave.value = { name: folder.name, ...progress };
+      },
+    });
+    saved.value = result.saved;
+    if (!quiet) {
+      const count = (data || []).length;
+      showNotice(`"${folder.name}" is saved on this device (${count} file${count === 1 ? '' : 's'}). It opens without internet.`);
+    }
+    if (result.failures.length && !quiet) showAlert('Some Files Were Not Saved', result.failures.join('\n'));
+  } catch (error) {
+    if (!quiet) showAlert('Could Not Save for Offline', error.message);
+  } finally {
+    offlineSave.value = null;
+  }
+}
+
+async function removeOffline(rootId) {
+  const name = saved.value[rootId]?.name || 'this folder';
+  if (!confirmAction('Remove from Device', `Remove "${name}" from this device? It stays in Oracle; you just won't be able to open it offline.`)) return;
+  saved.value = await removeFolderOffline(rootId);
+  for (const url of localUrls.values()) URL.revokeObjectURL(url);
+  localUrls.clear();
+  if (selectedId.value) loadFiles(selectedId.value);
+}
+
+// Brings every saved folder up to date: new files downloaded, deleted ones
+// removed, and folders deleted in Oracle dropped from the device.
+async function syncSavedFolders() {
+  if (syncing || !online.value) return;
+  syncing = true;
+  try {
+    for (const rootId of Object.keys(saved.value)) {
+      const folder = folderById.value.get(rootId);
+      if (!folder) saved.value = await removeFolderOffline(rootId);
+      else await saveOffline(folder, { quiet: true });
+    }
+  } finally {
+    syncing = false;
+  }
+}
+
+function onBackOnline() {
+  loadFolders();
+  if (selectedId.value) loadFiles(selectedId.value);
 }
 
 let loadToken = 0;
@@ -234,7 +338,10 @@ async function loadThumbnails(list, token) {
   thumbnails.value = {};
   // A few at a time, so a folder full of photos doesn't flood the server.
   for (let index = 0; index < images.length; index += 4) {
-    const links = await Promise.all(images.slice(index, index + 4).map((file) => signedLink(file, false).then((url) => [file.id, url]).catch(() => null)));
+    const links = await Promise.all(images.slice(index, index + 4).map(async (file) => {
+      const url = (await localFileUrl(file)) || (online.value ? await signedLink(file, false).catch(() => null) : null);
+      return url ? [file.id, url] : null;
+    }));
     if (token !== loadToken) return;
     thumbnails.value = { ...thumbnails.value, ...Object.fromEntries(links.filter(Boolean)) };
   }
@@ -257,7 +364,7 @@ async function fetchViewerUrl(fileId) {
   const file = files.value.find((item) => item.id === fileId);
   if (!file || thumbnails.value[fileId]) return;
   try {
-    const url = await signedLink(file, false);
+    const url = (await localFileUrl(file)) || (await signedLink(file, false));
     thumbnails.value = { ...thumbnails.value, [fileId]: url };
   } catch (error) {
     viewer.value = null;
@@ -276,14 +383,21 @@ async function loadFiles(folderId) {
   if (!folderId) return;
   isLoadingFiles.value = true;
   try {
-    const { data, error } = await supabase.from('materials').select('id, folder_id, file_name, storage_path, storage_provider, mime_type, size_bytes, created_at').eq('folder_id', folderId).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('materials').select(FILE_COLUMNS).eq('folder_id', folderId).order('created_at', { ascending: false });
     if (error) throw error;
     if (token === loadToken) {
       files.value = data || [];
+      if (savedRootFor(saved.value, folderId)) cacheFiles(folderId, files.value).catch(() => null);
       loadThumbnails(files.value, token);
     }
   } catch (error) {
-    showAlert('Error Loading Files', error.message);
+    if (!isNetworkError(error)) showAlert('Error Loading Files', error.message);
+    else if (token === loadToken) {
+      // Offline: the files saved on this device, if the folder was saved.
+      const rows = await getCachedFiles(folderId).catch(() => null);
+      files.value = (rows || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      loadThumbnails(files.value, token);
+    }
   } finally {
     if (token === loadToken) isLoadingFiles.value = false;
   }
@@ -383,19 +497,20 @@ function onPaneDrop(event) {
   isDragging.value = false;
   const dropped = [...(event.dataTransfer?.files ?? [])];
   if (!dropped.length) return;
-  if (!props.isAdmin) showNotice('Only Admins can upload files.', 'danger');
+  if (!online.value) showNotice('You are offline. Uploading needs internet.', 'danger');
+  else if (!props.isAdmin) showNotice('Only Admins can upload files.', 'danger');
   else if (!selectedFolder.value) showNotice('Open a folder first, or drop the files on a folder in the list.', 'danger');
   else uploadFiles(dropped, selectedFolder.value);
 }
 
 function onFolderDragOver(event, folder) {
-  if (!props.isAdmin || !draggingFiles(event)) return;
+  if (!canEdit.value || !draggingFiles(event)) return;
   event.preventDefault();
   dropFolderId.value = folder.id;
 }
 
 function onFolderDrop(event, folder) {
-  if (!props.isAdmin || !draggingFiles(event)) return;
+  if (!canEdit.value || !draggingFiles(event)) return;
   event.preventDefault();
   dropFolderId.value = null;
   const dropped = [...(event.dataTransfer?.files ?? [])];
@@ -605,6 +720,23 @@ async function openFile(file, download) {
     viewImage(file);
     return;
   }
+  // A copy saved on this device opens straight away, with or without internet.
+  const local = await localFileUrl(file);
+  if (local) {
+    if (download) {
+      const link = document.createElement('a');
+      link.href = local;
+      link.download = file.file_name;
+      link.click();
+    } else {
+      window.open(local, '_blank', 'noopener');
+    }
+    return;
+  }
+  if (!online.value) {
+    showAlert('Not Saved on This Device', `"${file.file_name}" can't be opened offline. Save its folder for offline while you have internet.`);
+    return;
+  }
   busyFileId.value = file.id;
   // Opened before the await, or browsers treat it as an unprompted popup.
   const opened = window.open('', '_blank');
@@ -627,7 +759,7 @@ async function openFile(file, download) {
 let dragDepth = 0;
 const hasFiles = (event) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 function onWindowDragEnter(event) {
-  if (!props.isAdmin || !hasFiles(event)) return;
+  if (!canEdit.value || !hasFiles(event)) return;
   dragDepth += 1;
   isDraggingFiles.value = true;
 }
@@ -654,8 +786,10 @@ function endWindowDrag() {
   dropFolderId.value = null;
 }
 
-onMounted(() => {
+onMounted(async () => {
+  saved.value = await getSaved().catch(() => ({}));
   loadFolders();
+  window.addEventListener('online', onBackOnline);
   window.addEventListener('dragenter', onWindowDragEnter);
   window.addEventListener('dragleave', onWindowDragLeave);
   window.addEventListener('dragover', onWindowDragOver);
@@ -668,6 +802,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('dragover', onWindowDragOver);
   window.removeEventListener('drop', onWindowDrop);
   window.removeEventListener('dragend', endWindowDrag);
+  window.removeEventListener('online', onBackOnline);
+  for (const url of localUrls.values()) URL.revokeObjectURL(url);
   clearTimeout(noticeTimer);
 });
 </script>
@@ -681,9 +817,14 @@ onBeforeUnmount(() => {
             <h1 class="card-title">Materials</h1>
             <p class="card-sub">{{ folders.length }} folder{{ folders.length === 1 ? '' : 's' }}</p>
           </div>
-          <button v-if="isAdmin" class="btn btn-primary btn-sm" @click="newFolder()"><Plus :size="14" />New Folder</button>
+          <button v-if="canEdit" class="btn btn-primary btn-sm" @click="newFolder()"><Plus :size="14" />New Folder</button>
         </header>
-        <div v-if="isAdmin && (supabaseFileCount || moveState)" class="move-banner">
+        <div v-if="!online" class="offline-banner" role="status"><CloudOff :size="15" />You're offline. Folders saved on this device still open.</div>
+        <div v-if="offlineSave" class="move-banner" role="status">
+          <span class="grow">Saving "{{ offlineSave.name }}" for offline… {{ offlineSave.total ? `${offlineSave.done} of ${offlineSave.total}` : '' }}</span>
+          <span class="spinner sm" />
+        </div>
+        <div v-if="canEdit && (supabaseFileCount || moveState)" class="move-banner">
           <span class="grow">{{ moveState ? `Moving to Cloudflare R2… ${moveState.moved} of ${moveState.total}` : `${supabaseFileCount} file${supabaseFileCount === 1 ? '' : 's'} still in Supabase Storage` }}</span>
           <button v-if="!moveState" class="btn btn-sm" @click="moveAllToR2"><UploadCloud :size="14" />Move to Cloudflare R2</button>
           <span v-else class="spinner sm" />
@@ -716,7 +857,8 @@ onBeforeUnmount(() => {
             <span class="strong block clamp">{{ folder.name }}</span>
             <span v-if="folder.description" class="muted small block two-line">{{ folder.description }}</span>
           </span>
-          <button v-if="isAdmin" class="row-add" :aria-label="`New folder inside ${folder.name}`" title="New subfolder" @click.stop="newFolder(folder.id)"><FolderPlus :size="14" /></button>
+          <button v-if="canEdit" class="row-add" :aria-label="`New folder inside ${folder.name}`" title="New subfolder" @click.stop="newFolder(folder.id)"><FolderPlus :size="14" /></button>
+          <HardDriveDownload v-if="isFolderSaved(folder.id)" class="saved-mark" :size="13" aria-label="Saved on this device" />
           <span class="muted small">{{ folder.fileCount }}</span>
           <ChevronRight class="m-only muted" :size="16" />
         </div>
@@ -759,8 +901,14 @@ onBeforeUnmount(() => {
               <h2 class="card-title">{{ selectedFolder.name }}</h2>
               <p v-if="selectedFolder.description" class="card-sub">{{ selectedFolder.description }}</p>
               <p v-if="files.length" class="card-sub">{{ files.length }} file{{ files.length === 1 ? '' : 's' }} · {{ formatBytes(folderBytes) }}</p>
+              <p v-if="savedRoot" class="saved-line small">
+                <HardDriveDownload :size="13" />
+                <span>Saved on this device<template v-if="savedRootId !== selectedFolder.id"> with "{{ savedRoot.name }}"</template> · updated {{ formatSynced(savedRoot.syncedAt) }}</span>
+                <button v-if="savedRootId === selectedFolder.id" class="link-btn" @click="removeOffline(savedRootId)">Remove from device</button>
+              </p>
             </div>
-            <div v-if="isAdmin" class="row row-wrap">
+            <button v-if="!savedRoot" class="btn btn-sm" :disabled="!online || !!offlineSave" :title="online ? 'Keep this folder on this device to open without internet' : 'Needs internet'" @click="saveOffline(selectedFolder)"><HardDriveDownload :size="14" />Save Offline</button>
+            <div v-if="canEdit" class="row row-wrap">
               <button class="link-btn" @click="folderForm = { id: selectedFolder.id, name: selectedFolder.name, description: selectedFolder.description || '', parent_id: selectedFolder.parent_id || null }"><Pencil :size="13" />Edit</button>
               <button class="link-btn danger" @click="deleteFolder(selectedFolder)"><Trash2 :size="13" />Delete</button>
               <button class="btn btn-sm" @click="shareTarget = { type: 'folder', id: selectedFolder.id, name: selectedFolder.name }"><QrCode :size="14" />Share</button>
@@ -776,10 +924,10 @@ onBeforeUnmount(() => {
               <span v-if="child.description" class="muted small block two-line">{{ child.description }}</span>
             </span>
             <span class="muted small">{{ child.fileCount }} file{{ child.fileCount === 1 ? '' : 's' }}</span>
-            <button v-if="isAdmin" class="link-btn danger" @click.stop="deleteFolder(child)"><Trash2 :size="13" />Delete</button>
+            <button v-if="canEdit" class="link-btn danger" @click.stop="deleteFolder(child)"><Trash2 :size="13" />Delete</button>
             <ChevronRight class="muted" :size="16" />
           </div>
-          <div v-if="isAdmin && files.length" class="select-bar">
+          <div v-if="canEdit && files.length" class="select-bar">
             <label class="check"><input type="checkbox" :checked="allFilesSelected" :indeterminate.prop="selectedFileIds.size > 0 && !allFilesSelected" @change="toggleAllFiles" />{{ selectedFileIds.size ? `${selectedFileIds.size} selected` : 'Select all files' }}</label>
             <template v-if="selectedFileIds.size">
               <button class="btn btn-sm danger-btn" :disabled="isDeletingFiles" @click="deleteSelectedFiles"><Trash2 :size="14" />{{ isDeletingFiles ? 'Deleting…' : `Delete ${selectedFileIds.size === 1 ? 'file' : `${selectedFileIds.size} files`}` }}</button>
@@ -787,9 +935,10 @@ onBeforeUnmount(() => {
             </template>
           </div>
           <LoadingBlock v-if="isLoadingFiles && !files.length" />
+          <p v-else-if="!online && !files.length && !savedRoot" class="empty">This folder isn't saved on this device. Use "Save Offline" next time you have internet to open it without a connection.</p>
           <p v-else-if="!files.length && !subfolders.length" class="empty">{{ isAdmin ? 'This folder is empty. Drag files here or use "Upload Files" to add PDFs, slides, documents, images, videos, or audio, or "New Subfolder" to add a folder inside it.' : 'This folder is empty.' }}</p>
           <div v-for="file in files" :key="file.id" class="file" :class="{ picked: selectedFileIds.has(file.id) }">
-            <input v-if="isAdmin" type="checkbox" class="file-check" :checked="selectedFileIds.has(file.id)" :aria-label="`Select ${file.file_name}`" @change="toggleFile(file.id)" />
+            <input v-if="canEdit" type="checkbox" class="file-check" :checked="selectedFileIds.has(file.id)" :aria-label="`Select ${file.file_name}`" @change="toggleFile(file.id)" />
             <button v-if="isImage(file)" class="thumb" :aria-label="`View ${file.file_name}`" @click="viewImage(file)">
               <img v-if="thumbnails[file.id]" :src="thumbnails[file.id]" alt="" loading="lazy" />
               <FileImage v-else :size="16" />
@@ -797,15 +946,15 @@ onBeforeUnmount(() => {
             <span v-else class="icon-chip"><component :is="fileKind(file).icon" :size="16" /></span>
             <div class="grow">
               <p class="strong two-line">{{ file.file_name }}</p>
-              <p class="muted small clamp">{{ fileMeta(file) }}<template v-if="isAdmin && file.storage_provider !== 'r2'"> · in Supabase Storage</template></p>
+              <p class="muted small clamp">{{ fileMeta(file) }}<template v-if="canEdit && file.storage_provider !== 'r2'"> · in Supabase Storage</template></p>
             </div>
             <span v-if="file.size_bytes != null" class="size-chip" :title="`${file.size_bytes.toLocaleString()} bytes`">{{ formatBytes(file.size_bytes) }}</span>
             <span v-if="busyFileId === file.id" class="spinner sm" />
             <div v-else class="row file-actions">
               <button class="link-btn" @click="openFile(file, false)"><Eye :size="13" />Open</button>
               <button class="link-btn" @click="openFile(file, true)"><Download :size="13" />Download</button>
-              <button v-if="isAdmin" class="link-btn" @click="shareTarget = { type: 'file', id: file.id, name: file.file_name }"><QrCode :size="13" />Share</button>
-              <button v-if="isAdmin" class="link-btn danger" @click="deleteFile(file)"><Trash2 :size="13" />Delete</button>
+              <button v-if="canEdit" class="link-btn" @click="shareTarget = { type: 'file', id: file.id, name: file.file_name }"><QrCode :size="13" />Share</button>
+              <button v-if="canEdit" class="link-btn danger" @click="deleteFile(file)"><Trash2 :size="13" />Delete</button>
             </div>
           </div>
         </template>
@@ -882,6 +1031,10 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) { .upload-bar span.busy { animation: none; } }
 .thumb { flex: none; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-hover); display: inline-flex; align-items: center; justify-content: center; color: var(--muted); cursor: zoom-in; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.offline-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); background: color-mix(in srgb, #f59e0b 16%, transparent); font-size: 13px; font-weight: 600; }
+.saved-mark { flex: none; color: var(--accent, #4f46e5); }
+.saved-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 0; color: var(--accent, #4f46e5); }
+.saved-line span { color: var(--muted); }
 .move-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px solid var(--line); background: var(--surface-hover); font-size: 13px; }
 .drag-banner { display: flex; align-items: center; gap: 8px; margin: 0 20px 12px; padding: 9px 12px; border-radius: var(--radius-md, 8px); border: 1px dashed var(--accent, #4f46e5); background: var(--accent-soft); font-size: 13px; font-weight: 600; }
 .dragging-files .tree-row { outline: 1px dashed var(--line); outline-offset: -3px; }
