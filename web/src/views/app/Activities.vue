@@ -12,6 +12,8 @@ import {
   copyActivityAttendees, deleteActivity, FAILURE_MESSAGES, fetchActivities, fetchActivityMembers, fetchActivityProgress, pushActivity, pushActivityAttendees, readActivityForm, saveActivity, syncActivities, updateActivityAttendees,
 } from '@/lib/ogdApi';
 import { describeProgress } from '@/lib/pushProgress';
+import { isNetworkError, kvGet, kvSet, useOnline } from '@/lib/offline';
+import { enqueue, outbox } from '@/lib/outbox';
 
 // Each chapter signs in to OGD in its own browser, so only a couple run at once.
 const CONCURRENT_RUNS = 2;
@@ -256,22 +258,86 @@ const activityColumns = [
 
 // ---------- Loading and syncing ----------
 
+// ---------- Offline ----------
+// The last loaded activities and each chapter's members stay on the device,
+// so attendance can be taken without internet. Attendees added or removed
+// offline wait in the device's outbox (lib/outbox.js), show as "Waiting to
+// sync", and are sent to Oracle, then on to OGD, when the connection returns.
+const online = useOnline();
+const offlineCopy = ref(null);
+const CACHE_KEY = 'activities:last';
+
+function applyResult(result) {
+  chapters.value = result.chapters;
+  activities.value = applyWaitingAttendance(result.activities);
+  knownTypes.value = result.types;
+  ogdForm.value = result.form;
+  if (!formChapterId.value) formChapterId.value = result.form?.areaId ?? result.chapters.find((row) => row.isReady)?.areaId ?? null;
+}
+
+// Shows attendance changes still waiting on this device.
+function applyWaitingAttendance(list) {
+  const waiting = outbox.items.filter((item) => item.kind === 'attendance' && item.status !== 'failed');
+  if (!waiting.length) return list;
+  return list.map((activity) => {
+    const mine = waiting.filter((item) => item.payload.activityId === activity.id);
+    if (!mine.length) return activity;
+    let attendees = activity.attendees;
+    for (const item of mine) {
+      const removed = new Set(item.payload.remove ?? []);
+      attendees = attendees.filter((attendee) => !removed.has(attendeeKey(attendee)));
+      const present = new Set(attendees.map((attendee) => attendee.memberId).filter(Boolean));
+      for (const member of item.payload.members ?? []) {
+        if (!present.has(member.memberId)) attendees = [...attendees, { ...member, source: 'offline', waitingSync: true, matched: true }];
+      }
+    }
+    return { ...activity, attendees };
+  });
+}
+
 async function load() {
   const token = ++loadToken;
   try {
     const result = await fetchActivities(range.from, range.to);
     if (token !== loadToken || !isActive) return;
-    chapters.value = result.chapters;
-    activities.value = result.activities;
-    knownTypes.value = result.types;
-    ogdForm.value = result.form;
-    if (!formChapterId.value) formChapterId.value = result.form?.areaId ?? result.chapters.find((row) => row.isReady)?.areaId ?? null;
+    applyResult(result);
+    offlineCopy.value = null;
+    kvSet(CACHE_KEY, { from: range.from, to: range.to, savedAt: new Date().toISOString(), result }).catch(() => null);
     Object.assign(loadState, { status: 'success', message: '' });
   } catch (error) {
     if (token !== loadToken || !isActive) return;
-    Object.assign(loadState, { status: 'error', message: error.message });
+    const saved = isNetworkError(error) ? await kvGet(CACHE_KEY).catch(() => null) : null;
+    if (saved) {
+      applyResult(saved.result);
+      offlineCopy.value = saved;
+      Object.assign(loadState, { status: 'success', message: '' });
+    } else {
+      Object.assign(loadState, { status: 'error', message: isNetworkError(error) ? 'You are offline, and no activities were saved on this device yet. Open Activities once with internet to use it offline.' : error.message });
+    }
   }
 }
+
+// Saves an attendance change for later and shows it right away.
+async function queueAttendance(activity, { add = [], remove = [] }) {
+  const members = add.map((memberId) => (memberCache.value[activity.areaId] ?? []).find((member) => member.memberId === memberId) ?? { memberId, name: memberId });
+  const parts = [add.length ? `add ${add.length}` : '', remove.length ? `remove ${remove.length}` : ''].filter(Boolean).join(', ');
+  await enqueue('attendance', `Attendance for "${activity.name}": ${parts}`, { activityId: activity.id, activityName: activity.name, add, remove, members });
+  replaceActivity(applyWaitingAttendance([stripWaiting(activity)])[0]);
+}
+
+const stripWaiting = (activity) => ({ ...activity, attendees: activity.attendees.filter((attendee) => !attendee.waitingSync) });
+
+// Back online: reload, then send newly saved attendees on to OGD.
+async function onOutboxSynced(event) {
+  const attendance = (event.detail?.items ?? []).filter((item) => item.kind === 'attendance');
+  if (!attendance.length) return;
+  await load();
+  for (const activityId of new Set(attendance.map((item) => item.payload.activityId))) {
+    const activity = activities.value.find((entry) => entry.id === activityId);
+    if (activity?.isInOgd && activity.pendingInOgd && !sendingIds.value.has(activity.id)) sendAttendees(activity);
+  }
+}
+const onBackOnline = () => load();
 
 function applyRange() {
   if (!range.from || !range.to) return;
@@ -416,6 +482,7 @@ async function sendAttendees(activity) {
 }
 
 function ogdStateOf(activity, attendee) {
+  if (attendee.waitingSync) return { label: 'Waiting to sync', tone: 'warning' };
   if (attendee.source === 'ogd') return { label: 'In OGD', tone: 'success' };
   if (attendee.ogd === 'added') return { label: attendee.ogdNote ? 'Already in OGD' : 'Added to OGD', tone: 'success' };
   if (!activity.isInOgd) return { label: 'Goes with push', tone: '' };
@@ -439,10 +506,22 @@ async function remove(activity) {
 
 async function removeAttendee(activity, attendee) {
   if (!confirmAction('Remove this attendee?', `${attendee.name} will be removed from "${activity.name}" in Oracle.`)) return;
+  if (attendee.waitingSync) {
+    // Added offline and not sent yet: drop it from the waiting change.
+    const item = outbox.items.find((entry) => entry.kind === 'attendance' && entry.payload.activityId === activity.id && entry.payload.add?.includes(attendee.memberId));
+    if (item) await queueAttendance(activity, { remove: [attendeeKey(attendee)] });
+    replaceActivity({ ...activity, attendees: activity.attendees.filter((entry) => entry !== attendee) });
+    return;
+  }
+  if (!online.value) {
+    await queueAttendance(activity, { remove: [attendeeKey(attendee)] });
+    return;
+  }
   try {
     replaceActivity(await updateActivityAttendees(activity.id, { remove: [attendeeKey(attendee)] }));
   } catch (error) {
-    actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
+    if (isNetworkError(error)) await queueAttendance(activity, { remove: [attendeeKey(attendee)] });
+    else actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
   }
 }
 
@@ -511,9 +590,17 @@ async function ensureMembers(areaId) {
   try {
     const members = await fetchActivityMembers(areaId);
     memberCache.value = { ...memberCache.value, [areaId]: members };
+    kvSet(`activities:members:${areaId}`, members).catch(() => null);
     membersState.status = 'success';
   } catch (error) {
-    Object.assign(membersState, { status: 'error', message: error.message });
+    // Offline: the chapter's members saved on this device.
+    const saved = isNetworkError(error) ? await kvGet(`activities:members:${areaId}`).catch(() => null) : null;
+    if (saved) {
+      memberCache.value = { ...memberCache.value, [areaId]: saved };
+      membersState.status = 'success';
+    } else {
+      Object.assign(membersState, { status: 'error', message: isNetworkError(error) ? 'You are offline, and this chapter\'s members were not saved on this device yet.' : error.message });
+    }
   }
 }
 
@@ -644,6 +731,11 @@ const addCandidates = computed(() => {
 async function confirmAddAttendees() {
   const activity = addingFor.value;
   if (!activity || !addSelection.value.length) return;
+  if (!online.value) {
+    await queueAttendance(activity, { add: addSelection.value });
+    addingFor.value = null;
+    return;
+  }
   try {
     const updated = await updateActivityAttendees(activity.id, { add: addSelection.value });
     replaceActivity(updated);
@@ -651,7 +743,8 @@ async function confirmAddAttendees() {
     // Added in Oracle means added in OGD too, when the activity is there.
     if (updated.isInOgd && updated.pendingInOgd) sendAttendees(updated);
   } catch (error) {
-    actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
+    if (isNetworkError(error)) await queueAttendance(activity, { add: addSelection.value });
+    else actionErrors.value = { ...actionErrors.value, [activity.id]: error.message };
     addingFor.value = null;
   }
 }
@@ -704,9 +797,15 @@ function detailEntries(activity) {
   return Object.entries(activity.details ?? {}).filter(([, value]) => value);
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  window.addEventListener('oracle-outbox-synced', onOutboxSynced);
+  window.addEventListener('online', onBackOnline);
+});
 onBeforeUnmount(() => {
   isActive = false;
+  window.removeEventListener('oracle-outbox-synced', onOutboxSynced);
+  window.removeEventListener('online', onBackOnline);
   if (progressTimer) clearInterval(progressTimer);
 });
 </script>
@@ -719,6 +818,11 @@ onBeforeUnmount(() => {
       </button>
       <button v-if="loadState.status === 'success' && chapters.length" class="btn btn-primary" @click="openNew"><CalendarPlus :size="14" />New Activity</button>
     </PageHead>
+
+    <div v-if="!online || offlineCopy" class="offline-note" role="status">
+      <strong>{{ online ? 'Showing activities saved on this device.' : "You're offline." }}</strong>
+      <span>{{ offlineCopy ? `Saved list from ${offlineCopy.from} to ${offlineCopy.to}.` : '' }} You can still add and remove attendees; they sync when the connection returns. Creating, syncing and pushing activities need internet.</span>
+    </div>
 
     <div class="controls">
       <label class="field date"><span class="field-label">From</span><input v-model="range.from" type="date" class="input" :max="range.to" :disabled="isBusy" @change="applyRange" /></label>
@@ -1096,6 +1200,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.offline-note { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; padding: 10px 14px; border-radius: var(--radius-md, 10px); background: color-mix(in srgb, #f59e0b 16%, transparent); font-size: 13px; }
 .controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
 .date { width: 170px; max-width: 100%; }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }

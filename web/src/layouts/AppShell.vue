@@ -4,7 +4,10 @@ import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue
 import { useRoute, useRouter } from 'vue-router';
 import AppModal from '@/components/AppModal.vue';
 import CreditFooter from '@/components/CreditFooter.vue';
+import OfflineStatus from '@/components/OfflineStatus.vue';
 import OgdStatus from '@/components/OgdStatus.vue';
+import '@/lib/offlineHandlers';
+import { startOutbox } from '@/lib/outbox';
 import { useIsWide } from '@/composables/useIsWide';
 import { mobileTabsFor, NAV_ITEMS, PAGE_LABELS } from '@/lib/navigation';
 import { canView, isOgdRole, loadAccess, logPageView, sessionState, signOut } from '@/stores/session';
@@ -173,6 +176,11 @@ function followPointer(event) {
 }
 onBeforeUnmount(() => cancelAnimationFrame(glowFrame));
 
+// Sends changes saved offline once someone is signed in (see lib/outbox.js).
+watch(() => sessionState.session?.user?.id, (userId) => {
+  if (userId) startOutbox();
+}, { immediate: true });
+
 function openMessagesFromDisclaimer() {
   sessionState.disclaimerVisible = false;
   selectTab('messages');
@@ -245,6 +253,7 @@ function openMessagesFromDisclaimer() {
               </li>
             </ul>
           </div>
+          <OfflineStatus />
           <OgdStatus v-if="isOgdRole()" @open="selectTab('ogdAccounts')" />
           <button class="icon-btn" aria-label="Messages" @click="selectTab('messages')">
             <MessageCircle :size="19" />
@@ -257,6 +266,7 @@ function openMessagesFromDisclaimer() {
             <strong>ORACLE</strong>
             <small class="clamp">{{ portalLabel.toUpperCase() }}</small>
           </div>
+          <OfflineStatus />
           <OgdStatus v-if="isOgdRole()" @open="selectTab('ogdAccounts')" />
         </template>
         <button class="avatar-btn" aria-label="My profile" @click="selectTab('profile')">

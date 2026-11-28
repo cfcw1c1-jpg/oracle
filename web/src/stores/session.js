@@ -1,5 +1,6 @@
 import { reactive, watch } from 'vue';
 import { trackPresence } from '@/lib/presence';
+import { clearPersonalData, outbox } from '@/lib/outbox';
 import { supabase } from '@/lib/supabase';
 
 export const sessionState = reactive({
@@ -239,7 +240,11 @@ export function stopSession() {
   handleChangeQueueAccess(false);
 }
 
-export function signOut() {
+export async function signOut() {
+  // Changes saved offline belong to this person; they leave the device too.
+  const waiting = outbox.items.filter((item) => item.status === 'pending' || item.status === 'conflict').length;
+  if (waiting && !window.confirm(`${waiting} change${waiting === 1 ? '' : 's'} saved on this device ${waiting === 1 ? 'has' : 'have'} not synced yet. Signing out deletes ${waiting === 1 ? 'it' : 'them'}. Sign out anyway?`)) return;
+  await clearPersonalData().catch(() => null);
   return supabase.auth.signOut();
 }
 

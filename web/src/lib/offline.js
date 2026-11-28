@@ -36,6 +36,7 @@ async function run(mode, action) {
 export const kvGet = (key) => run('readonly', (store) => store.get(key));
 export const kvSet = (key, value) => run('readwrite', (store) => store.put(JSON.parse(JSON.stringify(value)), key));
 export const kvDelete = (key) => run('readwrite', (store) => store.delete(key));
+export const kvKeys = () => run('readonly', (store) => store.getAllKeys());
 
 // ---------- Saved file contents ----------
 const fileKey = (id) => `/__offline/files/${encodeURIComponent(id)}`;

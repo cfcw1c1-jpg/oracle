@@ -1,6 +1,6 @@
 <script setup>
 import { CircleX, Download, Flower2, HandHeart, Pencil, Plus, Shield, UserCheck, UserMinus, Users, X } from 'lucide-vue-next';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import AppModal from '@/components/AppModal.vue';
 import DataTable from '@/components/DataTable.vue';
 import LoadingBlock from '@/components/LoadingBlock.vue';
@@ -10,6 +10,8 @@ import SearchInput from '@/components/SearchInput.vue';
 import StatCard from '@/components/StatCard.vue';
 import { buildAreaOptions, loadAssignedAreaNames, matchesArea } from '@/lib/areas';
 import { exportCsv, fetchAllRows, showAlert } from '@/lib/data';
+import { isNetworkError, isOnline } from '@/lib/offline';
+import { applyWaitingMemberChanges, membersSavedOffline, queueMemberUpdate, saveMembersOffline } from '@/lib/offlineMembers';
 import { parseTrainingName, TRAINING_COLUMNS } from '@/lib/formation';
 import { buildSuggestions, formatBirthday, formFromMember, MEMBER_COLUMNS, memberInitials, memberRoleLabel, payloadFromForm, ROLE_OPTION_CODES, STATUS_OPTIONS, STATUS_TONE } from '@/lib/members';
 import { supabase } from '@/lib/supabase';
@@ -26,6 +28,8 @@ const pushesToOgd = computed(() => OGD_PUSH_ROLES.has(props.roleName));
 
 const members = ref([]);
 const isLoading = ref(true);
+// True when the list came from this device because there was no internet.
+const showingSavedList = ref(false);
 const search = ref('');
 const assignedAreaNames = ref([]);
 const filters = ref({ role: 'All', area: 'All', status: 'All' });
@@ -118,8 +122,31 @@ function patchMember(memberId, changes) {
   members.value = members.value.map((member) => (member.MemberIDNo === memberId ? { ...member, ...changes } : member));
 }
 
-// Returns true when the change was queued rather than applied.
+const OFFLINE_SAVED = 'Saved on this device. It syncs to Oracle when the connection returns; if someone else changed the same field meanwhile, you will be asked which to keep.';
+
+// Without internet the change waits on this device (lib/offlineMembers.js).
+async function saveOffline(memberId, changes, previousValues) {
+  const member = members.value.find((row) => row.MemberIDNo === memberId);
+  await queueMemberUpdate({
+    memberId, name: member ? `${member.Lastname}, ${member.Firstname}` : memberId, changes, previous: previousValues, mode: canApprove.value ? 'direct' : 'request',
+  });
+  if (canApprove.value) patchMember(memberId, { ...changes, waitingSync: true });
+  return 'offline';
+}
+
+// Returns true when the change was queued for approval rather than applied,
+// or 'offline' when it was saved on the device to sync later.
 async function applyOrQueue(memberId, changes, previousValues) {
+  if (!isOnline()) return saveOffline(memberId, changes, previousValues);
+  try {
+    return await applyOrQueueOnline(memberId, changes, previousValues);
+  } catch (error) {
+    if (isNetworkError(error)) return saveOffline(memberId, changes, previousValues);
+    throw error;
+  }
+}
+
+async function applyOrQueueOnline(memberId, changes, previousValues) {
   if (canApprove.value) {
     const { error } = await supabase.from('members').update(changes).eq('MemberIDNo', memberId);
     if (error) throw error;
@@ -136,6 +163,11 @@ async function changeField(member, field, value, label, event) {
   busyId.value = member.MemberIDNo;
   try {
     const queued = await applyOrQueue(member.MemberIDNo, { [field]: value }, { [field]: member[field] });
+    if (queued === 'offline') {
+      if (!canApprove.value) event.target.value = field === 'Status' ? statusOf(member) : (member[field] || '').trim().toUpperCase();
+      showAlert('Saved Offline', OFFLINE_SAVED);
+      return;
+    }
     if (!queued && pushesToOgd.value) showAlert('Saved', `The ${label} change is saved. Push it to OGD from OGD Accounts.`);
     if (queued) {
       event.target.value = field === 'Status' ? statusOf(member) : (member[field] || '').trim().toUpperCase();
@@ -179,7 +211,8 @@ async function saveEdit() {
     const count = Object.keys(changes).length;
     const queued = await applyOrQueue(memberId, changes, previous);
     editForm.value = null;
-    if (queued) showAlert('Submitted for Approval', `${count} field(s) sent to an Admin/Moderator for review.`);
+    if (queued === 'offline') showAlert('Saved Offline', OFFLINE_SAVED);
+    else if (queued) showAlert('Submitted for Approval', `${count} field(s) sent to an Admin/Moderator for review.`);
     else if (pushesToOgd.value) showAlert('Saved', `${count} field(s) saved. Push them to OGD from OGD Accounts.`);
   } catch (error) {
     showAlert('Save Failed', error.message);
@@ -267,19 +300,42 @@ async function runAssign() {
   }
 }
 
-onMounted(async () => {
+async function loadMembers() {
   try {
-    members.value = await fetchAllRows('members', MEMBER_COLUMNS, { orderBy: ['Lastname', 'MemberIDNo'] });
+    const rows = await fetchAllRows('members', MEMBER_COLUMNS, { orderBy: ['Lastname', 'MemberIDNo'] });
+    members.value = applyWaitingMemberChanges(rows);
+    showingSavedList.value = false;
+    saveMembersOffline('directory', rows);
   } catch (error) {
-    showAlert('Error Loading Members', error.message);
+    // Offline: the list saved on this device the last time it loaded.
+    const saved = isNetworkError(error) ? await membersSavedOffline('directory') : null;
+    if (saved) {
+      members.value = applyWaitingMemberChanges(saved);
+      showingSavedList.value = true;
+    } else showAlert('Error Loading Members', isNetworkError(error) ? 'You are offline, and the Directory was not saved on this device yet. Open it once with internet to use it offline.' : error.message);
   } finally {
     isLoading.value = false;
   }
+}
+
+// Reloads once edits saved offline have synced, or the connection returns.
+function onOutboxSynced(event) {
+  if (event.detail?.kinds?.some((kind) => kind.startsWith('member-'))) loadMembers();
+}
+
+onMounted(async () => {
+  window.addEventListener('oracle-outbox-synced', onOutboxSynced);
+  window.addEventListener('online', loadMembers);
+  await loadMembers();
   try {
     assignedAreaNames.value = await loadAssignedAreaNames();
   } catch (error) {
     console.error('Error loading assigned areas:', error.message);
   }
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('oracle-outbox-synced', onOutboxSynced);
+  window.removeEventListener('online', loadMembers);
 });
 </script>
 
@@ -293,6 +349,8 @@ onMounted(async () => {
       <button class="btn" :disabled="!exportRows.length" @click="handleExport"><Download :size="14" />Export{{ selectedIds.size ? ` (${exportRows.length})` : '' }}</button>
       <button class="btn btn-primary" @click="openAssign"><Plus :size="14" />Assign to Talks</button>
     </PageHead>
+
+    <p v-if="showingSavedList" class="offline-note" role="status"><strong>You're offline.</strong> Showing the Directory saved on this device. Edits are saved here and sync when the connection returns.</p>
 
     <section class="grid status-cards" aria-label="Members by status">
       <StatCard
@@ -322,7 +380,7 @@ onMounted(async () => {
         <template #cell-name="{ row }">
           <div class="row who">
             <span class="avatar">{{ memberInitials(row) }}</span>
-            <div class="grow"><p class="strong clamp">{{ row.Lastname }}, {{ row.Firstname }}</p><p class="muted small">ID: {{ row.MemberIDNo }}</p></div>
+            <div class="grow"><p class="strong clamp">{{ row.Lastname }}, {{ row.Firstname }}</p><p class="muted small">ID: {{ row.MemberIDNo }}<span v-if="row.waitingSync" class="pill warning waiting">Waiting to sync</span></p></div>
           </div>
         </template>
         <template #cell-NameOfHouseholdHead="{ value }">{{ value || 'N/A' }}</template>
@@ -394,6 +452,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.waiting { margin-left: 6px; font-size: 10px; }
+.offline-note { margin: 0 0 14px; padding: 10px 14px; border-radius: var(--radius-md, 10px); background: color-mix(in srgb, #f59e0b 16%, transparent); font-size: 13px; }
 .status-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
 .status-cards :deep(.stat) { padding: 14px 16px; cursor: pointer; }
 .status-cards :deep(.stat-value) { font-size: 22px; margin-top: 6px; }
