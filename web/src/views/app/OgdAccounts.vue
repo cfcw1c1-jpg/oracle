@@ -170,9 +170,13 @@ const stoppingIds = ref(new Set());
 let isMounted = true;
 let pollTimer = null;
 
+// Also re-reads while a chapter is signing in to OGD for another task (an
+// Activities sync, a push, someone else's test), so its buttons come back on
+// their own when that sign-in ends instead of staying greyed out.
 function updatePolling() {
-  if (syncingIds.value.size && !pollTimer) pollTimer = setInterval(load, PROGRESS_POLL_MS);
-  if (!syncingIds.value.size && pollTimer) {
+  const shouldPoll = syncingIds.value.size > 0 || rows.value.some((row) => row.status === 'running');
+  if (shouldPoll && !pollTimer) pollTimer = setInterval(load, PROGRESS_POLL_MS);
+  if (!shouldPoll && pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
@@ -695,10 +699,10 @@ onBeforeUnmount(() => {
               <button class="btn btn-sm btn-danger" :disabled="startingIds.has(row.areaId)" :title="stoppingIds.has(row.areaId) ? 'Clears the sync now instead of waiting for the current run to end' : 'Stops after the current run'" @click="stopSync(row)"><Square :size="13" />{{ stoppingIds.has(row.areaId) ? 'Force stop' : 'Stop Sync' }}</button>
             </template>
             <template v-else-if="row.ownConfigured && row.otherConfigured">
-              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="testLogin(row)"><LogIn :size="13" />{{ testingIds.has(row.areaId) ? 'Testing…' : 'Test Login' }}</button>
-              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
-              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
-              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="btn btn-sm btn-primary span-2" :disabled="row.status === 'running' || testingIds.has(row.areaId)" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" :title="row.status === 'running' && !testingIds.has(row.areaId) ? 'Waiting: this chapter is signing in to OGD for another task. The buttons come back when it ends.' : undefined" @click="testLogin(row)"><LogIn :size="13" />{{ testingIds.has(row.areaId) ? 'Testing…' : 'Test Login' }}</button>
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" :title="row.status === 'running' && !testingIds.has(row.areaId) ? 'Waiting: this chapter is signing in to OGD for another task. The buttons come back when it ends.' : undefined" @click="syncMembers(row, 'info')"><RefreshCw :size="13" />Sync Members</button>
+              <button class="btn btn-sm" :disabled="row.status === 'running' || testingIds.has(row.areaId)" :title="row.status === 'running' && !testingIds.has(row.areaId) ? 'Waiting: this chapter is signing in to OGD for another task. The buttons come back when it ends.' : undefined" @click="syncMembers(row, 'formations')"><GraduationCap :size="13" />Sync Formations</button>
+              <button v-if="scope === 'accounts' && changeCount(row.areaId)" class="btn btn-sm btn-primary span-2" :disabled="row.status === 'running' || testingIds.has(row.areaId)" :title="row.status === 'running' && !testingIds.has(row.areaId) ? 'Waiting: this chapter is signing in to OGD for another task. The buttons come back when it ends.' : undefined" @click="pushChanges(row)"><UploadCloud :size="13" />Push to OGD ({{ changeCount(row.areaId) }})</button>
             </template>
           </div>
         </template>

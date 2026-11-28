@@ -3,7 +3,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HttpError } from './access.mjs';
-import { launchBrowser } from './browser.mjs';
+import { crashReport, launchBrowser, recoverFromCrash } from './browser.mjs';
 import { createGmailOtpReader } from './gmailOtp.mjs';
 import { AutomationFailure, loginToOgd } from './ogdLogin.mjs';
 import { decryptSecret, encryptSecret } from './secrets.mjs';
@@ -120,7 +120,22 @@ async function uploadRecording(db, tracePath, path) {
   return path;
 }
 
-async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession, tracePath }) {
+const BROWSER_DIED = /Target (page|crashed)|has been closed|browser has disconnected/i;
+
+// A browser that dies before any page has loaded has not touched the portal
+// (no password, no OTP), so one fresh browser is tried before giving up.
+async function attemptLogin(row, areaId, afterLogin, options) {
+  const first = await attemptOnce(row, areaId, afterLogin, options);
+  if (!first.diedBeforeLoading) return withoutFlags(first);
+  console.error('[ogd] the browser died before opening a page; trying once more with a fresh browser');
+  return withoutFlags(await attemptOnce(row, areaId, afterLogin, options));
+}
+
+function withoutFlags({ diedBeforeLoading: _flag, ...result }) {
+  return result;
+}
+
+async function attemptOnce(row, areaId, afterLogin, { storageState, notBeforeMs, keepSession, tracePath }) {
   // ogd_username and ogd_password_enc hold the Members Portal login.
   const ogdPassword = decryptSecret(row.ogd_password_enc, areaId, 'ogd');
   const gmailPassword = decryptSecret(row.gmail_password_enc, areaId, 'gmail');
@@ -136,9 +151,14 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
     await stopTrace(session.context, tracePath);
     browser?.close().catch(() => null);
   }, tracePath ? RECORDED_RUN_LIMIT_MS : RUN_LIMIT_MS);
-  const onContext = tracePath
-    ? (context) => context.tracing.start({ screenshots: true, snapshots: false }).catch((error) => console.error('[ogd] could not start recording:', error?.message))
-    : undefined;
+  // Notes when any page first loads something, so a crash before that is known to be harmless to retry.
+  let hasLoaded = false;
+  const onContext = async (context) => {
+    context.on('page', (page) => page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame() && frame.url() !== 'about:blank') hasLoaded = true;
+    }));
+    if (tracePath) await context.tracing.start({ screenshots: true, snapshots: false }).catch((error) => console.error('[ogd] could not start recording:', error?.message));
+  };
   try {
     browser = await launchBrowser();
     const readOtp = createGmailOtpReader({ address: row.gmail_address, password: gmailPassword });
@@ -163,6 +183,12 @@ async function attemptLogin(row, areaId, afterLogin, { storageState, notBeforeMs
       return { ...base, status: 'failed', failure_code: 'automation_error', status_detail: 'OGD took too long to answer, so the run was stopped. Please try again.' };
     }
     console.error('[ogd] automation error:', scrub(error?.message, secrets));
+    if (BROWSER_DIED.test(error?.message ?? '')) {
+      console.error('[ogd] browser died:', scrub(crashReport(browser), secrets));
+      await browser?.close().catch(() => null);
+      recoverFromCrash();
+      if (!hasLoaded && !session.state) return { ...base, diedBeforeLoading: true, status: 'failed', failure_code: 'automation_error', status_detail: scrub(error.message.split('\n')[0], secrets) };
+    }
     return { ...base, status: 'failed', failure_code: 'automation_error', status_detail: scrub(error?.message?.split('\n')[0] ?? 'Unknown error', secrets) };
   } finally {
     clearTimeout(guard);
